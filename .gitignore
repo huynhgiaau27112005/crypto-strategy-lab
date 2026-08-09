@@ -1,0 +1,28 @@
+.cursor/
+.superpowers/
+superpowers/
+
+# Dependencies
+node_modules/
+
+# Builds
+dist/
+build/
+coverage/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Logs & OS
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# IDE / tooling
+*.tsbuildinfo
+.idea/
+.vscode/*
+!.vscode/extensions.json
