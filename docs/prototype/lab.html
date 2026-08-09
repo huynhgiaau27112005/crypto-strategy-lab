@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lab — Crypto Strategy Lab</title>
+    <link rel="stylesheet" href="assets/css/tokens.css" />
+    <link rel="stylesheet" href="assets/css/shell.css" />
+    <link rel="stylesheet" href="assets/css/pages.css" />
+  </head>
+  <body>
+        <header class="app-header">
+      <div class="brand">Crypto <em>Strategy Lab</em></div>
+      <div class="market-context">
+        <label class="ctx">
+          <span>Sàn</span>
+          <select data-exchange aria-label="Exchange">
+            <option value="binance">Binance</option>
+            <option value="okx">OKX (mở rộng)</option>
+            <option value="bybit">Bybit (mở rộng)</option>
+          </select>
+        </label>
+        <label class="ctx">
+          <span>Pair</span>
+          <select data-pair aria-label="Trading pair">
+            <option value="BTCUSDT">BTCUSDT</option>
+            <option value="ETHUSDT">ETHUSDT</option>
+          </select>
+        </label>
+        <div class="price-stack">
+          <span class="price">118,150.2</span>
+          <span class="change up">+2.41%</span>
+        </div>
+        <span class="badge-live">Realtime</span>
+      </div>
+      <nav class="workspace-nav" aria-label="Workspace">
+        <a href="charts.html" data-nav="charts.html">Charts</a>
+        <a href="lab.html" data-nav="lab.html">Lab</a>
+        <a href="strategy.html" data-nav="strategy.html">Strategy</a>
+        <a href="news.html" data-nav="news.html">News</a>
+      </nav>
+      <div class="header-spacer"></div>
+      <button type="button" class="theme-toggle" data-theme-toggle>
+        Theme · <strong data-theme-label>Dark</strong>
+      </button>
+    </header>
+
+    <div class="workspace">
+      <div class="lab-layout">
+        <section class="lab-col">
+          <div class="lab-col-header">Strategy plugins</div>
+          <div class="lab-col-body">
+            <article class="strategy-card">
+              <label class="row">
+                <input type="checkbox" checked />
+                <span>
+                  <strong>Moving Average (MA)</strong>
+                  <span class="meta">fast=20 · slow=50 · version v1</span>
+                </span>
+              </label>
+            </article>
+            <article class="strategy-card">
+              <label class="row">
+                <input type="checkbox" checked />
+                <span>
+                  <strong>RSI</strong>
+                  <span class="meta">period=14 · buy&lt;30 · sell&gt;70 · v1</span>
+                </span>
+              </label>
+            </article>
+            <article class="strategy-card">
+              <label class="row">
+                <input type="checkbox" checked />
+                <span>
+                  <strong>Bollinger Bands</strong>
+                  <span class="meta">period=20 · std=2 · version v1</span>
+                </span>
+              </label>
+            </article>
+            <article class="strategy-card">
+              <label class="row">
+                <input type="checkbox" checked />
+                <span>
+                  <strong>Support / Resistance</strong>
+                  <span class="meta">lookback=100 · proximity=0.4% · v1</span>
+                </span>
+              </label>
+            </article>
+            <article class="strategy-card">
+              <label class="row">
+                <input type="checkbox" id="sentiment-plugin" />
+                <span>
+                  <strong>Sentiment Strategy</strong>
+                  <span class="meta">optional · từ News pipeline · v1</span>
+                </span>
+              </label>
+            </article>
+          </div>
+        </section>
+
+        <section class="lab-col">
+          <div class="lab-col-header">Continuous search loop</div>
+          <div class="lab-col-body">
+            <div class="actions-row">
+              <button type="button" class="primary" id="start-search">START SEARCH</button>
+              <button type="button" id="stop-search">STOP</button>
+            </div>
+            <div class="stats-row">
+              <div class="stat-card">
+                <div class="k">Candidates tested</div>
+                <div class="v" id="candidates">125</div>
+              </div>
+              <div class="stat-card">
+                <div class="k">Loop status</div>
+                <div class="v warn" id="loop-status">Running</div>
+              </div>
+              <div class="stat-card">
+                <div class="k">Generator</div>
+                <div class="v" style="font-size: 0.92rem">Random Search</div>
+              </div>
+              <div class="stat-card">
+                <div class="k">Dataset</div>
+                <div class="v" style="font-size: 0.92rem">BTC 5m · 6 tháng</div>
+              </div>
+            </div>
+            <div class="current-box">
+              <div class="k" style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase">
+                Current candidate · <span class="pill run">BACKTESTING</span>
+              </div>
+              <div class="combo">MA20 + RSI14 + SR</div>
+              <div class="progress" aria-hidden="true"><span></span></div>
+              <p style="margin: 0.65rem 0 0; font-size: 0.78rem; color: var(--text-muted)">
+                generate → backtest → evaluate → rank · stop: 100 candidates / 1h / no improve
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="lab-col">
+          <div class="lab-col-header">Leaderboard Top-K</div>
+          <div class="lab-col-body" style="padding: 0">
+            <table class="data">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Strategy</th>
+                  <th>Return</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td>MA20 + RSI14 + SR<br /><span class="pill">v1 · WR 61% · MDD -6.1% · 81 trades</span></td>
+                  <td class="up">+18.2%</td>
+                  <td><a class="btn" href="strategy.html">Xem</a></td>
+                </tr>
+                <tr>
+                  <td>2</td>
+                  <td>MA50 + Bollinger<br /><span class="pill">v1 · WR 58% · MDD -8.4%</span></td>
+                  <td class="up">+15.7%</td>
+                  <td><a class="btn" href="strategy.html">Xem</a></td>
+                </tr>
+                <tr>
+                  <td>3</td>
+                  <td>RSI + SR<br /><span class="pill">v1 · WR 64% · MDD -7.2%</span></td>
+                  <td class="up">+13.1%</td>
+                  <td><a class="btn" href="strategy.html">Xem</a></td>
+                </tr>
+                <tr>
+                  <td>4</td>
+                  <td>MA + RSI + BB<br /><span class="pill">v2</span></td>
+                  <td class="up">+11.4%</td>
+                  <td><a class="btn" href="strategy.html">Xem</a></td>
+                </tr>
+                <tr>
+                  <td>5</td>
+                  <td>Bollinger + SR<br /><span class="pill">v1</span></td>
+                  <td class="up">+9.8%</td>
+                  <td><a class="btn" href="strategy.html">Xem</a></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script src="assets/js/shell.js"></script>
+    <script>
+      const status = document.getElementById('loop-status');
+      document.getElementById('start-search').addEventListener('click', () => {
+        status.textContent = 'Running';
+        status.classList.add('warn');
+      });
+      document.getElementById('stop-search').addEventListener('click', () => {
+        status.textContent = 'Stopped';
+        status.classList.remove('warn');
+      });
+      const params = new URLSearchParams(location.search);
+      if (params.get('enableSentiment') === '1') {
+        const box = document.getElementById('sentiment-plugin');
+        if (box) box.checked = true;
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Strategy — Crypto Strategy Lab</title>
+    <link rel="stylesheet" href="assets/css/tokens.css" />
+    <link rel="stylesheet" href="assets/css/shell.css" />
+    <link rel="stylesheet" href="assets/css/pages.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">Crypto <em>Strategy Lab</em></div>
+      <div class="market-context">
+        <label class="ctx">
+          <span>Sàn</span>
+          <select data-exchange aria-label="Exchange">
+            <option value="binance">Binance</option>
+            <option value="okx">OKX (mở rộng)</option>
+            <option value="bybit">Bybit (mở rộng)</option>
+          </select>
+        </label>
+        <label class="ctx">
+          <span>Pair</span>
+          <select data-pair aria-label="Trading pair">
+            <option value="BTCUSDT">BTCUSDT</option>
+            <option value="ETHUSDT">ETHUSDT</option>
+          </select>
+        </label>
+        <div class="price-stack">
+          <span class="price">118,150.2</span>
+          <span class="change up">+2.41%</span>
+        </div>
+        <span class="badge-live">Realtime</span>
+      </div>
+      <nav class="workspace-nav" aria-label="Workspace">
+        <a href="charts.html" data-nav="charts.html">Charts</a>
+        <a href="lab.html" data-nav="lab.html">Lab</a>
+        <a href="strategy.html" data-nav="strategy.html">Strategy</a>
+        <a href="news.html" data-nav="news.html">News</a>
+      </nav>
+      <div class="header-spacer"></div>
+      <button type="button" class="theme-toggle" data-theme-toggle>
+        Theme · <strong data-theme-label>Dark</strong>
+      </button>
+    </header>
+
+    <div class="workspace">
+      <div class="legend-bar">
+        <span
+          ><strong style="color: var(--text-strong)">#1 MA20 + RSI14 + SR</strong> · version v1 · TF
+          <span data-strategy-tf-label>5m</span></span
+        >
+        <span><i style="background: #3d7eff"></i>MA20</span>
+        <span><i style="background: var(--up)"></i>Support / BUY</span>
+        <span><i style="background: var(--down)"></i>Resistance / SELL</span>
+        <span><i style="background: #fbbf24"></i>Entry / Exit</span>
+        <div class="panel-actions" style="margin-left: auto">
+          <div class="tf-group" id="strategy-tf">
+            <button type="button" class="active" data-tf="5m">5m</button>
+            <button type="button" data-tf="15m">15m</button>
+            <button type="button" data-tf="1h">1h</button>
+            <button type="button" data-tf="4h">4h</button>
+          </div>
+          <a class="btn" href="lab.html">← Leaderboard</a>
+        </div>
+      </div>
+
+      <div class="strategy-layout">
+        <section class="strategy-main">
+          <div class="chart-host" id="strategy-chart"></div>
+        </section>
+
+        <aside class="strategy-side">
+          <div class="lab-col-header">Evaluation metrics</div>
+          <div class="metric-grid">
+            <div class="stat-card">
+              <div class="k">Return</div>
+              <div class="v up">+18.2%</div>
+            </div>
+            <div class="stat-card">
+              <div class="k">Win Rate</div>
+              <div class="v">61%</div>
+            </div>
+            <div class="stat-card">
+              <div class="k">Max Drawdown</div>
+              <div class="v down">-6.1%</div>
+            </div>
+            <div class="stat-card">
+              <div class="k">Trades</div>
+              <div class="v">81</div>
+            </div>
+          </div>
+          <div class="lab-col-body">
+            <p style="margin: 0; font-size: 0.78rem; color: var(--text-muted); font-family: var(--mono)">
+              Experiment · <span data-pair-label>BTCUSDT</span> · dataset theo TF đã chọn · strategy
+              version v1
+            </p>
+          </div>
+
+          <div class="trade-detail" id="trade-detail"></div>
+
+          <div class="lab-col-header">Danh sách trades — click để xem detail</div>
+          <div class="lab-col-body" style="padding: 0">
+            <table class="data">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Side</th>
+                  <th>Entry</th>
+                  <th>Exit</th>
+                  <th>PnL</th>
+                </tr>
+              </thead>
+              <tbody id="trades-body"></tbody>
+            </table>
+          </div>
+          <div class="lab-col-body">
+            <a class="btn primary" href="news.html">Sang News & Sentiment →</a>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="assets/js/mock-data.js"></script>
+    <script src="assets/js/shell.js"></script>
+    <script src="assets/js/strategy-page.js"></script>
+  </body>
+</html>
