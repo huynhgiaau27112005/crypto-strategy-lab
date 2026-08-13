@@ -1,5 +1,13 @@
 CREATE SCHEMA IF NOT EXISTS market;
 
+CREATE TABLE IF NOT EXISTS public.schema_migrations (
+    id BIGSERIAL PRIMARY KEY,
+
+    migration VARCHAR(255) NOT NULL UNIQUE,
+
+    executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS market.assets (
     id BIGSERIAL PRIMARY KEY,
 
