@@ -192,6 +192,12 @@
 
 /* Panel content (ported from pages.css for dock reuse) */
 
+.lab-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
 .lab-col {
   background: var(--bg-panel);
   border: 1px solid var(--border);
@@ -242,7 +248,8 @@
   color: var(--text-strong);
 }
 
-.strategy-card .meta {
+.strategy-card .meta,
+table.data .meta {
   margin-top: 0.15rem;
   font-size: 0.75rem;
   color: var(--text-muted);
