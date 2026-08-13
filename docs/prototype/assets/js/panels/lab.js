@@ -121,7 +121,7 @@
               </div>
               <div class="stat-card">
                 <div class="k">Loop status</div>
-                <div class="v warn" id="loop-status">Running</div>
+                <div class="v" id="loop-status">Idle</div>
               </div>
               <div class="stat-card">
                 <div class="k">Generator</div>
@@ -134,10 +134,10 @@
             </div>
             <div class="current-box">
               <div class="k" style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase">
-                Current candidate · <span class="pill run">BACKTESTING</span>
+                Current candidate · <span class="pill" id="candidate-pill">IDLE</span>
               </div>
               <div class="combo">MA20 + RSI14 + SR</div>
-              <div class="progress" aria-hidden="true"><span></span></div>
+              <div class="progress" aria-hidden="true"><span id="search-progress" style="width: 0%"></span></div>
               <p style="margin: 0.65rem 0 0; font-size: 0.78rem; color: var(--text-muted)">
                 generate → backtest → evaluate → rank · stop: 100 candidates / 1h / no improve
               </p>
@@ -174,6 +174,8 @@
 
     const statusEl = root.querySelector('#loop-status');
     const candidatesEl = root.querySelector('#candidates');
+    const candidatePill = root.querySelector('#candidate-pill');
+    const progressEl = root.querySelector('#search-progress');
     const startBtn = root.querySelector('#start-search');
     const stopBtn = root.querySelector('#stop-search');
     const tbody = root.querySelector('#lab-leaderboard');
@@ -184,6 +186,11 @@
       if (timer) return;
       statusEl.textContent = 'Running';
       statusEl.classList.add('warn');
+      if (candidatePill) {
+        candidatePill.textContent = 'BACKTESTING';
+        candidatePill.classList.add('run');
+      }
+      if (progressEl) progressEl.style.width = '62%';
       timer = setInterval(() => {
         candidates += 1;
         candidatesEl.textContent = String(candidates);
@@ -195,6 +202,11 @@
       timer = null;
       statusEl.textContent = 'Stopped';
       statusEl.classList.remove('warn');
+      if (candidatePill) {
+        candidatePill.textContent = 'IDLE';
+        candidatePill.classList.remove('run');
+      }
+      if (progressEl) progressEl.style.width = '0%';
     });
 
     tbody.addEventListener('click', (e) => {

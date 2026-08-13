@@ -277,8 +277,12 @@
       { time: marks.buy, position: 'belowBar', color: pane.colors.up, shape: 'arrowUp', text: 'BUY' },
       { time: marks.sell, position: 'aboveBar', color: pane.colors.down, shape: 'arrowDown', text: 'SELL' },
     ]);
-    const ma = window.CSLMock.sma(candles, 20);
-    pane.strategyMaSeries.setData(ma);
+    // Avoid dual MA: toolbar overlay owns SMA when MA checkbox is on.
+    if (overlayState().ma) {
+      pane.strategyMaSeries.setData([]);
+    } else {
+      pane.strategyMaSeries.setData(window.CSLMock.sma(candles, 20));
+    }
     const sr = window.CSLMock.supportResistance(candles);
     pane.strategySupportSeries.setData(sr.support);
     pane.strategyResistanceSeries.setData(sr.resistance);
@@ -313,7 +317,12 @@
   });
 
   document.querySelectorAll('[data-overlay]').forEach((input) => {
-    input.addEventListener('change', () => panes.forEach((p) => p.render()));
+    input.addEventListener('change', () => {
+      panes.forEach((p) => {
+        p.render();
+        if (p.appliedStrategy) paintStrategyOnPane(p);
+      });
+    });
   });
 
   window.addEventListener('csl-apply-strategy', (e) => {
