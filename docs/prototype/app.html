@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Crypto Strategy Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/css/tokens.css" />
+    <link rel="stylesheet" href="assets/css/shell.css" />
+    <link rel="stylesheet" href="assets/css/app.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <!-- same market-context + theme-toggle as current pages; NO workspace-nav -->
+      <div class="brand">Crypto <em>Strategy Lab</em></div>
+      <div class="market-context">
+        <label class="ctx">
+          <span>Sàn</span>
+          <select data-exchange aria-label="Exchange">
+            <option value="binance">Binance</option>
+            <option value="okx">OKX (mở rộng)</option>
+            <option value="bybit">Bybit (mở rộng)</option>
+          </select>
+        </label>
+        <label class="ctx">
+          <span>Pair</span>
+          <select data-pair aria-label="Trading pair">
+            <option value="BTCUSDT">BTCUSDT</option>
+            <option value="ETHUSDT">ETHUSDT</option>
+          </select>
+        </label>
+        <div class="price-stack">
+          <span class="price">118,150.2</span>
+          <span class="change up">+2.41%</span>
+        </div>
+        <span class="badge-live">Realtime</span>
+      </div>
+      <div class="header-spacer"></div>
+      <button type="button" class="theme-toggle" data-theme-toggle>
+        Theme · <strong data-theme-label>Dark</strong>
+      </button>
+    </header>
+
+    <div class="app-frame" id="app-frame" data-dock="closed" data-layout="1">
+      <aside class="left-rail" id="left-rail" aria-label="Panels">
+        <button type="button" class="rail-btn" data-panel-btn="lab" title="Lab" aria-pressed="false">Lab</button>
+        <button type="button" class="rail-btn" data-panel-btn="strategy" title="Strategy" aria-pressed="false">Strat</button>
+        <button type="button" class="rail-btn" data-panel-btn="news" title="News" aria-pressed="false">News</button>
+      </aside>
+
+      <main class="chart-stage" id="chart-stage">
+        <div class="chart-toolbar" id="chart-toolbar">
+          <span class="label">Overlays</span>
+          <div class="overlay-toggles">
+            <label><input type="checkbox" data-overlay="ma" checked /> MA</label>
+            <label><input type="checkbox" data-overlay="bb" /> Bollinger</label>
+            <label><input type="checkbox" data-overlay="sr" /> Support / Resistance</label>
+          </div>
+          <div class="layout-controls">
+            <span class="label">Layout</span>
+            <button type="button" data-layout-btn="1" class="active">1</button>
+            <button type="button" data-layout-btn="2">2</button>
+            <button type="button" data-layout-btn="4">4</button>
+          </div>
+        </div>
+        <div class="charts-grid" id="charts-grid" data-count="1"></div>
+      </main>
+
+      <aside class="right-dock" id="right-dock" hidden>
+        <div class="dock-header">
+          <strong id="dock-title">Lab</strong>
+          <button type="button" class="btn-icon" id="dock-close" title="Đóng">×</button>
+        </div>
+        <div class="dock-body" id="dock-body"></div>
+      </aside>
+    </div>
+
+    <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="assets/js/mock-data.js"></script>
+    <script src="assets/js/shell.js"></script>
+    <!-- panel + app scripts added in later tasks -->
+  </body>
+</html>

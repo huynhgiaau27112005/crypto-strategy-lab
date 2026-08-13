@@ -21,7 +21,10 @@ html[data-theme='dark'] {
   --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
   --radius: 10px;
   --radius-sm: 7px;
-  --header-h: 56px;
+  --header-h: 52px;
+  --rail-w: 48px;
+  --dock-w: 360px;
+  --workspace-h: calc(100vh - var(--header-h));
   --font: 'IBM Plex Sans', system-ui, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, monospace;
   --surface-glow: radial-gradient(1200px 400px at 10% -10%, rgba(61, 126, 255, 0.14), transparent 55%);

@@ -148,6 +148,12 @@ button:disabled,
   font-size: 0.72rem;
 }
 
+.change.down {
+  color: var(--down);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
 .badge-live {
   font-size: 0.65rem;
   text-transform: uppercase;
@@ -207,6 +213,15 @@ button:disabled,
 .theme-toggle strong {
   color: var(--text-strong);
   font-weight: 600;
+}
+
+/* Single-screen chrome: rail / stage / dock live in app.css.
+   Header no longer requires .workspace-nav (legacy multi-page only). */
+
+.app-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
 }
 
 .workspace {
@@ -350,7 +365,12 @@ button:disabled,
     order: 3;
   }
 
+  /* Legacy multi-page nav only; app.html has no .workspace-nav */
   .workspace-nav {
+    order: 2;
+  }
+
+  .app-header:not(:has(.workspace-nav)) .market-context {
     order: 2;
   }
 }

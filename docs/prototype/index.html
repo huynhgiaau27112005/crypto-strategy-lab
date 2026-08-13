@@ -1,77 +1,12 @@
 <!DOCTYPE html>
-<html lang="vi" data-theme="dark">
+<html lang="vi">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Crypto Strategy Lab — Prototype</title>
-    <link rel="stylesheet" href="assets/css/tokens.css" />
-    <link rel="stylesheet" href="assets/css/shell.css" />
-    <link rel="stylesheet" href="assets/css/pages.css" />
+    <meta http-equiv="refresh" content="0; url=app.html" />
+    <title>Crypto Strategy Lab</title>
+    <script>location.replace('app.html');</script>
   </head>
   <body>
-        <header class="app-header">
-      <div class="brand">Crypto <em>Strategy Lab</em></div>
-      <div class="market-context">
-        <label class="ctx">
-          <span>Sàn</span>
-          <select data-exchange aria-label="Exchange">
-            <option value="binance">Binance</option>
-            <option value="okx">OKX (mở rộng)</option>
-            <option value="bybit">Bybit (mở rộng)</option>
-          </select>
-        </label>
-        <label class="ctx">
-          <span>Pair</span>
-          <select data-pair aria-label="Trading pair">
-            <option value="BTCUSDT">BTCUSDT</option>
-            <option value="ETHUSDT">ETHUSDT</option>
-          </select>
-        </label>
-        <div class="price-stack">
-          <span class="price">118,150.2</span>
-          <span class="change up">+2.41%</span>
-        </div>
-        <span class="badge-live">Realtime</span>
-      </div>
-      <nav class="workspace-nav" aria-label="Workspace">
-        <a href="charts.html" data-nav="charts.html">Charts</a>
-        <a href="lab.html" data-nav="lab.html">Lab</a>
-        <a href="strategy.html" data-nav="strategy.html">Strategy</a>
-        <a href="news.html" data-nav="news.html">News</a>
-      </nav>
-      <div class="header-spacer"></div>
-      <button type="button" class="theme-toggle" data-theme-toggle>
-        Theme · <strong data-theme-label>Dark</strong>
-      </button>
-    </header>
-
-    <main class="gate">
-      <h1>UI Prototype — Crypto Strategy Lab</h1>
-      <p>
-        Workspace HTML tách file để approve giao diện trước khi port sang React.
-        Bám demo scenario đồ án: multi-chart (1–4) → Lab search → strategy trades → news/sentiment.
-        Header có chọn <strong>Sàn</strong> (MVP: Binance) và <strong>Pair</strong>. Dark/Light toggle.
-      </p>
-      <div class="gate-grid">
-        <a class="gate-card" href="charts.html">
-          <h2>1. Charts</h2>
-          <p>Thêm/bớt panel 1–4 · TF 5m/15m/1h/4h · candlestick + overlays</p>
-        </a>
-        <a class="gate-card" href="lab.html">
-          <h2>2. Lab</h2>
-          <p>Plugin strategies · START SEARCH · Top-K leaderboard</p>
-        </a>
-        <a class="gate-card" href="strategy.html">
-          <h2>3. Strategy</h2>
-          <p>Chọn TF · Buy/Sell/Entry/Exit/SL/TP · trade detail</p>
-        </a>
-        <a class="gate-card" href="news.html">
-          <h2>4. News</h2>
-          <p>Sentiment breakdown · headlines · thêm SentimentStrategy</p>
-        </a>
-      </div>
-    </main>
-
-    <script src="assets/js/shell.js"></script>
+    <p><a href="app.html">Mở Crypto Strategy Lab</a></p>
   </body>
 </html>
