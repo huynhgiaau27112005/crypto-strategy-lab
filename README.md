@@ -51,27 +51,25 @@ Routes stub: `/`, `/strategies`, `/search`, `/leaderboard`, `/strategy/:id`, `/n
 
 ## Xem HTML Prototype
 
-Prototype là app shell TradingView-like, tách 4 workspace HTML (có Dark/Light toggle):
+Một màn hình TradingView-like (`app.html`), panel Lab / Strategy / News mở từ rail trái.
+
+```bash
+open docs/prototype/app.html
+```
 
 | File | Nội dung |
 |------|----------|
-| `docs/prototype/index.html` | Cổng vào |
-| `docs/prototype/charts.html` | 4 chart · TF `5m/15m/1h/4h` · Lightweight Charts |
-| `docs/prototype/lab.html` | Strategies + Search + Leaderboard |
-| `docs/prototype/strategy.html` | Chi tiết strategy · Buy/Sell overlays |
-| `docs/prototype/news.html` | News + Sentiment |
+| `docs/prototype/app.html` | Shell + chart + panels |
+| `docs/prototype/index.html` | Redirect → `app.html` |
+| `assets/js/panels/*.js` | Lab / Strategy / News |
 
-```bash
-open docs/prototype/index.html
-# hoặc
-npx --yes serve docs/prototype
-```
-
-Luồng demo đề xuất: Charts → Lab → Strategy → News.
+Luồng demo: Chart → Lab (START SEARCH) → chọn leaderboard → Strategy overlays → News → bật Sentiment.
 
 ## Tài liệu thiết kế
 
 - Spec scaffold: `docs/superpowers/specs/2026-08-09-project-boilerplate-design.md`
 - Spec prototype redesign: `docs/superpowers/specs/2026-08-09-prototype-redesign-design.md`
+- Spec single-screen prototype: `docs/superpowers/specs/2026-08-13-prototype-single-screen-design.md`
 - Plan boilerplate: `docs/superpowers/plans/2026-08-09-project-boilerplate.md`
 - Plan prototype: `docs/superpowers/plans/2026-08-09-prototype-redesign.md`
+- Plan single-screen: `docs/superpowers/plans/2026-08-13-prototype-single-screen.md`

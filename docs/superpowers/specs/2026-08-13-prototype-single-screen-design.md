@@ -1,7 +1,7 @@
 # Crypto Strategy Lab — Single-Screen Prototype Rebuild
 
 **Date:** 2026-08-13  
-**Status:** Approved (design dialogue) — awaiting implementation plan  
+**Status:** Implemented  
 **Scope:** Tear down multi-tab `docs/prototype` and rebuild as one TradingView-like control screen with exclusive right panels. HTML/CSS/JS prototype only; no React/Nest changes.  
 **Supersedes:** `2026-08-09-prototype-redesign-design.md` (multi-page Charts/Lab/Strategy/News tabs).
 
