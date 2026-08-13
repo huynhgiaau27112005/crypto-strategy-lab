@@ -6,6 +6,8 @@
   "scripts": {
     "db:create": "node create-database.js",
     "db:migrate": "node migrate.js",
+    "db:seed": "node seed.js",
+    "db:check": "node check.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

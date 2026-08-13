@@ -9,7 +9,7 @@ const { Client } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const migrationsDirectory = path.join(
+const MIGRATIONS_DIR = path.join(
     __dirname,
     'migrations'
 );
@@ -22,22 +22,60 @@ const client = new Client({
     database: 'crypto_strategy_lab',
 });
 
-try {
-    await client.connect();
+async function getMigrationFiles() {
+    const files = await fs.readdir(MIGRATIONS_DIR);
 
-    console.log('Connected to crypto_strategy_lab.');
-
-    const files = await fs.readdir(migrationsDirectory);
-
-    const migrations = files
+    return files
         .filter(file => file.endsWith('.sql'))
         .sort();
+}
+
+async function main() {
+    await client.connect();
+
+    console.log(
+        'Connected to crypto_strategy_lab.'
+    );
+
+    /*
+     * Migration tracking table must exist
+     * before we can check which migrations
+     * have already been executed.
+     */
+    await client.query(`
+        CREATE TABLE IF NOT EXISTS public.schema_migrations (
+            id BIGSERIAL PRIMARY KEY,
+            migration VARCHAR(255) NOT NULL UNIQUE,
+            executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+    `);
+
+    const migrations = await getMigrationFiles();
 
     for (const migration of migrations) {
-        console.log(`Running migration: ${migration}`);
+        const result = await client.query(
+            `
+            SELECT 1
+            FROM public.schema_migrations
+            WHERE migration = $1
+            `,
+            [migration]
+        );
+
+        if (result.rowCount > 0) {
+            console.log(
+                `Skipping ${migration} - already applied.`
+            );
+
+            continue;
+        }
+
+        console.log(
+            `Running migration: ${migration}`
+        );
 
         const filePath = path.join(
-            migrationsDirectory,
+            MIGRATIONS_DIR,
             migration
         );
 
@@ -46,12 +84,38 @@ try {
             'utf8'
         );
 
-        await client.query(sql);
+        await client.query('BEGIN');
 
-        console.log(`Completed: ${migration}`);
+        try {
+            await client.query(sql);
+
+            await client.query(
+                `
+                INSERT INTO public.schema_migrations (
+                    migration
+                )
+                VALUES ($1)
+                `,
+                [migration]
+            );
+
+            await client.query('COMMIT');
+
+            console.log(
+                `Completed: ${migration}\n`
+            );
+        } catch (error) {
+            await client.query('ROLLBACK');
+
+            throw error;
+        }
     }
 
-    console.log('All migrations completed.');
+    console.log('Migration completed successfully.');
+}
+
+try {
+    await main();
 } catch (error) {
     console.error('Migration failed.');
     console.error(error);
