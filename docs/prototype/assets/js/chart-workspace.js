@@ -267,7 +267,11 @@
     grid.dataset.count = String(count);
     const stillFocused = panes.find((p) => p.id === focusedId);
     setFocused(stillFocused || panes[0]);
-    requestAnimationFrame(() => panes.forEach((p) => p.chart.timeScale().fitContent()));
+    // Charts keep old canvas width as min-content otherwise and clip siblings.
+    requestAnimationFrame(() => {
+      resizeAll();
+      panes.forEach((p) => p.chart.timeScale().fitContent());
+    });
   }
 
   function paintStrategyOnPane(pane) {
@@ -346,10 +350,27 @@
   setLayout(1);
   if (panes[0]) setFocused(panes[0]);
 
+  function resizeAll() {
+    panes.forEach((p) => {
+      if (p.chart && typeof p.chart.applyOptions === 'function') {
+        // autoSize charts still need a nudge after grid column changes
+        const host = p.root.querySelector('.chart-host');
+        if (host) {
+          p.chart.applyOptions({ width: host.clientWidth, height: host.clientHeight });
+        }
+      }
+    });
+  }
+
+  window.addEventListener('resize', () => {
+    requestAnimationFrame(resizeAll);
+  });
+
   window.CSLCharts = {
     setLayout,
     getFocusedPaneId,
     applyStrategyOverlay,
     clearStrategyOverlay,
+    resizeAll,
   };
 })();

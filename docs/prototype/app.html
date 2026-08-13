@@ -16,24 +16,16 @@
   </head>
   <body>
     <header class="app-header">
-      <!-- same market-context + theme-toggle as current pages; NO workspace-nav -->
       <div class="brand">Crypto <em>Strategy Lab</em></div>
       <div class="market-context">
-        <label class="ctx">
+        <div class="ctx ctx-static">
           <span>Sàn</span>
-          <select data-exchange aria-label="Exchange">
-            <option value="binance">Binance</option>
-            <option value="okx">OKX (mở rộng)</option>
-            <option value="bybit">Bybit (mở rộng)</option>
-          </select>
-        </label>
-        <label class="ctx">
+          <strong>Binance</strong>
+        </div>
+        <div class="ctx ctx-static">
           <span>Pair</span>
-          <select data-pair aria-label="Trading pair">
-            <option value="BTCUSDT">BTCUSDT</option>
-            <option value="ETHUSDT">ETHUSDT</option>
-          </select>
-        </label>
+          <strong data-pair-label>BTCUSDT</strong>
+        </div>
         <div class="price-stack">
           <span class="price">118,150.2</span>
           <span class="change up">+2.41%</span>
@@ -46,13 +38,7 @@
       </button>
     </header>
 
-    <div class="app-frame" id="app-frame" data-dock="closed" data-layout="1">
-      <aside class="left-rail" id="left-rail" aria-label="Panels">
-        <button type="button" class="rail-btn" data-panel-btn="lab" title="Lab" aria-pressed="false">Lab</button>
-        <button type="button" class="rail-btn" data-panel-btn="strategy" title="Strategy" aria-pressed="false">Strat</button>
-        <button type="button" class="rail-btn" data-panel-btn="news" title="News" aria-pressed="false">News</button>
-      </aside>
-
+    <div class="app-frame" id="app-frame" data-layout="1">
       <main class="chart-stage" id="chart-stage">
         <div class="chart-toolbar" id="chart-toolbar">
           <span class="label">Overlays</span>
@@ -71,10 +57,13 @@
         <div class="charts-grid" id="charts-grid" data-count="1"></div>
       </main>
 
-      <aside class="right-dock" id="right-dock" hidden>
+      <aside class="right-dock" id="right-dock" aria-label="Workspace panels">
         <div class="dock-header">
-          <strong id="dock-title">Lab</strong>
-          <button type="button" class="btn-icon" id="dock-close" title="Đóng">×</button>
+          <nav class="dock-tabs" aria-label="Panel">
+            <button type="button" class="dock-tab" data-panel-tab="lab" aria-selected="true">Lab</button>
+            <button type="button" class="dock-tab" data-panel-tab="strategy" aria-selected="false">Strategy</button>
+            <button type="button" class="dock-tab" data-panel-tab="news" aria-selected="false">News</button>
+          </nav>
         </div>
         <div class="dock-body" id="dock-body"></div>
       </aside>

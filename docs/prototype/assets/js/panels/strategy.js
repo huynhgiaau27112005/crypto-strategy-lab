@@ -8,6 +8,14 @@
       ? global.CSLMock.trades[0].id
       : 1;
 
+  function board() {
+    return (global.CSLMock && global.CSLMock.leaderboard) || [];
+  }
+
+  function formatScore(score) {
+    return typeof score === 'number' ? score.toFixed(1) : String(score || '—');
+  }
+
   function tradesList() {
     return (global.CSLMock && global.CSLMock.trades) || [];
   }
@@ -15,6 +23,20 @@
   function selectedTrade() {
     const trades = tradesList();
     return trades.find((t) => t.id === selectedTradeId) || trades[0] || null;
+  }
+
+  function applyStrategy(strategy, opts) {
+    if (!strategy) return;
+    lastStrategy = strategy;
+    global.dispatchEvent(
+      new CustomEvent('csl-apply-strategy', {
+        detail: {
+          strategy: strategy,
+          trades: tradesList(),
+          silent: !!(opts && opts.silent),
+        },
+      }),
+    );
   }
 
   function renderDetail(detailRoot) {
@@ -59,17 +81,32 @@
   }
 
   function render(root) {
-    const s = lastStrategy;
-    if (!s) {
-      root.innerHTML = '<p class="panel-placeholder">Chọn strategy từ Lab leaderboard.</p>';
+    const rows = board();
+    if (!rows.length) {
+      root.innerHTML = '<p class="panel-placeholder">Chưa có strategy trên leaderboard.</p>';
       return;
     }
 
+    if (!lastStrategy) lastStrategy = rows[0];
+    const s = lastStrategy;
+    const options = rows
+      .map(
+        (row) =>
+          `<option value="${row.rank}" ${row.rank === s.rank ? 'selected' : ''}>#${row.rank} · ${row.name}</option>`,
+      )
+      .join('');
+
     root.innerHTML = `
       <div class="strategy-panel">
-        <h3>${s.name}</h3>
-        <p class="meta">${s.version} · dataset BTC mock</p>
+        <label class="strategy-picker">
+          <span>Tổ hợp strategy</span>
+          <select id="strategy-select" aria-label="Chọn tổ hợp strategy">
+            ${options}
+          </select>
+        </label>
+        <p class="meta">${s.version} · dataset BTC mock · Binance BTCUSDT</p>
         <div class="stats-row">
+          <div class="stat-card"><div class="k">Overall score</div><div class="v score">${formatScore(s.score)}</div></div>
           <div class="stat-card"><div class="k">Return</div><div class="v up">${s.ret}</div></div>
           <div class="stat-card"><div class="k">Win Rate</div><div class="v">${s.win}</div></div>
           <div class="stat-card"><div class="k">Max DD</div><div class="v down">${s.mdd}</div></div>
@@ -97,6 +134,15 @@
         <div class="trade-detail" id="trade-detail"></div>
       </div>`;
 
+    const select = root.querySelector('#strategy-select');
+    select.addEventListener('change', () => {
+      const rank = Number(select.value);
+      const next = rows.find((r) => r.rank === rank);
+      if (!next) return;
+      applyStrategy(next);
+      render(root);
+    });
+
     const tbody = root.querySelector('#strategy-trades-body');
     const detailRoot = root.querySelector('#trade-detail');
     renderTradesTable(tbody, detailRoot);
@@ -105,6 +151,7 @@
 
   global.addEventListener('csl-apply-strategy', (e) => {
     if (e.detail && e.detail.strategy) lastStrategy = e.detail.strategy;
+    if (e.detail && e.detail.silent) return;
     const body = document.getElementById('dock-body');
     if (global.CSLApp && global.CSLApp.getActivePanel() === 'strategy' && body) {
       render(body);
@@ -114,6 +161,8 @@
   global.CSLPanels.strategy = {
     title: 'Strategy',
     mount: function (root) {
+      if (!lastStrategy && board()[0]) lastStrategy = board()[0];
+      if (lastStrategy) applyStrategy(lastStrategy, { silent: true });
       render(root);
     },
   };

@@ -4,6 +4,10 @@
   let timer = null;
   let candidates = 125;
 
+  function formatScore(score) {
+    return typeof score === 'number' ? score.toFixed(1) : String(score || '—');
+  }
+
   function renderLeaderboard(tbody) {
     const rows = (global.CSLMock && global.CSLMock.leaderboard) || [];
     tbody.innerHTML = rows
@@ -12,6 +16,7 @@
       <tr data-rank="${row.rank}" tabindex="0" role="button">
         <td>${row.rank}</td>
         <td>${row.name}<div class="meta">${row.version}</div></td>
+        <td class="score">${formatScore(row.score)}</td>
         <td class="up">${row.ret}</td>
         <td>${row.win}</td>
         <td>${row.mdd}</td>
@@ -59,51 +64,53 @@
         <section class="lab-col">
           <div class="lab-col-header">Strategy plugins</div>
           <div class="lab-col-body">
-            <article class="strategy-card">
-              <label class="row">
-                <input type="checkbox" checked />
-                <span>
-                  <strong>Moving Average (MA)</strong>
-                  <span class="meta">fast=20 · slow=50 · version v1</span>
-                </span>
-              </label>
-            </article>
-            <article class="strategy-card">
-              <label class="row">
-                <input type="checkbox" checked />
-                <span>
-                  <strong>RSI</strong>
-                  <span class="meta">period=14 · buy&lt;30 · sell&gt;70 · v1</span>
-                </span>
-              </label>
-            </article>
-            <article class="strategy-card">
-              <label class="row">
-                <input type="checkbox" checked />
-                <span>
-                  <strong>Bollinger Bands</strong>
-                  <span class="meta">period=20 · std=2 · version v1</span>
-                </span>
-              </label>
-            </article>
-            <article class="strategy-card">
-              <label class="row">
-                <input type="checkbox" checked />
-                <span>
-                  <strong>Support / Resistance</strong>
-                  <span class="meta">lookback=100 · proximity=0.4% · v1</span>
-                </span>
-              </label>
-            </article>
-            <article class="strategy-card">
-              <label class="row">
-                <input type="checkbox" id="sentiment-plugin" />
-                <span>
-                  <strong>Sentiment Strategy</strong>
-                  <span class="meta">optional · từ News pipeline · v1</span>
-                </span>
-              </label>
-            </article>
+            <div class="plugin-list">
+              <article class="strategy-card">
+                <label class="row">
+                  <input type="checkbox" checked />
+                  <span>
+                    <strong>Moving Average (MA)</strong>
+                    <span class="meta">fast=20 · slow=50 · version v1</span>
+                  </span>
+                </label>
+              </article>
+              <article class="strategy-card">
+                <label class="row">
+                  <input type="checkbox" checked />
+                  <span>
+                    <strong>RSI</strong>
+                    <span class="meta">period=14 · buy&lt;30 · sell&gt;70 · v1</span>
+                  </span>
+                </label>
+              </article>
+              <article class="strategy-card">
+                <label class="row">
+                  <input type="checkbox" checked />
+                  <span>
+                    <strong>Bollinger Bands</strong>
+                    <span class="meta">period=20 · std=2 · version v1</span>
+                  </span>
+                </label>
+              </article>
+              <article class="strategy-card">
+                <label class="row">
+                  <input type="checkbox" checked />
+                  <span>
+                    <strong>Support / Resistance</strong>
+                    <span class="meta">lookback=100 · proximity=0.4% · v1</span>
+                  </span>
+                </label>
+              </article>
+              <article class="strategy-card">
+                <label class="row">
+                  <input type="checkbox" id="sentiment-plugin" />
+                  <span>
+                    <strong>Sentiment Strategy</strong>
+                    <span class="meta">optional · từ News pipeline · v1</span>
+                  </span>
+                </label>
+              </article>
+            </div>
           </div>
         </section>
 
@@ -137,6 +144,9 @@
                 Current candidate · <span class="pill" id="candidate-pill">IDLE</span>
               </div>
               <div class="combo">MA20 + RSI14 + SR</div>
+              <div class="combo-score">
+                Overall score · <strong id="current-combo-score">86.2</strong>
+              </div>
               <div class="progress" aria-hidden="true"><span id="search-progress" style="width: 0%"></span></div>
               <p style="margin: 0.65rem 0 0; font-size: 0.78rem; color: var(--text-muted)">
                 generate → backtest → evaluate → rank · stop: 100 candidates / 1h / no improve
@@ -153,6 +163,7 @@
                 <tr>
                   <th>#</th>
                   <th>Strategy</th>
+                  <th>Score</th>
                   <th>Return</th>
                   <th>Win</th>
                   <th>MDD</th>
@@ -172,10 +183,24 @@
       sessionStorage.removeItem('csl-enable-sentiment');
     }
 
+    function syncPluginCard(card) {
+      const input = card.querySelector('input[type="checkbox"]');
+      if (!input) return;
+      card.classList.toggle('is-on', input.checked);
+      card.classList.toggle('is-off', !input.checked);
+    }
+
+    root.querySelectorAll('.strategy-card').forEach((card) => {
+      const input = card.querySelector('input[type="checkbox"]');
+      syncPluginCard(card);
+      if (input) input.addEventListener('change', () => syncPluginCard(card));
+    });
+
     const statusEl = root.querySelector('#loop-status');
     const candidatesEl = root.querySelector('#candidates');
     const candidatePill = root.querySelector('#candidate-pill');
     const progressEl = root.querySelector('#search-progress');
+    const comboScoreEl = root.querySelector('#current-combo-score');
     const startBtn = root.querySelector('#start-search');
     const stopBtn = root.querySelector('#stop-search');
     const tbody = root.querySelector('#lab-leaderboard');
@@ -194,6 +219,10 @@
       timer = setInterval(() => {
         candidates += 1;
         candidatesEl.textContent = String(candidates);
+        if (comboScoreEl) {
+          const jitter = 80 + Math.random() * 15;
+          comboScoreEl.textContent = jitter.toFixed(1);
+        }
       }, 800);
     });
 
@@ -229,7 +258,13 @@
     mount: mount,
     setSentimentChecked: function (checked) {
       const el = document.getElementById('sentiment-plugin');
-      if (el) el.checked = !!checked;
+      if (!el) return;
+      el.checked = !!checked;
+      const card = el.closest('.strategy-card');
+      if (card) {
+        card.classList.toggle('is-on', el.checked);
+        card.classList.toggle('is-off', !el.checked);
+      }
     },
   };
 })(window);
