@@ -12,6 +12,7 @@ import { LeaderboardModule } from './modules/leaderboard';
 import { ContinuousLoopModule } from './modules/continuous-loop';
 import { NewsModule } from './modules/news';
 import { SentimentModule } from './modules/sentiment';
+import { DatabaseModule } from './database/database.module';
 
 @Module({
   imports: [
@@ -26,8 +27,9 @@ import { SentimentModule } from './modules/sentiment';
     ContinuousLoopModule,
     NewsModule,
     SentimentModule,
+    DatabaseModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule { }
