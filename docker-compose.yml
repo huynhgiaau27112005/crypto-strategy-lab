@@ -1,0 +1,18 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb-ha:pg18
+    container_name: crypto-strategy-lab-db
+
+    ports:
+      - "6543:5432"
+
+    environment:
+      POSTGRES_DB: crypto_strategy_lab
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: pasword
+
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+
+volumes:
+  timescaledb_data:
