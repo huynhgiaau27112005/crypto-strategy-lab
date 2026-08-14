@@ -19,7 +19,7 @@ const client = new Client({
     port: Number(process.env.DATABASE_PORT),
     user: process.env.DATABASE_USER,
     password: process.env.DATABASE_PASSWORD,
-    database: 'crypto_strategy_lab',
+    database: process.env.DATABASE_NAME || 'crypto_strategy_lab',
 });
 
 async function getMigrationFiles() {
