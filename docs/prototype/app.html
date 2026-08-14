@@ -41,17 +41,30 @@
     <div class="app-frame" id="app-frame" data-layout="1">
       <main class="chart-stage" id="chart-stage">
         <div class="chart-toolbar" id="chart-toolbar">
-          <span class="label">Overlays</span>
-          <div class="overlay-toggles">
-            <label><input type="checkbox" data-overlay="ma" checked /> MA</label>
-            <label><input type="checkbox" data-overlay="bb" /> Bollinger</label>
-            <label><input type="checkbox" data-overlay="sr" /> Support / Resistance</label>
+          <div class="toolbar-group">
+            <span class="label">Overlays</span>
+            <div class="overlay-toggles" role="group" aria-label="Overlays">
+              <label class="overlay-chip">
+                <input type="checkbox" data-overlay="ma" checked />
+                <span>MA</span>
+              </label>
+              <label class="overlay-chip">
+                <input type="checkbox" data-overlay="bb" />
+                <span>Bollinger</span>
+              </label>
+              <label class="overlay-chip">
+                <input type="checkbox" data-overlay="sr" />
+                <span>S/R</span>
+              </label>
+            </div>
           </div>
           <div class="layout-controls">
             <span class="label">Layout</span>
-            <button type="button" data-layout-btn="1" class="active">1</button>
-            <button type="button" data-layout-btn="2">2</button>
-            <button type="button" data-layout-btn="4">4</button>
+            <div class="layout-seg" role="group" aria-label="Layout">
+              <button type="button" data-layout-btn="1" class="active">1</button>
+              <button type="button" data-layout-btn="2">2</button>
+              <button type="button" data-layout-btn="4">4</button>
+            </div>
           </div>
         </div>
         <div class="charts-grid" id="charts-grid" data-count="1"></div>

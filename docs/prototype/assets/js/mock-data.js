@@ -226,24 +226,42 @@
       source: 'CoinDesk',
       when: '2h trước',
       sentiment: 'POSITIVE',
+      url: 'https://www.coindesk.com/',
     },
     {
       title: 'Miners rotate inventory amid fee compression',
       source: 'The Block',
       when: '5h trước',
       sentiment: 'NEUTRAL',
+      url: 'https://www.theblock.co/',
     },
     {
       title: 'Regulatory probe rumors weigh on weekend liquidity',
       source: 'Reuters',
       when: '9h trước',
       sentiment: 'NEGATIVE',
+      url: 'https://www.reuters.com/',
     },
     {
       title: 'On-chain accumulation clusters near prior range high',
       source: 'Glassnode',
       when: '12h trước',
       sentiment: 'POSITIVE',
+      url: 'https://insights.glassnode.com/',
+    },
+    {
+      title: 'Open interest cools as funding rates flip mixed',
+      source: 'Cointelegraph',
+      when: '14h trước',
+      sentiment: 'NEUTRAL',
+      url: 'https://cointelegraph.com/',
+    },
+    {
+      title: 'Treasury desks add BTC on dip toward range mid',
+      source: 'Bloomberg',
+      when: '18h trước',
+      sentiment: 'POSITIVE',
+      url: 'https://www.bloomberg.com/',
     },
   ];
 

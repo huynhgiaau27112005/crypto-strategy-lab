@@ -70,8 +70,8 @@ button:disabled,
   min-height: var(--header-h);
   display: flex;
   align-items: center;
-  gap: 0.85rem;
-  padding: 0 1rem;
+  gap: 1.35rem;
+  padding: 0 1.25rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
   backdrop-filter: blur(14px);
@@ -99,8 +99,8 @@ button:disabled,
 .market-context {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  padding: 0 0.75rem;
+  gap: 1.15rem;
+  padding: 0 1.15rem;
   border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
   min-height: 100%;
@@ -140,7 +140,9 @@ button:disabled,
   display: flex;
   flex-direction: column;
   gap: 0.05rem;
-  margin-left: 0.25rem;
+  margin-left: 0.15rem;
+  padding-left: 1.15rem;
+  border-left: 1px solid var(--border);
 }
 
 .price {
@@ -170,8 +172,8 @@ button:disabled,
   border: 1px solid rgba(45, 212, 191, 0.35);
   background: rgba(45, 212, 191, 0.1);
   border-radius: 999px;
-  padding: 0.2rem 0.5rem;
-  margin-left: 0.25rem;
+  padding: 0.2rem 0.55rem;
+  margin-left: 0.35rem;
 }
 
 .workspace-nav {
@@ -266,29 +268,6 @@ button:disabled,
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
-}
-
-.overlay-toggles label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.8rem;
-  color: var(--text);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0.28rem 0.65rem;
-  cursor: pointer;
-}
-
-.overlay-toggles label:has(input:checked) {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--text-strong);
-}
-
-.overlay-toggles input {
-  accent-color: var(--accent);
 }
 
 .layout-controls {
