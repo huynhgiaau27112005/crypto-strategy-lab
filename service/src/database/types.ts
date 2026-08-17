@@ -30,8 +30,6 @@ export type TradeExitReason =
     | 'END_OF_BACKTEST'
     | string;
 
-export type LeaderboardType = 'PERSONAL' | 'SEARCH' | 'GLOBAL' | string;
-
 export interface SessionEntity {
     id: string;
     created_at: Date;
@@ -111,8 +109,6 @@ export interface EvaluationEntity {
 export interface LeaderboardEntity {
     id: string;
     session_id: string;
-    name: string;
-    type: LeaderboardType;
     created_at: Date;
     updated_at: Date;
 }
