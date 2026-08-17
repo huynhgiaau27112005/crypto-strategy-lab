@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../../database/database.service';
+import { CandleEntity } from '../../../database/types';
 
 @Injectable()
 export class CandleRepository {
@@ -8,64 +9,68 @@ export class CandleRepository {
     ) { }
 
     async findCandles(
-        tradingPairId: number,
-        timeframeId: number,
+        timeframe: string,
         limit: number,
-    ) {
-        const result = await this.database.query(
-            `
+        startTime?: Date,
+        endTime?: Date,
+    ): Promise<CandleEntity[]> {
+        const conditions: string[] = ['timeframe = $1'];
+        const params: any[] = [timeframe];
+
+        if (startTime) {
+            params.push(startTime);
+            conditions.push(`timestamp >= $${params.length}`);
+        }
+
+        if (endTime) {
+            params.push(endTime);
+            conditions.push(`timestamp < $${params.length}`);
+        }
+
+        params.push(limit);
+        const limitParamIndex = params.length;
+
+        const queryText = `
       SELECT
-        time,
+        timeframe,
+        timestamp,
         open,
         high,
         low,
         close,
         volume
-      FROM market.candles
-      WHERE trading_pair_id = $1
-        AND timeframe_id = $2
-      ORDER BY time DESC
-      LIMIT $3
-      `,
-            [
-                tradingPairId,
-                timeframeId,
-                limit,
-            ],
-        );
+      FROM candles
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY timestamp DESC
+      LIMIT $${limitParamIndex}
+    `;
 
+        const result = await this.database.query<CandleEntity>(queryText, params);
         return result.rows;
     }
 
     async insertCandles(
         candles: Array<{
-            time: Date;
-            tradingPairId: number;
-            timeframeId: number;
+            timeframe: string;
+            timestamp: Date;
             open: string;
             high: string;
             low: string;
             close: string;
             volume: string;
         }>,
-    ) {
+    ): Promise<void> {
         if (candles.length === 0) {
             return;
         }
 
-        const client =
-            await this.database.getClient();
-
-        try {
-            await client.query('BEGIN');
-
+        await this.database.withTransaction(async (client) => {
             for (const candle of candles) {
                 await client.query(
                     `
-          INSERT INTO market.candles (
-            time,
-            trading_pair_id,
-            timeframe_id,
+          INSERT INTO candles (
+            timeframe,
+            timestamp,
             open,
             high,
             low,
@@ -73,19 +78,11 @@ export class CandleRepository {
             volume
           )
           VALUES (
-            $1,
-            $2,
-            $3,
-            $4,
-            $5,
-            $6,
-            $7,
-            $8
+            $1, $2, $3, $4, $5, $6, $7
           )
           ON CONFLICT (
-            trading_pair_id,
-            timeframe_id,
-            time
+            timeframe,
+            timestamp
           )
           DO UPDATE SET
             open = EXCLUDED.open,
@@ -95,9 +92,8 @@ export class CandleRepository {
             volume = EXCLUDED.volume
           `,
                     [
-                        candle.time,
-                        candle.tradingPairId,
-                        candle.timeframeId,
+                        candle.timeframe,
+                        candle.timestamp,
                         candle.open,
                         candle.high,
                         candle.low,
@@ -106,59 +102,6 @@ export class CandleRepository {
                     ],
                 );
             }
-
-            await client.query('COMMIT');
-        } catch (error) {
-            await client.query('ROLLBACK');
-            throw error;
-        } finally {
-            client.release();
-        }
-    }
-
-    async findTradingPairId(
-        symbol: string,
-    ): Promise<number> {
-        const result = await this.database.query<{
-            id: number;
-        }>(
-            `
-        SELECT id
-        FROM market.trading_pairs
-        WHERE symbol = $1
-        `,
-            [symbol.toUpperCase()],
-        );
-
-        if (result.rowCount === 0) {
-            throw new Error(
-                `Trading pair not found: ${symbol}`,
-            );
-        }
-
-        return result.rows[0].id;
-    }
-
-    async findTimeframeId(
-        code: string,
-    ): Promise<number> {
-        const result = await this.database.query<{
-            id: number;
-        }>(
-            `
-        SELECT id
-        FROM market.timeframes
-        WHERE code = $1
-        `,
-            [code],
-        );
-
-        if (result.rowCount === 0) {
-            throw new Error(
-                `Timeframe not found: ${code}`,
-            );
-        }
-
-        return result.rows[0].id;
+        });
     }
 }

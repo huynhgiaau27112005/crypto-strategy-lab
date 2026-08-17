@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-
 import { BinanceClient } from './clients/binance.client';
 import { CandleRepository } from './repositories/candle.repository';
 
@@ -7,9 +6,7 @@ import { CandleRepository } from './repositories/candle.repository';
 export class MarketDataService {
     constructor(
         private readonly binanceClient: BinanceClient,
-
-        private readonly candleRepository:
-            CandleRepository,
+        private readonly candleRepository: CandleRepository,
     ) { }
 
     async getCandles(
@@ -25,8 +22,8 @@ export class MarketDataService {
             );
 
         return rows.map((row: any[]) => ({
-            time: new Date(row[0]),
-
+            timeframe: interval,
+            timestamp: new Date(row[0]),
             open: row[1],
             high: row[2],
             low: row[3],
@@ -40,14 +37,6 @@ export class MarketDataService {
         interval: string,
         limit = 500,
     ) {
-        const tradingPairId =
-            await this.candleRepository
-                .findTradingPairId(symbol);
-
-        const timeframeId =
-            await this.candleRepository
-                .findTimeframeId(interval);
-
         const rows =
             await this.binanceClient.getKlines(
                 symbol,
@@ -57,12 +46,8 @@ export class MarketDataService {
 
         const candles = rows.map(
             (row: any[]) => ({
-                time: new Date(row[0]),
-
-                tradingPairId,
-
-                timeframeId,
-
+                timeframe: interval,
+                timestamp: new Date(row[0]),
                 open: row[1],
                 high: row[2],
                 low: row[3],
@@ -71,8 +56,7 @@ export class MarketDataService {
             }),
         );
 
-        await this.candleRepository
-            .insertCandles(candles);
+        await this.candleRepository.insertCandles(candles);
 
         return {
             symbol,
