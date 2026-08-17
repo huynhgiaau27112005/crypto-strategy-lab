@@ -8,7 +8,7 @@ const client = new Client({
     port: Number(process.env.DATABASE_PORT),
     user: process.env.DATABASE_USER,
     password: process.env.DATABASE_PASSWORD,
-    database: 'crypto_strategy_lab',
+    database: process.env.DATABASE_NAME || 'crypto_strategy_lab',
 });
 
 try {
@@ -19,7 +19,18 @@ try {
             schemaname,
             tablename
         FROM pg_tables
-        WHERE schemaname = 'market'
+        WHERE schemaname = 'public'
+          AND tablename IN (
+            'sessions',
+            'candles',
+            'strategies',
+            'experiments',
+            'experiment_strategies',
+            'trades',
+            'evaluations',
+            'leaderboards',
+            'leaderboard_entries'
+          )
         ORDER BY tablename;
     `);
 
@@ -33,10 +44,10 @@ try {
 
     const candleCount = await client.query(`
         SELECT COUNT(*) AS count
-        FROM market.candles;
+        FROM candles;
     `);
 
-    console.log('\n=== MARKET TABLES ===');
+    console.log('\n=== APPLICATION TABLES ===');
 
     for (const row of tables.rows) {
         console.log(
