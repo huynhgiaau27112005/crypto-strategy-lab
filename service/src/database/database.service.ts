@@ -26,9 +26,10 @@ export class DatabaseService
         try {
             await this.pool.query('SELECT 1');
             this.logger.log('Database connection established.');
-        } catch (error) {
-            this.logger.error('Failed to connect to database.', error);
-            throw error;
+        } catch (error: any) {
+            this.logger.warn(
+                `Initial database connection check failed (${error?.message || error}). Application will attempt reconnection on requests.`,
+            );
         }
     }
 

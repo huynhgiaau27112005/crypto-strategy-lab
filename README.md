@@ -10,6 +10,7 @@ Kiến trúc hiện tại: **modular monolithic** (một NestJS backend + React 
 |---------|--------|
 | `service/` | NestJS + TypeScript modular monolith (11 module stubs) |
 | `web-platform/` | Vite + React + TypeScript SPA (page stubs) |
+| `database/` | SQL migrations, seed, & check scripts cho PostgreSQL + TimescaleDB |
 | `docs/prototype/` | HTML clickable UI cho stakeholder approve |
 | `docs/superpowers/` | Design specs & implementation plans |
 
@@ -18,7 +19,28 @@ Kiến trúc hiện tại: **modular monolithic** (một NestJS backend + React 
 - Node.js **20+** (đã kiểm tra với Node 24)
 - npm
 
-## Chạy Backend (`service`)
+## 🚀 Chạy Docker Compose backend
+
+Xem chi tiết tại [DOCKER_GUIDE.md](file:///home/van/dev/Architecture/crypto-strategy-lab/DOCKER_GUIDE.md).
+
+Khởi động toàn bộ hệ thống (Database TimescaleDB & NestJS API):
+
+```bash
+docker compose up -d --build
+```
+
+- **Backend NestJS API**: `http://localhost:3000`
+- **Database TimescaleDB**: `localhost:6543`
+
+Thử nghiệm nhanh qua `curl`:
+
+```bash
+curl "http://localhost:3000/market-data/candles?symbol=BTCUSDT&interval=5m&limit=5"
+```
+
+---
+
+## 💻 Chạy Backend cục bộ (`service`)
 
 ```bash
 cd service
@@ -36,6 +58,8 @@ curl http://localhost:3000/market-data/health
 ```
 
 Các module domain (stub): `market-data`, `chart`, `strategy-engine`, `strategy-plugin`, `composite-strategy`, `strategy-search`, `backtesting`, `leaderboard`, `continuous-loop`, `news`, `sentiment`.
+
+---
 
 ## Chạy Frontend (`web-platform`)
 
@@ -71,6 +95,7 @@ Luồng demo đề xuất: Charts → Lab → Strategy → News.
 
 ## Tài liệu thiết kế
 
+- Hướng dẫn Docker & API: `DOCKER_GUIDE.md`
 - Spec scaffold: `docs/superpowers/specs/2026-08-09-project-boilerplate-design.md`
 - Spec prototype redesign: `docs/superpowers/specs/2026-08-09-prototype-redesign-design.md`
 - Plan boilerplate: `docs/superpowers/plans/2026-08-09-project-boilerplate.md`
