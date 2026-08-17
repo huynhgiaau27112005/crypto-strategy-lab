@@ -128,19 +128,16 @@ CREATE INDEX IF NOT EXISTS idx_evaluations_overall_score ON evaluations(overall_
 
 -- ============================================================
 -- 8. LEADERBOARDS
--- Session personal or system global leaderboards
+-- Session leaderboard (one leaderboard per session)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS leaderboards (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    name VARCHAR(255) NOT NULL,
-    type VARCHAR(30) NOT NULL,
+    session_id UUID NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_leaderboards_session_id ON leaderboards(session_id);
-CREATE INDEX IF NOT EXISTS idx_leaderboards_session_type ON leaderboards(session_id, type);
 
 -- ============================================================
 -- 9. LEADERBOARD_ENTRIES

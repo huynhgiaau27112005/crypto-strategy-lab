@@ -1,15 +1,13 @@
--- System session for global leaderboards and default system resources
+-- System session for global system resources
 INSERT INTO sessions (id, created_at, last_seen_at)
 VALUES ('00000000-0000-0000-0000-000000000000', NOW(), NOW())
 ON CONFLICT (id) DO NOTHING;
 
--- Global system leaderboard
-INSERT INTO leaderboards (id, session_id, name, type, created_at, updated_at)
+-- Default system session leaderboard
+INSERT INTO leaderboards (id, session_id, created_at, updated_at)
 VALUES (
     '00000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000000',
-    'Global Leaderboard',
-    'GLOBAL',
     NOW(),
     NOW()
 )
