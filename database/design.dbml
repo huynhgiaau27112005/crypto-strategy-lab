@@ -10,6 +10,7 @@
 //   candles
 //
 // Session-scoped data:
+//   sessions
 //   strategies
 //   experiments
 //   experiment_strategies
@@ -84,6 +85,7 @@ Table candles {
 // A strategy record represents an immutable strategy version.
 //
 // If parameters change, create a new strategy record/version.
+// should be created instead of modifying a strategy already used by an experiment.
 // Existing experiments must continue to reference the exact
 // strategy version that was used.
 
@@ -139,10 +141,7 @@ Table experiments {
   // The concrete Search Engine implementation is intentionally
   // decided later by the team.
   //
-  // Examples of future values:
-  // RANDOM
-  // GENETIC
-  // DOMAIN_GUIDED
+ 
 
   // PENDING
   // RUNNING
@@ -285,38 +284,20 @@ Table evaluations {
 // ============================================================
 
 // A leaderboard belongs to a session.
+// Each session has exactly ONE leaderboard.
 //
-// This allows a session to have multiple personal leaderboards.
-//
-// Example:
-//
-// Session A
-//   ├── "My Best Strategies"
-//   └── "My Recent Search"
-//
-// A future global/system leaderboard can be represented by a
-// dedicated system session or another application-level scope.
+// session_id is UNIQUE so one session cannot have multiple
+// leaderboard records.
+// The leaderboard contains strategies/results belonging to
+// that session only. 
 
 Table leaderboards {
   id uuid [pk]
 
-  session_id uuid [not null]
-
-  name varchar(255) [not null]
-
-  // Examples:
-  // PERSONAL
-  // SEARCH
-  // GLOBAL
-  type varchar(30) [not null]
+  session_id uuid [not null, unique]
 
   created_at timestamptz [not null, default: `now()`]
   updated_at timestamptz [not null, default: `now()`]
-
-  indexes {
-    session_id
-    (session_id, type)
-  }
 }
 
 
@@ -324,12 +305,13 @@ Table leaderboards {
 // LEADERBOARD ENTRY
 // ============================================================
 
-// Stores the ranking of an evaluated experiment strategy.
+// A leaderboard entry represents one ranked experiment strategy.
 //
-// Persisting this data allows the system to maintain leaderboard
-// snapshots and support realtime leaderboard updates.
+// All entries in a leaderboard belong to the leaderboard's
+// session through the experiment -> session relationship.
 //
-// The same evaluated strategy can appear in multiple leaderboards.
+// The same experiment strategy should appear at most once
+// in a leaderboard.
 
 Table leaderboard_entries {
   id uuid [pk]
