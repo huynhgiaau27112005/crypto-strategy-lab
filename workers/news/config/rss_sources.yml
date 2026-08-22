@@ -1,0 +1,20 @@
+sources:
+  - name: coindesk
+    url: https://www.coindesk.com/arc/outboundfeeds/rss
+    type: rss
+
+    mapping:
+      id: id
+      title: title
+      content: summary
+      publishedAt: published
+
+  - name: cointelegraph
+    url: https://cointelegraph.com/rss
+    type: rss
+    
+    mapping:
+      id: id
+      title: title
+      content: summary
+      publishedAt: published

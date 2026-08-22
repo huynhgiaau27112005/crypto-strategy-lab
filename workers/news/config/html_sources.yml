@@ -1,0 +1,39 @@
+sources:
+  - id: coindesk
+    type: html
+    url: https://www.coindesk.com/latest-crypto-news
+    mapping:
+      listing:
+        item_selector: ".article-cardstyles__StyledArticleCard, article"
+        link_selector: "a.card-title-link, h6 a, a"
+      article:
+        title: "h1"
+        content: ".at-content, article"
+        publishedAt: "time@datetime"
+        url: "link[rel='canonical']@href"
+
+  - id: cointelegraph
+    type: html
+    url: https://cointelegraph.com/category/latest-news
+    mapping:
+      listing:
+        item_selector: "article.post-card, li.posts-listing__item"
+        link_selector: "a.post-card__title-link, a"
+      article:
+        title: "h1.post__title, h1"
+        content: ".post-content, article"
+        publishedAt: "time@datetime"
+        url: "link[rel='canonical']@href"
+
+  - id: binance
+    type: html
+    url: https://www.binance.com/en/square/news/all
+    mapping:
+      listing:
+        item_selector: "div.news-item, article, div.feed-item"
+        link_selector: "a"
+      article:
+        title: "h1"
+        content: "article, .news-detail-content, div.content"
+        publishedAt: "time@datetime"
+        url: "link[rel='canonical']@href"
