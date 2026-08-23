@@ -1,0 +1,378 @@
+// Crypto Strategy Lab
+// Database Schema — MVP
+// PostgreSQL + TimescaleDB
+//
+// Fixed market scope:
+//   Exchange : Binance
+//   Symbol   : BTCUSDT
+//
+// Shared data:
+//   candles
+//
+// Session-scoped data:
+//   sessions
+//   strategies
+//   experiments
+//   experiment_strategies
+//   trades
+//   evaluations
+//   leaderboards
+//   leaderboard_entries
+//
+// Notes:
+//   - `candles` is converted to a TimescaleDB hypertable by migration SQL.
+//   - News data is intentionally excluded because it is stored in NoSQL.
+//   - Search Engine implementation is intentionally abstracted.
+//   - Leaderboards are persisted so both personal and global leaderboards
+//     can be supported.
+
+Project crypto_strategy_lab {
+  database_type: "PostgreSQL"
+  Note: "PostgreSQL + TimescaleDB. Current market scope is fixed to Binance / BTCUSDT."
+}
+
+
+// ============================================================
+// SESSION
+// ============================================================
+
+Table sessions {
+  id uuid [pk]
+
+  created_at timestamptz [not null, default: `now()`]
+  last_seen_at timestamptz
+}
+
+
+// ============================================================
+// SHARED MARKET DATA
+// ============================================================
+
+// Fixed source: Binance
+// Fixed symbol: BTCUSDT
+//
+// This table becomes a TimescaleDB hypertable.
+//
+// Migration:
+//
+// SELECT create_hypertable(
+//   'candles',
+//   by_range('timestamp')
+// );
+
+Table candles {
+  timeframe varchar(10) [not null]
+  timestamp timestamptz [not null]
+
+  open decimal(30, 12) [not null]
+  high decimal(30, 12) [not null]
+  low decimal(30, 12) [not null]
+  close decimal(30, 12) [not null]
+  volume decimal(30, 12) [not null]
+
+  Note: "Shared historical/realtime candle data for Binance BTCUSDT."
+
+  indexes {
+    (timeframe, timestamp) [pk]
+  }
+}
+
+
+// ============================================================
+// STRATEGY
+// ============================================================
+
+// A strategy record represents an immutable strategy version.
+//
+// If parameters change, create a new strategy record/version.
+// should be created instead of modifying a strategy already used by an experiment.
+// Existing experiments must continue to reference the exact
+// strategy version that was used.
+
+Table strategies {
+  id uuid [pk]
+
+  session_id uuid [not null]
+
+  name varchar(255) [not null]
+  version int [not null]
+
+  // Examples:
+  // MA
+  // RSI
+  // BOLLINGER
+  // SUPPORT_RESISTANCE
+  // COMPOSITE
+  type varchar(50) [not null]
+
+  // Strategy parameters / composite configuration.
+  parameters jsonb [not null]
+
+  // SHA-256 of canonical parameters. Used to avoid evaluating the same
+  // generated configuration more than once per session.
+  configuration_hash char(64)
+
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    session_id
+    (session_id, name, version) [unique]
+    (session_id, configuration_hash) [unique]
+  }
+}
+
+
+// ============================================================
+// EXPERIMENT
+// ============================================================
+
+// One experiment represents one Search / Backtest run.
+//
+// The experiment does NOT duplicate candle data.
+// It stores the dataset specification used by the Backtester.
+//
+// Current market scope is always Binance BTCUSDT.
+
+Table experiments {
+  id uuid [pk]
+
+  session_id uuid [not null]
+
+  timeframe varchar(10) [not null]
+
+  start_time timestamptz [not null]
+  end_time timestamptz [not null]
+
+  // The concrete Search Engine implementation is intentionally
+  // decided later by the team.
+  //
+ 
+
+  // PENDING
+  // RUNNING
+  // COMPLETED
+  // FAILED
+  // CANCELLED
+  status varchar(30) [not null]
+
+  search_algorithm varchar(50)
+  search_config jsonb [not null, default: `'{}'`]
+  random_seed bigint
+  stop_reason varchar(50)
+  error_message text
+
+  created_at timestamptz [not null, default: `now()`]
+  completed_at timestamptz
+
+  indexes {
+    session_id
+    (session_id, created_at)
+  }
+}
+
+
+// ============================================================
+// EXPERIMENT <-> STRATEGY
+// ============================================================
+
+// An experiment can test many candidate strategies.
+//
+// Example:
+//
+// Experiment #182
+//   ├── MA20 + RSI14
+//   ├── MA50 + RSI14
+//   ├── MA20 + Bollinger
+//   └── MA20 + RSI14 + SupportResistance
+
+Table experiment_strategies {
+  id uuid [pk]
+
+  experiment_id uuid [not null]
+  strategy_id uuid [not null]
+
+  // PENDING
+  // RUNNING
+  // COMPLETED
+  // FAILED
+  status varchar(30) [not null]
+
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    experiment_id
+    strategy_id
+    (experiment_id, strategy_id) [unique]
+  }
+}
+
+
+// ============================================================
+// TRADES
+// ============================================================
+
+// Simulated trades generated by a backtest.
+//
+// stop_loss and take_profit are nullable because a strategy
+// does not necessarily use SL/TP.
+
+Table trades {
+  id uuid [pk]
+
+  experiment_strategy_id uuid [not null]
+
+  // LONG / SHORT
+  side varchar(10) [not null]
+
+  entry_time timestamptz [not null]
+  entry_price decimal(30, 12) [not null]
+
+  stop_loss decimal(30, 12)
+  take_profit decimal(30, 12)
+
+  exit_time timestamptz
+  exit_price decimal(30, 12)
+
+  quantity decimal(30, 12)
+
+  profit_loss decimal(30, 12)
+  return_percent decimal(20, 10)
+
+  // Examples:
+  // SIGNAL
+  // STOP_LOSS
+  // TAKE_PROFIT
+  // END_OF_BACKTEST
+  exit_reason varchar(50)
+
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    experiment_strategy_id
+    entry_time
+    exit_time
+  }
+}
+
+
+// ============================================================
+// EVALUATION
+// ============================================================
+
+// Evaluation result for one candidate strategy.
+//
+// These metrics are used by the leaderboard.
+
+Table evaluations {
+  id uuid [pk]
+
+  experiment_strategy_id uuid [not null, unique]
+
+  total_return decimal(20, 10)
+  profit_loss decimal(30, 12)
+
+  win_rate decimal(10, 6)
+
+  max_drawdown decimal(20, 10)
+
+  number_of_trades int [not null, default: 0]
+
+  profit_factor decimal(20, 10)
+  sharpe_ratio decimal(20, 10)
+
+  overall_score decimal(20, 10)
+
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    overall_score
+  }
+}
+
+
+// ============================================================
+// LEADERBOARD
+// ============================================================
+
+// A leaderboard belongs to a session.
+// Each session has exactly ONE leaderboard.
+//
+// session_id is UNIQUE so one session cannot have multiple
+// leaderboard records.
+// The leaderboard contains strategies/results belonging to
+// that session only. 
+
+Table leaderboards {
+  id uuid [pk]
+
+  session_id uuid [not null, unique]
+
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+
+// ============================================================
+// LEADERBOARD ENTRY
+// ============================================================
+
+// A leaderboard entry represents one ranked experiment strategy.
+//
+// All entries in a leaderboard belong to the leaderboard's
+// session through the experiment -> session relationship.
+//
+// The same experiment strategy should appear at most once
+// in a leaderboard.
+
+Table leaderboard_entries {
+  id uuid [pk]
+
+  leaderboard_id uuid [not null]
+
+  experiment_strategy_id uuid [not null]
+
+  rank int [not null]
+  score decimal(20, 10) [not null]
+
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    leaderboard_id
+    experiment_strategy_id
+    (leaderboard_id, rank) [unique]
+    (leaderboard_id, experiment_strategy_id) [unique]
+  }
+}
+
+
+// ============================================================
+// RELATIONSHIPS
+// ============================================================
+
+// Session owns strategies.
+Ref: sessions.id < strategies.session_id
+
+// Session owns experiments.
+Ref: sessions.id < experiments.session_id
+
+// Experiment contains candidate strategies.
+Ref: experiments.id < experiment_strategies.experiment_id
+
+// Strategy can participate in multiple experiments.
+Ref: strategies.id < experiment_strategies.strategy_id
+
+// Candidate generates simulated trades.
+Ref: experiment_strategies.id < trades.experiment_strategy_id
+
+// Candidate has one evaluation.
+Ref: experiment_strategies.id - evaluations.experiment_strategy_id
+
+// Session owns leaderboards.
+Ref: sessions.id < leaderboards.session_id
+
+// Leaderboard contains ranked experiment strategies.
+Ref: leaderboards.id < leaderboard_entries.leaderboard_id
+
+// A candidate can appear in multiple leaderboards.
+Ref: experiment_strategies.id < leaderboard_entries.experiment_strategy_id
