@@ -108,11 +108,16 @@ Table strategies {
   // Strategy parameters / composite configuration.
   parameters jsonb [not null]
 
+  // SHA-256 of canonical parameters. Used to avoid evaluating the same
+  // generated configuration more than once per session.
+  configuration_hash char(64)
+
   created_at timestamptz [not null, default: `now()`]
 
   indexes {
     session_id
     (session_id, name, version) [unique]
+    (session_id, configuration_hash) [unique]
   }
 }
 
@@ -149,6 +154,12 @@ Table experiments {
   // FAILED
   // CANCELLED
   status varchar(30) [not null]
+
+  search_algorithm varchar(50)
+  search_config jsonb [not null, default: `'{}'`]
+  random_seed bigint
+  stop_reason varchar(50)
+  error_message text
 
   created_at timestamptz [not null, default: `now()`]
   completed_at timestamptz

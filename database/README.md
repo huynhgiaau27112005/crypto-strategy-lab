@@ -235,6 +235,10 @@ This is important for reproducibility: an old experiment must continue to refere
 
 A strategy belongs to the session that created it.
 
+Generated composite strategies also have a `configuration_hash`. It is the
+SHA-256 hash of the canonical strategy JSON and prevents the same session from
+storing and backtesting the same generated configuration more than once.
+
 ---
 
 ## 6. Experiment — `experiments`
@@ -250,7 +254,8 @@ session_id:       A
 timeframe:        5m
 start_time:       2026-01-01
 end_time:         2026-07-01
-search_engine:    <selected implementation>
+search_algorithm: DOMAIN_GUIDED_RANDOM
+random_seed:      123456
 status:           COMPLETED
 ```
 
@@ -260,21 +265,20 @@ Instead, it stores the dataset specification that the Backtest Engine uses to re
 
 ### Search Engine
 
-The system currently uses one Search Engine implementation, but the team has not decided which implementation to use yet.
-
-Therefore the schema does not hard-code a particular algorithm.
-
-The `search_engine` field records which implementation was used by an experiment.
+The `search_algorithm` field records the implementation used by an experiment.
+`search_config` stores its parameter space and stop conditions, while
+`random_seed` makes random candidate generation reproducible.
 
 Possible future values could include:
 
 ```text
 RANDOM
 GENETIC
-DOMAIN_GUIDED
+DOMAIN_GUIDED_RANDOM
 ```
 
-The exact value is an application-level decision.
+`stop_reason` and `error_message` make completed, cancelled, and failed loops
+observable without relying only on application logs.
 
 ---
 
@@ -655,7 +659,9 @@ An experiment records:
 timeframe
 start_time
 end_time
-search_engine
+search_algorithm
+search_config
+random_seed
 strategy/version
 ```
 
