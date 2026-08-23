@@ -49,7 +49,7 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- USERS / AUTH
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       email varchar(255) NOT NULL UNIQUE,
       password_hash text NOT NULL,
@@ -59,7 +59,7 @@ CREATE TABLE users (
       updated_at timestamptz NOT NULL DEFAULT now()
     );
 
-    CREATE TABLE refresh_tokens (
+    CREATE TABLE IF NOT EXISTS refresh_tokens (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       token_hash text NOT NULL UNIQUE,
@@ -83,7 +83,7 @@ CREATE TABLE users (
     );
 
     -- STRATEGIES
-    CREATE TABLE strategies (
+    CREATE TABLE IF NOT EXISTS strategies (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       owner_user_id uuid REFERENCES users(id),
       name varchar(255) NOT NULL,
@@ -102,7 +102,7 @@ CREATE TABLE users (
     CREATE INDEX idx_strategies_type ON strategies(type);
 
     -- EXPERIMENTS & SEARCH CONFIGURATION
-    CREATE TABLE experiments (
+    CREATE TABLE IF NOT EXISTS experiments (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id uuid NOT NULL REFERENCES users(id),
       name varchar(255),
@@ -114,7 +114,7 @@ CREATE TABLE users (
     CREATE INDEX idx_experiments_user_id ON experiments(user_id);
     CREATE INDEX idx_experiments_status ON experiments(status);
 
-    CREATE TABLE experiment_configs (
+    CREATE TABLE IF NOT EXISTS experiment_configs (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       experiment_id uuid NOT NULL UNIQUE REFERENCES experiments(id) ON DELETE CASCADE,
       timeframe app_timeframe NOT NULL,
@@ -124,7 +124,7 @@ CREATE TABLE users (
       created_at timestamptz NOT NULL DEFAULT now()
     );
 
-    CREATE TABLE experiment_config_strategies (
+    CREATE TABLE IF NOT EXISTS experiment_config_strategies (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       experiment_config_id uuid NOT NULL REFERENCES experiment_configs(id) ON DELETE CASCADE,
       strategy_id uuid NOT NULL REFERENCES strategies(id),
@@ -136,7 +136,7 @@ CREATE TABLE users (
     CREATE INDEX idx_ecs_strategy_id ON experiment_config_strategies(strategy_id);
 
     -- SEARCH ITERATIONS
-    CREATE TABLE experiment_iterations (
+    CREATE TABLE IF NOT EXISTS experiment_iterations (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       experiment_id uuid NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
       iteration_number int NOT NULL,
@@ -151,13 +151,13 @@ CREATE TABLE users (
     CREATE INDEX idx_iterations_status ON experiment_iterations(status);
 
     -- CANDIDATES
-    CREATE TABLE candidates (
+    CREATE TABLE IF NOT EXISTS candidates (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       iteration_id uuid NOT NULL UNIQUE REFERENCES experiment_iterations(id) ON DELETE CASCADE,
       created_at timestamptz NOT NULL DEFAULT now()
     );
 
-    CREATE TABLE candidate_strategies (
+    CREATE TABLE IF NOT EXISTS candidate_strategies (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       candidate_id uuid NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
       strategy_id uuid NOT NULL REFERENCES strategies(id),
@@ -169,7 +169,7 @@ CREATE TABLE users (
     CREATE INDEX idx_cs_strategy_id ON candidate_strategies(strategy_id);
 
     -- BACKTEST EXECUTION
-    CREATE TABLE backtest_runs (
+    CREATE TABLE IF NOT EXISTS backtest_runs (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       candidate_id uuid NOT NULL UNIQUE REFERENCES candidates(id) ON DELETE CASCADE,
       status backtest_status NOT NULL DEFAULT 'PENDING',
