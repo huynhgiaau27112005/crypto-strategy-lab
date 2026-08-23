@@ -7,7 +7,7 @@ This is an Agent that helps to crawl cypro-market-related news, then reviews tho
 graph TD
     subgraph "Core"
         direction TB
-        
+
         A1["News Crawler"]
         A2["News Items Storage"]
 
@@ -22,7 +22,7 @@ graph TD
         A4 --> A5
     end
 
-    subgraph "Agent" 
+    subgraph "Agent"
         direction TB
 
         B1["Old State"]

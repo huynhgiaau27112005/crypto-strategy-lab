@@ -15,7 +15,7 @@ class HTTPFetcher:
             response.raise_for_status()
 
             return response.content
-        
+
         except requests.exceptions.RequestException as e:
             raise RuntimeError(
                 f"Failed to fetch {config.url}: {e}"

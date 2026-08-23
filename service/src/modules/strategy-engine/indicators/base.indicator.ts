@@ -7,7 +7,7 @@ export abstract class BaseIndicator {
 /*
 {
   value,
-  timeframe, 
+  timeframe,
   timestamp
 }
 */

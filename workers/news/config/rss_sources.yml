@@ -12,7 +12,7 @@ sources:
   - name: cointelegraph
     url: https://cointelegraph.com/rss
     type: rss
-    
+
     mapping:
       id: id
       title: title

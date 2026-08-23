@@ -21,4 +21,3 @@ def test_rss_parser():
     raw_data = fetcher.fetch(config)
     result = parser.parse(raw_data, config)
     assert result is not None
-    

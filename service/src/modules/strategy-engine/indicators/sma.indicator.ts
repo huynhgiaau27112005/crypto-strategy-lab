@@ -4,7 +4,7 @@ import { BaseIndicator } from "./base.indicator";
 export class SMAIndicator extends BaseIndicator {
   calculate(candlesticks: Candlestick[], period: number): IndicatorDataPoint[] {
     const results: IndicatorDataPoint[] = [];
-    
+
     let windowSum = 0;
     for (let i = 0; i < period - 1; ++i) {
       windowSum += candlesticks[i].close;
@@ -17,7 +17,7 @@ export class SMAIndicator extends BaseIndicator {
         timestamp,
       } = candlesticks[i];
       windowSum += close;
-      const avg = windowSum / period; 
+      const avg = windowSum / period;
       const dataPoint: IndicatorDataPoint = {
         value: avg,
         timeframe: timeframe,
