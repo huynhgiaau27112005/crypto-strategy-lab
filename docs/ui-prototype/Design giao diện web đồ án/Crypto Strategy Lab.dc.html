@@ -1,0 +1,1683 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/industry-fb2ceb04-be8a-434d-b15a-3ac4e9e25054/styles.css">
+<script src="_ds/industry-fb2ceb04-be8a-434d-b15a-3ac4e9e25054/_ds_bundle.js"></script>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  html, body { margin: 0; background: var(--color-bg); color: var(--color-text); }
+  a { color: var(--color-accent-700); text-decoration: none; }
+  a:hover { color: var(--color-accent); text-decoration: underline; }
+  @keyframes cslPulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+  [data-hov] { transition: background .12s ease, border-color .12s ease, box-shadow .12s ease; }
+  [data-hov="nav"][aria-pressed="false"]:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent) !important; }
+  [data-hov="chip"][aria-pressed="false"]:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent) !important; border-color: var(--color-accent) !important; }
+  [data-hov="chip"][aria-pressed="true"]:hover { background: var(--color-accent-600) !important; }
+  [data-hov="row"]:hover { background: color-mix(in srgb, var(--color-accent) 8%, transparent) !important; border-color: var(--color-accent) !important; }
+  [data-hov="news"]:hover { background: color-mix(in srgb, var(--color-text) 3%, transparent); }
+  [data-hov="card"]:hover { box-shadow: var(--shadow-sm); }
+  input[type="range"] { accent-color: var(--color-accent); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--color-neutral-300); }
+</style>
+</helmet>
+
+<div style="min-height: 100vh; background: var(--color-bg); font-family: var(--font-body);">
+
+  <sc-if value="{{ isLogin }}" hint-placeholder-val="{{ true }}">
+    <div style="min-height: 100vh; display: grid; grid-template-columns: 1.05fr 1fr;">
+
+      <div style="background: var(--color-accent-900); color: var(--color-bg); padding: 56px 48px; display: flex; flex-direction: column; justify-content: space-between; min-height: 100vh;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="width: 34px; height: 34px; border: 1px solid rgba(242,242,243,.55); display: grid; place-items: center; font-family: var(--font-heading); font-size: 15px; letter-spacing: .04em;">CSL</div>
+          <div style="font-family: var(--font-heading); font-size: 19px; line-height: 1.05; letter-spacing: .01em;">CRYPTO<br>STRATEGY LAB</div>
+        </div>
+
+        <div style="max-width: 460px;">
+          <div style="font-size: 11px; letter-spacing: .16em; text-transform: uppercase; opacity: .6; margin-bottom: 14px;">Đồ án kiến trúc phần mềm</div>
+          <h1 style="font-size: 46px; line-height: 1.04; margin: 0 0 16px; color: var(--color-bg);">Phân tích, kết hợp và đánh giá chiến lược giao dịch BTC</h1>
+          <p style="font-size: 15px; opacity: .72; margin: 0;">Chart realtime đa khung thời gian, strategy dạng plugin, tổng hợp tín hiệu bằng weighted voting, backtest có phí và slippage, xếp hạng tổ hợp bằng Domain-guide Random Search.</p>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: rgba(242,242,243,.18);">
+          <div style="background: var(--color-accent-900); padding: 14px 16px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 20px;">BTC</div>
+            <div style="font-size: 11px; letter-spacing: .1em; text-transform: uppercase; opacity: .6;">Coin duy nhất trong phạm vi</div>
+          </div>
+          <div style="background: var(--color-accent-900); padding: 14px 16px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 20px;">4</div>
+            <div style="font-size: 11px; letter-spacing: .1em; text-transform: uppercase; opacity: .6;">Khung thời gian / màn hình</div>
+          </div>
+          <div style="background: var(--color-accent-900); padding: 14px 16px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 20px;">7 + AI</div>
+            <div style="font-size: 11px; letter-spacing: .1em; text-transform: uppercase; opacity: .6;">Strategy plugin</div>
+          </div>
+          <div style="background: var(--color-accent-900); padding: 14px 16px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 20px;">1</div>
+            <div style="font-size: 11px; letter-spacing: .1em; text-transform: uppercase; opacity: .6;">Domain-guide Random Search</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: grid; place-items: center; padding: 48px 40px;">
+        <div class="card blueprint" style="width: min(410px, 100%); padding: 28px 26px; gap: 0;">
+          <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+
+          <div style="display: flex; gap: 0; border: 1px solid var(--color-divider); margin-bottom: 22px;">
+            <button type="button" onClick="{{ toLogin }}" style="{{ tabLogin }}">Đăng nhập</button>
+            <button type="button" onClick="{{ toRegister }}" style="{{ tabRegister }}">Đăng ký</button>
+          </div>
+
+          <h2 style="font-size: 27px; margin: 0 0 4px;">{{ authTitle }}</h2>
+          <p class="text-muted" style="font-size: 13px; margin: 0 0 20px;">{{ authSub }}</p>
+
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <sc-if value="{{ isRegister }}" hint-placeholder-val="{{ true }}">
+              <div class="field">
+                <label>Họ và tên</label>
+                <input class="input" type="text" placeholder="Nguyễn Minh">
+              </div>
+            </sc-if>
+
+            <div class="field">
+              <label>Email</label>
+              <input class="input" type="email" placeholder="student@example.com">
+            </div>
+
+            <div class="field">
+              <label>Mật khẩu</label>
+              <input class="input" type="password" placeholder="••••••••">
+            </div>
+
+            <sc-if value="{{ isRegister }}" hint-placeholder-val="{{ true }}">
+              <div class="field">
+                <label>Nhập lại mật khẩu</label>
+                <input class="input" type="password" placeholder="••••••••">
+              </div>
+            </sc-if>
+
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 13px;">
+              <label class="radio"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot" style="border-radius: 0;"></span>Ghi nhớ đăng nhập</label>
+              <a href="#">Quên mật khẩu?</a>
+            </div>
+
+            <button type="button" class="btn btn-primary btn-block blueprint" onClick="{{ signIn }}" style="height: 42px; font-size: 15px; letter-spacing: .02em;">
+              <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+              {{ authCta }}
+            </button>
+
+            <div class="text-muted" style="font-size: 12px; text-align: center; border-top: 1px solid var(--color-divider); padding-top: 14px;">
+              Tài khoản demo: student@example.com / demo1234
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isApp }}" hint-placeholder-val="{{ true }}">
+    <div style="display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; align-items: start;">
+
+      <aside style="background: var(--color-surface); border-right: 1px solid var(--color-divider); min-height: 100vh; position: sticky; top: 0; display: flex; flex-direction: column; padding: 20px 14px;">
+        <div style="display: flex; align-items: center; gap: 10px; padding: 0 6px 20px;">
+          <div style="width: 30px; height: 30px; border: 1px solid var(--color-divider); display: grid; place-items: center; font-family: var(--font-heading); font-size: 13px; color: var(--color-accent-700);">CSL</div>
+          <div style="font-family: var(--font-heading); font-size: 15px; line-height: 1.05;">CRYPTO<br>STRATEGY LAB</div>
+        </div>
+
+        <div style="font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--color-neutral-600); padding: 0 6px 8px;">Workspace</div>
+        <nav style="display: flex; flex-direction: column; gap: 2px;">
+          <sc-for list="{{ nav }}" as="item" hint-placeholder-count="6">
+            <button type="button" onClick="{{ item.go }}" data-hov="nav" aria-pressed="{{ item.pressed }}" style="{{ item.style }}">
+              <span style="width: 18px; height: 18px; display: grid; place-items: center;">{{ item.icon }}</span>
+              <span>{{ item.label }}</span>
+            </button>
+          </sc-for>
+        </nav>
+
+        <div style="flex: 1;"></div>
+
+        <div style="display: flex; align-items: center; gap: 10px; padding: 12px 6px; border-top: 1px solid var(--color-divider);">
+          <div style="width: 30px; height: 30px; border: 1px solid var(--color-divider); display: grid; place-items: center; font-family: 'IBM Plex Mono', monospace; font-size: 12px;">NM</div>
+          <div style="min-width: 0; flex: 1;">
+            <div style="font-size: 13px; font-weight: 500;">Nguyễn Minh</div>
+            <div class="text-muted" style="font-size: 11px; overflow: hidden; text-overflow: ellipsis;">student@example.com</div>
+          </div>
+          <button type="button" class="btn btn-ghost" onClick="{{ signOut }}" title="Đăng xuất" style="padding: 4px 6px;">{{ iconLogout }}</button>
+        </div>
+      </aside>
+
+      <main style="min-width: 0; padding: 22px 24px 40px;">
+        <header style="display: flex; align-items: flex-start; gap: 20px; flex-wrap: wrap; padding-bottom: 18px; border-bottom: 1px solid var(--color-divider); margin-bottom: 20px;">
+          <div style="flex: 1; min-width: 280px;">
+            <h1 style="font-size: 34px; margin: 0 0 2px;">{{ pageTitle }}</h1>
+            <p class="text-muted" style="font-size: 14px; margin: 0;">{{ pageSub }}</p>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="display: flex; align-items: center; gap: 8px; border: 1px solid var(--color-divider); padding: 7px 12px; font-size: 12px; white-space: nowrap;">
+              <span style="width: 7px; height: 7px; background: oklch(0.52 0.10 155); animation: cslPulse 1.8s infinite;"></span>
+              Nguồn dữ liệu: Binance API + WebSocket
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; border: 1px solid var(--color-divider); padding: 7px 12px; font-size: 12px; font-family: 'IBM Plex Mono', monospace;">
+              BTCUSDT · <span style="color: oklch(0.52 0.10 155);">{{ lastPrice }}</span>
+            </div>
+          </div>
+        </header>
+
+        <sc-if value="{{ isRealtime }}" hint-placeholder-val="{{ true }}">
+          <div style="display: flex; flex-direction: column; gap: 16px;">
+
+            <div class="blueprint" style="padding: 14px 16px; display: flex; align-items: center; gap: 26px; flex-wrap: wrap;">
+              <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+              <div>
+                <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-neutral-600); margin-bottom: 6px;">Khung thời gian — chọn tối đa 4</div>
+                <div style="display: flex; gap: 6px;">
+                  <sc-for list="{{ tfChips }}" as="t" hint-placeholder-count="5">
+                    <button type="button" onClick="{{ t.go }}" data-hov="chip" aria-pressed="{{ t.pressed }}" style="{{ t.style }}">{{ t.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="flex: 1;"></div>
+              <div>
+                <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-neutral-600); margin-bottom: 6px;">Realtime</div>
+                <button type="button" onClick="{{ toggleLive }}" data-hov="chip" aria-pressed="{{ livePressed }}" style="{{ liveStyle }}">{{ liveLabel }}</button>
+              </div>
+            </div>
+
+            <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;">
+              <div style="flex: 3 1 560px; display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; min-width: 0;">
+                <sc-for list="{{ panes }}" as="pane" hint-placeholder-count="4">
+                  <div class="blueprint" data-hov="card" style="padding: 12px 14px 10px;">
+                    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                    <div style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 2px;">
+                      <div style="font-family: var(--font-heading); font-size: 17px;">{{ pane.title }}</div>
+                      <div style="flex: 1;"></div>
+                      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 15px;">{{ pane.price }}</div>
+                      <div style="{{ pane.changeStyle }}">{{ pane.change }}</div>
+                      <div style="{{ pane.signalStyle }}">{{ pane.signal }}</div>
+                    </div>
+                    <div class="text-muted" style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; margin-bottom: 6px;">MA(20) {{ pane.ma }} · Volume {{ pane.vol }}</div>
+                    {{ pane.chart }}
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="flex: 1 1 260px; max-width: 300px; min-width: 0; display: flex; flex-direction: column; gap: 16px;">
+                <div class="blueprint" style="padding: 14px;">
+                  <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                  <h4 style="font-size: 16px; margin: 0 0 10px;">Trạng thái kết nối</h4>
+                  <sc-for list="{{ connRows }}" as="r" hint-placeholder-count="5">
+                    <div style="display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 5px 0; border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent);">
+                      <span class="text-muted">{{ r.k }}</span>
+                      <span style="font-family: 'IBM Plex Mono', monospace;">{{ r.v }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <div class="blueprint" style="padding: 14px;">
+                  <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                  <h4 style="font-size: 16px; margin: 0 0 8px;">Recent ticks</h4>
+                  <table class="table" style="font-size: 12px;">
+                    <thead>
+                      <tr><th>Thời gian</th><th>Giá</th><th>KL</th><th>Loại</th></tr>
+                    </thead>
+                    <tbody>
+                      <sc-for list="{{ ticks }}" as="t" hint-placeholder-count="5">
+                        <tr>
+                          <td style="font-family: 'IBM Plex Mono', monospace;">{{ t.time }}</td>
+                          <td style="font-family: 'IBM Plex Mono', monospace;">{{ t.price }}</td>
+                          <td style="font-family: 'IBM Plex Mono', monospace;">{{ t.qty }}</td>
+                          <td style="{{ t.style }}">{{ t.side }}</td>
+                        </tr>
+                      </sc-for>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="blueprint" style="padding: 14px;">
+                  <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                  <h4 style="font-size: 16px; margin: 0 0 10px;">Chú giải</h4>
+                  <div style="display: flex; flex-direction: column; gap: 8px; font-size: 12px;">
+                    <div style="display: flex; gap: 10px;">
+                      <span style="width: 10px; height: 10px; background: oklch(0.52 0.10 155); margin-top: 3px;"></span>
+                      <span>Nến tăng (Close &gt; Open)</span>
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                      <span style="width: 10px; height: 10px; background: oklch(0.53 0.15 25); margin-top: 3px;"></span>
+                      <span>Nến giảm (Close &lt; Open)</span>
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                      <span style="width: 10px; height: 2px; background: var(--color-accent); margin-top: 7px;"></span>
+                      <span>MA(20) — trung bình động 20 nến</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isStrategy }}" hint-placeholder-val="{{ true }}">
+          <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;">
+
+            <div style="display: flex; flex-direction: column; gap: 16px; min-width: 0; flex: 1 1 280px; max-width: 340px;">
+              <div class="blueprint" style="padding: 14px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700);">Strategy đơn · nhóm 1</div>
+                <h4 style="font-size: 17px; margin: 4px 0 2px;">Strategy hệ thống</h4>
+                <p class="text-muted" style="font-size: 12px; margin: 0 0 12px;">Tick để đưa strategy vào Search; bấm vào dòng để xem tham số.</p>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <sc-for list="{{ sysStrategies }}" as="s" hint-placeholder-count="7">
+                    <div data-hov="row" style="{{ s.style }}">
+                      <label class="radio" style="align-items: flex-start; gap: 0; margin-top: 2px;" title="Đưa vào Search">
+                        <input type="checkbox" checked="{{ s.on }}" onChange="{{ s.toggle }}"><span class="dot" style="border-radius: 0;"></span>
+                      </label>
+                      <button type="button" onClick="{{ s.select }}" style="flex: 1; min-width: 0; text-align: left; cursor: pointer; font: inherit; color: var(--color-text); background: transparent; border: 0; padding: 0;">
+                        <span style="display: flex; align-items: center; gap: 8px;">
+                          <strong style="font-family: var(--font-heading); font-size: 15px;">{{ s.name }}</strong>
+                          <span style="{{ s.sigStyle }}">{{ s.sigLabel }}</span>
+                        </span>
+                        <span class="text-muted" style="display: block; font-size: 12px; margin-top: 2px;">{{ s.desc }}</span>
+                        <span class="text-muted" style="display: block; font-size: 11px; margin-top: 3px; font-family: 'IBM Plex Mono', monospace;">{{ s.verText }}</span>
+                      </button>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="{{ scopeNoteStyle }}">{{ scopeNote }}</div>
+              </div>
+
+              <div class="blueprint" style="padding: 14px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700);">Strategy đơn · nhóm 2</div>
+                <h4 style="font-size: 17px; margin: 4px 0 2px;">Strategy do AI generate</h4>
+                <p class="text-muted" style="font-size: 12px; margin: 0 0 12px;">Sinh từ prompt của tài khoản này ở tab AI Strategy.</p>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <sc-for list="{{ aiStrategies }}" as="s" hint-placeholder-count="2">
+                    <div data-hov="row" style="{{ s.style }}">
+                      <label class="radio" style="align-items: flex-start; gap: 0; margin-top: 2px;" title="Đưa vào Search">
+                        <input type="checkbox" checked="{{ s.on }}" onChange="{{ s.toggle }}"><span class="dot" style="border-radius: 0;"></span>
+                      </label>
+                      <button type="button" onClick="{{ s.select }}" style="flex: 1; min-width: 0; text-align: left; cursor: pointer; font: inherit; color: var(--color-text); background: transparent; border: 0; padding: 0;">
+                        <span style="display: flex; align-items: center; gap: 8px;">
+                          <strong style="font-family: 'IBM Plex Mono', monospace; font-size: 13px;">{{ s.name }}</strong>
+                          <span style="{{ s.sigStyle }}">{{ s.sigLabel }}</span>
+                        </span>
+                        <span class="text-muted" style="display: block; font-size: 12px; margin-top: 2px;">{{ s.desc }}</span>
+                        <span class="text-muted" style="display: block; font-size: 11px; margin-top: 3px; font-family: 'IBM Plex Mono', monospace;">{{ s.verText }}</span>
+                      </button>
+                    </div>
+                  </sc-for>
+                </div>
+                <button type="button" class="btn btn-secondary btn-block" onClick="{{ goAi }}" style="height: 34px; margin-top: 10px;">Tạo strategy mới bằng AI</button>
+              </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 16px; min-width: 0; flex: 3 1 470px;">
+              <div class="blueprint" style="padding: 14px 16px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <h4 style="font-size: 16px; margin: 0 0 2px;">Weighted voting — tín hiệu tổng hợp</h4>
+                <p class="text-muted" style="font-size: 12px; margin: 0 0 14px;">Điểm tổng hợp = Σ (trọng số × tín hiệu) / Σ trọng số. Ngưỡng vào lệnh: |score| ≥ {{ thresholdText }}.</p>
+
+                <table class="table">
+                  <thead>
+                    <tr><th style="width: 34%;">Strategy</th><th>Trọng số</th><th style="width: 74px; text-align: right;">Giá trị</th><th style="width: 90px; text-align: right;">Tín hiệu</th></tr>
+                  </thead>
+                  <tbody>
+                    <sc-for list="{{ votingRows }}" as="v" hint-placeholder-count="3">
+                      <tr>
+                        <td style="font-weight: 500;">{{ v.name }}</td>
+                        <td><input type="range" min="0" max="1" step="0.05" value="{{ v.weight }}" onChange="{{ v.setWeight }}" style="width: 100%; accent-color: var(--color-accent);"></td>
+                        <td style="text-align: right; font-family: 'IBM Plex Mono', monospace;">{{ v.weightText }}</td>
+                        <td style="text-align: right;"><span style="{{ v.sigStyle }}">{{ v.sigLabel }}</span></td>
+                      </tr>
+                    </sc-for>
+                  </tbody>
+                </table>
+
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--color-divider); margin-top: 16px;">
+                  <sc-for list="{{ voteCards }}" as="c" hint-placeholder-count="3">
+                    <div style="{{ c.style }}">
+                      <div style="font-family: var(--font-heading); font-size: 18px; letter-spacing: .04em;">{{ c.label }}</div>
+                      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; margin-top: 2px;">{{ c.value }}</div>
+                      <div style="font-size: 11px; opacity: .7;">{{ c.note }}</div>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <div style="margin-top: 14px; border-top: 1px solid var(--color-divider); padding-top: 12px; display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap;">
+                  <div style="flex: 1; min-width: 220px;">
+                    <div class="text-muted" style="font-size: 12px;">Search dùng: <strong style="color: var(--color-text); font-family: 'IBM Plex Mono', monospace;">{{ comboText }}</strong></div>
+                    <div class="text-muted" style="font-size: 11px; margin-top: 4px; line-height: 1.5;">{{ saveSetNote }}</div>
+                  </div>
+                  <button type="button" class="btn btn-primary blueprint" onClick="{{ saveSet }}" disabled="{{ saveSetDisabled }}" style="height: 38px;">
+                    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                    Lưu bộ strategy &amp; trọng số
+                  </button>
+                </div>
+              </div>
+
+              <div class="blueprint" style="padding: 14px 16px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <h4 style="font-size: 16px; margin: 0 0 10px;">Tín hiệu trên chart (BTCUSDT · 15m)</h4>
+                {{ strategyChart }}
+              </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 16px; min-width: 0; flex: 1 1 250px; max-width: 320px;">
+              <div class="blueprint" style="padding: 14px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700);">Tham số plugin</div>
+                <h4 style="font-size: 18px; margin: 4px 0 2px;">{{ detailName }}</h4>
+                <div class="text-muted" style="font-size: 11px; margin-bottom: 12px; font-family: 'IBM Plex Mono', monospace;">{{ detailMeta }}</div>
+
+                <div class="field" style="margin-bottom: 12px;">
+                  <label>Version tham số</label>
+                  <select class="input" value="{{ verValue }}" onChange="{{ setVer }}">
+                    <sc-for list="{{ verOptions }}" as="o" hint-placeholder-count="2">
+                      <option value="{{ o.v }}">{{ o.label }}</option>
+                    </sc-for>
+                  </select>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                  <sc-for list="{{ detailParams }}" as="p" hint-placeholder-count="3">
+                    <div class="field">
+                      <label>{{ p.k }}</label>
+                      <input class="input" type="text" value="{{ p.v }}" onChange="{{ p.set }}" readOnly="{{ p.ro }}" style="{{ p.style }}">
+                    </div>
+                  </sc-for>
+                </div>
+
+                <sc-if value="{{ isLatestVer }}" hint-placeholder-val="{{ true }}">
+                  <button type="button" class="btn btn-primary btn-block blueprint" onClick="{{ saveParams }}" style="height: 38px; margin-top: 12px;">
+                    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                    Lưu tham số → tạo version mới
+                  </button>
+                </sc-if>
+                <sc-if value="{{ isOldVer }}" hint-placeholder-val="{{ false }}">
+                  <div style="margin-top: 12px;">
+                    <div class="text-muted" style="font-size: 11px; line-height: 1.5; margin-bottom: 8px;">Đang xem version cũ (chỉ đọc).</div>
+                    <button type="button" class="btn btn-secondary btn-block" onClick="{{ restoreVer }}" style="height: 36px;">Dùng lại tham số version này</button>
+                  </div>
+                </sc-if>
+                <p class="text-muted" style="font-size: 11px; margin: 10px 0 0; line-height: 1.5;">Mỗi lần lưu tạo một version mới; hệ thống sinh lại mọi tổ hợp có chứa strategy này thành version tổ hợp mới trong Leaderboard.</p>
+                <sc-if value="{{ hasBump }}" hint-placeholder-val="{{ true }}">
+                  <div style="margin-top: 10px; border: 1px solid var(--color-accent); background: color-mix(in srgb, var(--color-accent) 10%, transparent); padding: 10px; font-size: 12px; line-height: 1.5;">{{ bumpNote }}</div>
+                </sc-if>
+              </div>
+
+              <button type="button" class="btn btn-secondary" onClick="{{ goBacktest }}" style="height: 38px;">Sang tab Backtest →</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isAi }}" hint-placeholder-val="{{ true }}">
+          <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;">
+
+            <div style="display: flex; flex-direction: column; gap: 16px; min-width: 0; flex: 1 1 300px; max-width: 380px;">
+              <div class="blueprint" style="padding: 14px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <h4 style="font-size: 16px; margin: 0 0 2px;">Mô tả strategy</h4>
+                <p class="text-muted" style="font-size: 12px; margin: 0 0 12px;">Viết bằng ngôn ngữ tự nhiên. AI sinh file Python riêng cho tài khoản của bạn.</p>
+                <textarea class="input" rows="7" value="{{ prompt }}" onChange="{{ setPrompt }}" style="font-size: 13px; line-height: 1.5;"></textarea>
+                <div class="text-muted" style="font-size: 11px; text-align: right; margin-top: 4px; font-family: 'IBM Plex Mono', monospace;">{{ promptLen }} / 1000</div>
+                <div style="display: flex; gap: 8px; margin-top: 10px;">
+                  <button type="button" class="btn btn-primary blueprint" onClick="{{ generate }}" style="flex: 1; height: 40px;">
+                    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                    {{ generateLabel }}
+                  </button>
+                  <button type="button" class="btn btn-secondary" onClick="{{ clearPrompt }}" style="height: 40px;">Xóa</button>
+                </div>
+              </div>
+
+              <div class="blueprint" style="padding: 14px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <h4 style="font-size: 16px; margin: 0 0 8px;">Mẫu mô tả</h4>
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                  <sc-for list="{{ promptSamples }}" as="s" hint-placeholder-count="3">
+                    <button type="button" class="btn btn-secondary" onClick="{{ s.go }}" style="text-align: left; justify-content: flex-start; font-family: var(--font-body); font-size: 12px; line-height: 1.4; padding: 8px 10px; height: auto;">{{ s.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+
+            <div class="blueprint" style="padding: 14px 16px; min-width: 0; flex: 2 1 420px;">
+              <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                <h4 style="font-size: 16px; margin: 0;">Python strategy sinh ra</h4>
+                <div style="flex: 1;"></div>
+                <span style="{{ aiStatusStyle }}">{{ aiStatus }}</span>
+              </div>
+              <pre style="margin: 0; background: var(--color-accent-900); color: #dfe6ee; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; line-height: 1.65; padding: 16px; overflow: auto; max-height: 520px; white-space: pre;">{{ pythonCode }}</pre>
+              <div style="display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap;">
+                <button type="button" class="btn btn-secondary" style="height: 36px;">Tải file .py</button>
+                <button type="button" class="btn btn-secondary" onClick="{{ goStrategy }}" style="height: 36px;">Xem trong Strategy Engine</button>
+              </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 16px; min-width: 0; flex: 1 1 240px; max-width: 300px;">
+              <div class="blueprint" style="padding: 14px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <h4 style="font-size: 16px; margin: 0 0 10px;">Kiểm tra &amp; validation</h4>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <sc-for list="{{ validations }}" as="v" hint-placeholder-count="4">
+                    <div style="display: flex; gap: 10px; align-items: flex-start; font-size: 12px; padding-bottom: 8px; border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent);">
+                      <span style="{{ v.markStyle }}">{{ v.mark }}</span>
+                      <span>
+                        <strong style="display: block; font-weight: 500;">{{ v.k }}</strong>
+                        <span class="text-muted">{{ v.v }}</span>
+                      </span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+
+              <div class="blueprint" style="padding: 14px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <h4 style="font-size: 16px; margin: 0 0 10px;">Lưu vào thư viện</h4>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                  <div class="field">
+                    <label>Tên strategy</label>
+                    <input class="input" type="text" defaultValue="RSI_BB_LONG_SL2_TP4">
+                  </div>
+                  <div class="field">
+                    <label>Version</label>
+                    <input class="input" type="text" defaultValue="1.0.0">
+                  </div>
+                  <button type="button" class="btn btn-primary blueprint" style="height: 40px;">
+                    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                    Lưu strategy
+                  </button>
+                  <p class="text-muted" style="font-size: 11px; margin: 0; line-height: 1.5;">Strategy sau khi lưu sẽ xuất hiện ở nhóm “Strategy do AI generate” và được đưa vào sinh tổ hợp.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="blueprint" style="padding: 14px 16px; margin-top: 16px;">
+            <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+            <h4 style="font-size: 16px; margin: 0 0 10px;">Strategy AI của tài khoản</h4>
+            <table class="table">
+              <thead>
+                <tr><th>Tên strategy</th><th>Ngày tạo</th><th>Version</th><th>Trạng thái</th><th style="text-align: right;">Hành động</th></tr>
+              </thead>
+              <tbody>
+                <sc-for list="{{ myStrategies }}" as="s" hint-placeholder-count="3">
+                  <tr>
+                    <td style="font-family: 'IBM Plex Mono', monospace; font-size: 13px;">{{ s.name }}</td>
+                    <td style="font-family: 'IBM Plex Mono', monospace; font-size: 13px;">{{ s.created }}</td>
+                    <td style="font-family: 'IBM Plex Mono', monospace; font-size: 13px;">{{ s.version }}</td>
+                    <td><span style="{{ s.statusStyle }}">{{ s.status }}</span></td>
+                    <td style="text-align: right;"><button type="button" class="btn btn-ghost" onClick="{{ goStrategy }}" style="font-size: 12px;">Xem plugin</button></td>
+                  </tr>
+                </sc-for>
+              </tbody>
+            </table>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isBacktest }}" hint-placeholder-val="{{ true }}">
+          <div style="display: flex; flex-direction: column; gap: 16px;">
+
+            <div class="blueprint" style="padding: 14px 16px;">
+              <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+              <div style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; flex-wrap: wrap;">
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--color-accent-700);">01</div>
+                <h4 style="font-size: 16px; margin: 0;">Cấu hình backtest &amp; search</h4>
+                <div style="flex: 1;"></div>
+                <span class="tag tag-accent">Domain-guide Random Search</span>
+              </div>
+
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 12px; align-items: end;">
+                <div class="field">
+                  <label>Coin</label>
+                  <input class="input" type="text" value="BTCUSDT" readOnly="{{ true }}">
+                </div>
+                <div class="field">
+                  <label>Timeframe</label>
+                  <select class="input" value="{{ cfgTf }}" onChange="{{ setCfgTf }}">
+                    <sc-for list="{{ tfOptions }}" as="o" hint-placeholder-count="5">
+                      <option value="{{ o.v }}">{{ o.v }}</option>
+                    </sc-for>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>From date</label>
+                  <input class="input" type="date" value="{{ cfgFrom }}" onChange="{{ setCfgFrom }}">
+                </div>
+                <div class="field">
+                  <label>To date</label>
+                  <input class="input" type="date" value="{{ cfgTo }}" onChange="{{ setCfgTo }}">
+                </div>
+                <div class="field">
+                  <label>Vốn (USD)</label>
+                  <input class="input" type="text" defaultValue="1000" onChange="{{ markDirty }}">
+                </div>
+                <div class="field">
+                  <label>Transaction cost (%)</label>
+                  <input class="input" type="text" defaultValue="0.08" onChange="{{ markDirty }}">
+                </div>
+                <div class="field">
+                  <label>Slippage (bps)</label>
+                  <input class="input" type="text" defaultValue="5" onChange="{{ markDirty }}">
+                </div>
+                <div class="field">
+                  <label>Top-K</label>
+                  <input class="input" type="text" defaultValue="8" onChange="{{ markDirty }}">
+                </div>
+                <button type="button" class="btn btn-primary blueprint" onClick="{{ askRun }}" disabled="{{ runDisabled }}" title="{{ runTitle }}" style="grid-column: 1 / -1; justify-self: start; min-width: 240px; height: auto; min-height: 40px; white-space: nowrap; margin-top: 4px;">
+                  <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                  Chạy Search &amp; Backtest
+                </button>
+              </div>
+
+              <div style="display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-top: 14px; border-top: 1px solid var(--color-divider); padding-top: 12px; font-size: 12px;">
+                <span style="{{ runHintStyle }}">{{ runHint }}</span>
+                <div style="flex: 1;"></div>
+                <span class="text-muted" style="font-family: 'IBM Plex Mono', monospace;">{{ runMeta }}</span>
+              </div>
+            </div>
+
+            <div class="blueprint" style="padding: 14px 16px;">
+              <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+              <div style="display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; margin-bottom: 14px;">
+                <div style="display: flex; align-items: baseline; gap: 10px;">
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--color-accent-700);">02</div>
+                  <h4 style="font-size: 16px; margin: 0;">Chi tiết kết quả backtest của một candidate</h4>
+                </div>
+                <div style="flex: 1;"></div>
+                <div class="field" style="min-width: 340px; position: relative;">
+                  <label>Candidate — tìm theo tên tổ hợp hoặc version</label>
+                  <input class="input" type="text" value="{{ candQuery }}" placeholder="{{ candPlaceholder }}" onChange="{{ setCandQuery }}" onFocus="{{ openCand }}" onBlur="{{ closeCand }}">
+                  <sc-if value="{{ candOpen }}" hint-placeholder-val="{{ false }}">
+                    <div style="position: absolute; top: 100%; left: 0; right: 0; z-index: 30; background: var(--color-bg); border: 1px solid var(--color-accent); max-height: 260px; overflow-y: auto; box-shadow: var(--shadow-md);">
+                      <sc-for list="{{ candResults }}" as="o" hint-placeholder-count="4">
+                        <button type="button" onMouseDown="{{ o.go }}" data-hov="row" style="{{ o.style }}">{{ o.label }}</button>
+                      </sc-for>
+                      <sc-if value="{{ candEmpty }}" hint-placeholder-val="{{ false }}">
+                        <div class="text-muted" style="padding: 10px 12px; font-size: 12px;">Không có tổ hợp nào khớp.</div>
+                      </sc-if>
+                    </div>
+                  </sc-if>
+                  <div class="text-muted" style="font-size: 11px; margin-top: 6px; font-family: 'IBM Plex Mono', monospace;">Đang xem: {{ candCurrent }}</div>
+                </div>
+              </div>
+
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1px; background: var(--color-divider); border: 1px solid var(--color-divider);">
+                <sc-for list="{{ metrics }}" as="m" hint-placeholder-count="6">
+                  <div style="background: var(--color-bg); padding: 14px;">
+                    <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-neutral-600);">{{ m.k }}</div>
+                    <div style="{{ m.valueStyle }}">{{ m.v }}</div>
+                    <div class="text-muted" style="font-size: 11px;">{{ m.note }}</div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="display: flex; align-items: baseline; gap: 12px; margin: 16px 0 8px; flex-wrap: wrap;">
+                <h5 style="font-size: 15px; margin: 0;">Biểu đồ backtest (BTCUSDT · {{ cfgTf }})</h5>
+                <div style="flex: 1;"></div>
+                <div style="display: flex; gap: 14px; font-size: 11px; font-family: 'IBM Plex Mono', monospace;">
+                  <span style="color: var(--color-accent-700);">— MA(20)</span>
+                  <span style="color: var(--color-accent-500);">— MA(50)</span>
+                  <span style="color: oklch(0.52 0.10 155);">-- Hỗ trợ</span>
+                  <span style="color: oklch(0.53 0.15 25);">-- Kháng cự</span>
+                </div>
+              </div>
+              {{ backtestChart }}
+
+              <div style="display: flex; align-items: center; gap: 12px; margin: 18px 0 10px; flex-wrap: wrap; border-top: 1px solid var(--color-divider); padding-top: 14px;">
+                <h5 style="font-size: 15px; margin: 0;">Danh sách lệnh</h5>
+                <div style="flex: 1;"></div>
+                <div style="display: flex; gap: 6px;">
+                  <sc-for list="{{ dirFilters }}" as="d" hint-placeholder-count="3">
+                    <button type="button" onClick="{{ d.go }}" data-hov="chip" aria-pressed="{{ d.pressed }}" style="{{ d.style }}">{{ d.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+
+              <div style="overflow-x: auto;">
+              <table class="table" style="min-width: 880px;">
+                <thead>
+                  <tr>
+                    <th>Coin</th>
+                    <th>Thời gian vào lệnh</th>
+                    <th>Hướng</th>
+                    <th style="text-align: right;">Khối lượng (USD)</th>
+                    <th style="text-align: right;">Giá vào lệnh</th>
+                    <th style="text-align: right;">Stoploss</th>
+                    <th style="text-align: right;">TakeProfit</th>
+                    <th style="text-align: right;">Giá kết thúc</th>
+                    <th style="text-align: right;">Profit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <sc-for list="{{ tradeRows }}" as="t" hint-placeholder-count="8">
+                    <tr>
+                      <td style="font-family: 'IBM Plex Mono', monospace; font-size: 13px;">{{ t.pair }}</td>
+                      <td style="font-family: 'IBM Plex Mono', monospace; font-size: 13px;">{{ t.time }}</td>
+                      <td><span style="{{ t.dirStyle }}">{{ t.dir }}</span></td>
+                      <td style="text-align: right; font-family: 'IBM Plex Mono', monospace; font-size: 13px;">{{ t.size }}</td>
+                      <td style="text-align: right; font-family: 'IBM Plex Mono', monospace; font-size: 13px;">{{ t.entry }}</td>
+                      <td style="text-align: right; font-family: 'IBM Plex Mono', monospace; font-size: 13px;">{{ t.sl }}</td>
+                      <td style="text-align: right; font-family: 'IBM Plex Mono', monospace; font-size: 13px;">{{ t.tp }}</td>
+                      <td style="text-align: right; font-family: 'IBM Plex Mono', monospace; font-size: 13px;">{{ t.exit }}</td>
+                      <td style="text-align: right; font-family: 'IBM Plex Mono', monospace; font-size: 13px;"><span style="{{ t.profitStyle }}">{{ t.profit }}</span></td>
+                    </tr>
+                  </sc-for>
+                </tbody>
+              </table>
+              </div>
+
+              <div style="display: flex; align-items: center; gap: 10px; margin-top: 12px;">
+                <div class="text-muted" style="font-size: 12px;">{{ tradeRange }}</div>
+                <div style="flex: 1;"></div>
+                <div style="display: flex; gap: 6px;">
+                  <sc-for list="{{ pageBtns }}" as="p" hint-placeholder-count="3">
+                    <button type="button" onClick="{{ p.go }}" data-hov="chip" aria-pressed="{{ p.pressed }}" style="{{ p.style }}">{{ p.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <sc-if value="{{ confirmOpen }}" hint-placeholder-val="{{ false }}">
+            <div class="dialog-backdrop" style="position: fixed; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--color-text) 45%, transparent); z-index: 40;">
+              <div class="dialog blueprint" style="width: min(460px, 92vw); background: var(--color-bg); padding: 22px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <h4 class="dialog-title" style="font-size: 21px; margin: 0 0 8px;">Chạy lại Backtest &amp; Search?</h4>
+                <p class="dialog-body" style="font-size: 13px; line-height: 1.6; margin: 0 0 6px;">Hệ thống sẽ <strong>xoá toàn bộ Leaderboard hiện tại</strong> và sinh lại tổ hợp từ đầu với config mới bằng Domain-guide Random Search.</p>
+                <div class="text-muted" style="font-size: 12px; font-family: 'IBM Plex Mono', monospace; margin-bottom: 18px;">{{ confirmMeta }}</div>
+                <div class="dialog-actions" style="display: flex; gap: 8px; justify-content: flex-end;">
+                  <button type="button" class="btn btn-secondary" onClick="{{ cancelRun }}" style="height: 38px;">Huỷ</button>
+                  <button type="button" class="btn btn-primary blueprint" onClick="{{ confirmRun }}" style="height: 38px;">
+                    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                    Xoá &amp; chạy lại
+                  </button>
+                </div>
+              </div>
+            </div>
+          </sc-if>
+        </sc-if>
+
+        <sc-if value="{{ isLeaderboard }}" hint-placeholder-val="{{ true }}">
+          <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;">
+
+            <div style="display: flex; flex-direction: column; gap: 16px; min-width: 0; flex: 3 1 560px;">
+              <div class="blueprint" style="padding: 14px 16px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <div style="display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px;">
+                  <h4 style="font-size: 16px; margin: 0;">Top-K tổ hợp strategy</h4>
+                  <div style="flex: 1;"></div>
+                  <span class="text-muted" style="font-size: 12px; font-family: 'IBM Plex Mono', monospace;">{{ runMeta }}</span>
+                </div>
+                <p class="text-muted" style="font-size: 12px; margin: 0 0 10px;">Chọn một dòng để xem chi tiết từng strategy thành phần trong version của tổ hợp đó.</p>
+                <table class="table">
+                  <thead>
+                    <tr><th style="width: 52px;">Rank</th><th>Tổ hợp</th><th style="width: 96px;">Version</th><th style="text-align: right;">Profit (USD)</th><th style="text-align: right;">Winrate</th><th style="text-align: right;">Max DD</th><th style="text-align: right;">Trades</th></tr>
+                  </thead>
+                  <tbody>
+                    <sc-for list="{{ leaderRows }}" as="r" hint-placeholder-count="8">
+                      <tr onClick="{{ r.go }}" style="{{ r.style }}">
+                        <td style="font-family: 'IBM Plex Mono', monospace;">{{ r.rank }}</td>
+                        <td style="font-family: 'IBM Plex Mono', monospace; font-size: 13px;">{{ r.name }}</td>
+                        <td><span class="tag tag-outline" style="font-family: 'IBM Plex Mono', monospace;">{{ r.vnum }}</span></td>
+                        <td style="text-align: right; font-family: 'IBM Plex Mono', monospace; color: oklch(0.48 0.10 155);">{{ r.profit }}</td>
+                        <td style="text-align: right; font-family: 'IBM Plex Mono', monospace;">{{ r.win }}</td>
+                        <td style="text-align: right; font-family: 'IBM Plex Mono', monospace; color: oklch(0.50 0.15 25);">{{ r.mdd }}</td>
+                        <td style="text-align: right; font-family: 'IBM Plex Mono', monospace;">{{ r.trades }}</td>
+                      </tr>
+                    </sc-for>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="blueprint" style="padding: 14px 16px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <div style="display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px;">
+                  <h4 style="font-size: 16px; margin: 0;">Thành phần của {{ selName }}</h4>
+                  <span class="tag tag-accent" style="font-family: 'IBM Plex Mono', monospace;">{{ selVersion }}</span>
+                  <div style="flex: 1;"></div>
+                  <button type="button" class="btn btn-secondary" onClick="{{ viewInBacktest }}" style="height: 34px;">Xem kết quả backtest</button>
+                </div>
+                <p class="text-muted" style="font-size: 12px; margin: 0 0 12px;">{{ selMeta }}</p>
+                <table class="table">
+                  <thead>
+                    <tr><th>Strategy đơn</th><th style="width: 120px;">Nguồn</th><th style="width: 92px;">Version</th><th>Tham số của version này</th><th style="width: 80px; text-align: right;">Trọng số</th><th style="width: 86px; text-align: right;">Tín hiệu</th></tr>
+                  </thead>
+                  <tbody>
+                    <sc-for list="{{ selComps }}" as="c" hint-placeholder-count="3">
+                      <tr>
+                        <td style="font-weight: 500;">{{ c.name }}</td>
+                        <td><span style="{{ c.srcStyle }}">{{ c.src }}</span></td>
+                        <td style="font-family: 'IBM Plex Mono', monospace; font-size: 13px;">{{ c.ver }}</td>
+                        <td class="text-muted" style="font-family: 'IBM Plex Mono', monospace; font-size: 12px;">{{ c.params }}</td>
+                        <td style="text-align: right; font-family: 'IBM Plex Mono', monospace;">{{ c.w }}</td>
+                        <td style="text-align: right;"><span style="{{ c.sigStyle }}">{{ c.sigLabel }}</span></td>
+                      </tr>
+                    </sc-for>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 16px; min-width: 0; flex: 1 1 270px; max-width: 330px;">
+              <div class="blueprint" style="padding: 14px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700);">Thuật toán</div>
+                <h4 style="font-size: 18px; margin: 4px 0 8px;">Domain-guide Random Search</h4>
+                <p class="text-muted" style="font-size: 12px; margin: 0 0 12px; line-height: 1.5;">Sinh tổ hợp ngẫu nhiên trong không gian bị ràng buộc bởi kiến thức miền, sau đó backtest và xếp hạng. Đây là thuật toán search duy nhất của hệ thống.</p>
+                <div style="display: flex; align-items: baseline; gap: 6px; font-family: 'IBM Plex Mono', monospace;">
+                  <span style="font-size: 26px; color: var(--color-accent-700);">{{ iteration }}</span>
+                  <span class="text-muted" style="font-size: 13px;">/ 500 iteration</span>
+                </div>
+                <div style="height: 6px; background: var(--color-neutral-200); margin: 10px 0 12px;">
+                  <div style="{{ progressStyle }}"></div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;">
+                  <div style="display: flex; justify-content: space-between; gap: 10px;"><span class="text-muted">Strategy đầu vào</span><span style="font-family: 'IBM Plex Mono', monospace;">{{ scopeCount }}</span></div>
+                  <div style="display: flex; justify-content: space-between; gap: 10px;"><span class="text-muted">Tổ hợp đã đánh giá</span><span style="font-family: 'IBM Plex Mono', monospace;">{{ candidates }}</span></div>
+                  <div style="display: flex; justify-content: space-between; gap: 10px;"><span class="text-muted">Vòng lặp</span><span style="font-family: 'IBM Plex Mono', monospace;">generate → backtest → rank</span></div>
+                </div>
+                <button type="button" class="btn btn-primary btn-block blueprint" onClick="{{ stepLoop }}" style="height: 36px; margin-top: 12px;">
+                  <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                  Chạy thêm 10 iteration
+                </button>
+              </div>
+
+              <div class="blueprint" style="padding: 14px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <h4 style="font-size: 16px; margin: 0 0 8px;">Config đang áp dụng</h4>
+                <div style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;">
+                  <sc-for list="{{ cfgRows }}" as="r" hint-placeholder-count="5">
+                    <div style="display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent);">
+                      <span class="text-muted">{{ r.k }}</span>
+                      <span style="font-family: 'IBM Plex Mono', monospace;">{{ r.v }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <button type="button" class="btn btn-secondary btn-block" onClick="{{ goBacktest }}" style="height: 34px; margin-top: 12px;">Đổi config &amp; tạo lại</button>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isNews }}" hint-placeholder-val="{{ true }}">
+          <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;">
+
+            <div style="display: flex; flex-direction: column; gap: 16px; min-width: 0; flex: 3 1 500px;">
+              <div class="blueprint" style="padding: 14px 16px; display: flex; align-items: center; gap: 22px; flex-wrap: wrap;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <div>
+                  <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-neutral-600); margin-bottom: 6px;">Sentiment</div>
+                  <div style="display: flex; gap: 6px;">
+                    <sc-for list="{{ sentFilters }}" as="s" hint-placeholder-count="4">
+                      <button type="button" onClick="{{ s.go }}" data-hov="chip" aria-pressed="{{ s.pressed }}" style="{{ s.style }}">{{ s.label }}</button>
+                    </sc-for>
+                  </div>
+                </div>
+                <div style="flex: 1;"></div>
+                <div>
+                  <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-neutral-600); margin-bottom: 6px;">Crawl tin tức</div>
+                  <button type="button" onClick="{{ toggleCrawl }}" data-hov="chip" aria-pressed="{{ crawlPressed }}" style="{{ crawlStyle }}">{{ crawlLabel }}</button>
+                </div>
+              </div>
+
+              <div class="blueprint" style="padding: 14px 16px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <div style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;">
+                  <h4 style="font-size: 16px; margin: 0;">Tin tức đã thu thập</h4>
+                  <div style="flex: 1;"></div>
+                  <span class="text-muted" style="font-size: 12px; font-family: 'IBM Plex Mono', monospace;">{{ newsMeta }}</span>
+                </div>
+                <div style="display: flex; flex-direction: column;">
+                  <sc-for list="{{ newsList }}" as="n" hint-placeholder-count="4">
+                    <article data-hov="news" style="display: grid; grid-template-columns: minmax(0, 1fr) 104px; gap: 14px; padding: 14px 0; border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent);">
+                      <div>
+                        <div style="font-family: var(--font-heading); font-size: 17px; line-height: 1.2; text-wrap: pretty;">{{ n.title }}</div>
+                        <p class="text-muted" style="font-size: 13px; margin: 4px 0 0;">{{ n.summary }}</p>
+                        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px;">
+                          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; border: 1px solid var(--color-divider); color: var(--color-text); padding: 2px 7px;">Coin: {{ n.coin }}</span>
+                          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; border: 1px solid var(--color-accent); color: var(--color-accent-700); padding: 2px 7px;">Model: {{ n.model }}</span>
+                          <span class="text-muted" style="font-size: 11px; font-family: 'IBM Plex Mono', monospace;">{{ n.source }} · {{ n.time }} · confidence {{ n.conf }}</span>
+                        </div>
+                      </div>
+                      <div style="display: flex; justify-content: flex-end; align-items: flex-start;">
+                        <span style="{{ n.badgeStyle }}">{{ n.sentiment }}</span>
+                      </div>
+                    </article>
+                  </sc-for>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px; margin-top: 12px;">
+                  <div class="text-muted" style="font-size: 12px;">{{ newsRange }}</div>
+                  <div style="flex: 1;"></div>
+                  <div style="display: flex; gap: 6px;">
+                    <sc-for list="{{ newsPageBtns }}" as="p" hint-placeholder-count="3">
+                      <button type="button" onClick="{{ p.go }}" data-hov="chip" aria-pressed="{{ p.pressed }}" style="{{ p.style }}">{{ p.label }}</button>
+                    </sc-for>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 16px; min-width: 0; flex: 1 1 270px; max-width: 330px;">
+              <div class="blueprint" style="padding: 14px;">
+                <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+                <h4 style="font-size: 16px; margin: 0 0 10px;">Sentiment BTC (24h)</h4>
+                <div style="display: flex; height: 22px; border: 1px solid var(--color-divider);">
+                  <div style="width: 58%; background: oklch(0.52 0.10 155); color: var(--color-bg); font-size: 11px; display: grid; place-items: center; font-family: 'IBM Plex Mono', monospace;">58%</div>
+                  <div style="width: 27%; background: var(--color-neutral-400); color: var(--color-bg); font-size: 11px; display: grid; place-items: center; font-family: 'IBM Plex Mono', monospace;">27%</div>
+                  <div style="width: 15%; background: oklch(0.53 0.15 25); color: var(--color-bg); font-size: 11px; display: grid; place-items: center; font-family: 'IBM Plex Mono', monospace;">15%</div>
+                </div>
+                <div style="display: flex; gap: 14px; margin-top: 10px; font-size: 12px;">
+                  <span style="display: flex; align-items: center; gap: 6px;"><span style="width: 9px; height: 9px; background: oklch(0.52 0.10 155);"></span>Positive</span>
+                  <span style="display: flex; align-items: center; gap: 6px;"><span style="width: 9px; height: 9px; background: var(--color-neutral-400);"></span>Neutral</span>
+                  <span style="display: flex; align-items: center; gap: 6px;"><span style="width: 9px; height: 9px; background: oklch(0.53 0.15 25);"></span>Negative</span>
+                </div>
+                <div style="margin-top: 14px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; border-top: 1px solid var(--color-divider); padding-top: 12px;">
+                  <div style="display: flex; justify-content: space-between;"><span class="text-muted">Số tin đã phân tích</span><span style="font-family: 'IBM Plex Mono', monospace;">1,248</span></div>
+                  <div style="display: flex; justify-content: space-between;"><span class="text-muted">Model đánh giá</span><span style="font-family: 'IBM Plex Mono', monospace;">FinBERT</span></div>
+                  <div style="display: flex; justify-content: space-between;"><span class="text-muted">Confidence trung bình</span><span style="font-family: 'IBM Plex Mono', monospace;">0.78</span></div>
+                  <div style="display: flex; justify-content: space-between;"><span class="text-muted">Trạng thái crawler</span><span style="font-family: 'IBM Plex Mono', monospace;">{{ crawlLabel }}</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+      </main>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1600, &quot;height&quot;: 1000}, &quot;startPage&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;login&quot;, &quot;realtime&quot;, &quot;strategy&quot;, &quot;ai&quot;, &quot;backtest&quot;, &quot;leaderboard&quot;, &quot;news&quot;], &quot;default&quot;: &quot;login&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Demo&quot;}, &quot;signalThreshold&quot;: {&quot;editor&quot;: &quot;range&quot;, &quot;min&quot;: 0.1, &quot;max&quot;: 0.6, &quot;step&quot;: 0.05, &quot;default&quot;: 0.3, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Strategy Engine&quot;}, &quot;tradesPerPage&quot;: {&quot;editor&quot;: &quot;int&quot;, &quot;min&quot;: 5, &quot;max&quot;: 20, &quot;default&quot;: 8, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Backtest&quot;}}">
+const UP = 'oklch(0.52 0.10 155)';
+const DOWN = 'oklch(0.53 0.15 25)';
+const UP_TXT = 'oklch(0.45 0.10 155)';
+const DOWN_TXT = 'oklch(0.47 0.15 25)';
+const PAIR = 'BTCUSDT';
+const BASE = 118150;
+
+function prng(seed) {
+  let s = seed >>> 0;
+  return function () {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    return s / 0x7fffffff;
+  };
+}
+
+function fmt(n, d) {
+  return Number(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+
+function mkSeries(seed, n, base, vol) {
+  const rnd = prng(seed);
+  const out = [];
+  let p = base;
+  for (let i = 0; i < n; i++) {
+    const o = p;
+    const c = p * (1 + (rnd() - 0.455) * vol / 100);
+    const h = Math.max(o, c) * (1 + rnd() * vol / 260);
+    const l = Math.min(o, c) * (1 - rnd() * vol / 260);
+    out.push({ o: o, h: h, l: l, c: c, v: 0.35 + rnd() });
+    p = c;
+  }
+  return out;
+}
+
+function sma(cs, p) {
+  const out = [];
+  for (let i = 0; i < cs.length; i++) {
+    if (i < p - 1) { out.push(null); continue; }
+    let s = 0;
+    for (let k = i - p + 1; k <= i; k++) s += cs[k].c;
+    out.push(s / p);
+  }
+  return out;
+}
+
+const CHIP = 'font-family: var(--font-heading); font-size: 13px; padding: 6px 12px; border: 1px solid var(--color-divider); background: transparent; color: var(--color-text); cursor: pointer;';
+const CHIP_ON = 'font-family: var(--font-heading); font-size: 13px; padding: 6px 12px; border: 1px solid var(--color-accent); background: var(--color-accent); color: var(--color-bg); cursor: pointer;';
+const BADGE = 'font-family: var(--font-heading); font-size: 11px; letter-spacing: .06em; padding: 2px 8px; border: 1px solid';
+
+const STRATS = [
+  { id: 'MA', short: 'SMA', name: 'SMA', src: 'system', desc: 'Theo xu hướng bằng đường trung bình động đơn giản.', sig: 1, w: 0.4, base: 2,
+    params: [['Fast period', '20'], ['Slow period', '50'], ['Nguồn giá', 'close']], file: 'sma_crossover.py' },
+  { id: 'RSI', short: 'RSI', name: 'RSI', src: 'system', desc: 'Đo động lượng, xác định vùng quá mua / quá bán.', sig: 1, w: 0.3, base: 1,
+    params: [['Period', '14'], ['Overbought', '70'], ['Oversold', '30']], file: 'rsi_momentum.py' },
+  { id: 'BB', short: 'BB', name: 'Bollinger Bands', src: 'system', desc: 'Đo độ biến động và phát hiện phá vỡ dải.', sig: 0, w: 0.2, base: 1,
+    params: [['Period', '20'], ['Std deviation', '2.0'], ['Nguồn giá', 'close']], file: 'bollinger.py' },
+  { id: 'SR', short: 'R/S', name: 'Support / Resistance', src: 'system', desc: 'Xác định vùng hỗ trợ và kháng cự quan trọng.', sig: 0, w: 0.3, base: 1,
+    params: [['Lookback (nến)', '120'], ['Số vùng tối đa', '4'], ['Ngưỡng chạm', '0.15%']], file: 'support_resistance.py' },
+  { id: 'SMC', short: 'SMC', name: 'SMC', src: 'system', desc: 'Phân tích cấu trúc thị trường theo Smart Money Concepts.', sig: -1, w: 0.25, base: 1,
+    params: [['Swing lookback', '20'], ['Order block min size', '0.4%'], ['Xác nhận BOS', 'close']], file: 'smc_structure.py' },
+  { id: 'WY', short: 'Wyckoff', name: 'Wyckoff', src: 'system', desc: 'Nhận diện giai đoạn tích lũy và phân phối.', sig: 1, w: 0.25, base: 1,
+    params: [['Phase window', '80'], ['Volume threshold', '1.5×'], ['Spring detection', 'bật']], file: 'wyckoff_phase.py' },
+  { id: 'SENT', short: 'Sentiment', name: 'News Sentiment', src: 'system', desc: 'Dùng sentiment tin tức BTC 24h làm tín hiệu.', sig: 1, w: 0.2, base: 1,
+    params: [['Cửa sổ tin (giờ)', '24'], ['Ngưỡng positive', '55%'], ['Model', 'FinBERT']], file: 'news_sentiment.py' },
+  { id: 'AI1', short: 'AI·RSI_BB', name: 'RSI_BB_LONG_SL2_TP4', src: 'ai', desc: 'AI generate: RSI < 30 và giá dưới BB Lower thì LONG.', sig: 1, w: 0.3, base: 1,
+    params: [['rsi_period', '14'], ['bb_std', '2.0'], ['stop_loss / take_profit', '2% / 4%']], file: 'user_rsi_bb.py' },
+  { id: 'AI2', short: 'AI·MA_CROSS', name: 'MA_CROSS_TRENDFOLLOW', src: 'ai', desc: 'AI generate: MA(20) cắt lên MA(50) và RSI > 55 thì LONG.', sig: -1, w: 0.25, base: 2,
+    params: [['fast / slow', '20 / 50'], ['rsi_filter', '55'], ['trailing_stop', '1.2%']], file: 'user_ma_cross.py' }
+];
+
+const BY_ID = {};
+STRATS.forEach((s) => { BY_ID[s.id] = s; });
+
+const CANDS = [
+  { ids: ['MA', 'RSI', 'SR'], seed: 11 },
+  { ids: ['RSI', 'BB'], seed: 23 },
+  { ids: ['MA', 'RSI'], seed: 37 },
+  { ids: ['AI1', 'RSI', 'SR'], seed: 44 },
+  { ids: ['SMC', 'SR'], seed: 51 },
+  { ids: ['WY', 'BB'], seed: 67 },
+  { ids: ['MA', 'AI2', 'SENT'], seed: 73 },
+  { ids: ['SMC', 'WY', 'SENT'], seed: 89 }
+];
+
+const NEWS = [
+  { title: 'Dòng vốn ETF Bitcoin giao ngay tại Mỹ tiếp tục tăng tuần thứ ba', summary: 'Các quỹ ETF ghi nhận hơn 200 triệu USD vào ròng, dẫn dắt bởi nhóm quỹ lớn nhất thị trường.', source: 'CoinDesk', time: '10:40', sentiment: 'POSITIVE', conf: '0.91', model: 'FinBERT' },
+  { title: 'Open interest hợp đồng tương lai Bitcoin trên CME lập đỉnh mới', summary: 'Nhu cầu từ nhà đầu tư tổ chức tăng mạnh, đồng thời làm tăng rủi ro thanh lý khi giá đảo chiều.', source: 'Cointelegraph', time: '10:20', sentiment: 'NEUTRAL', conf: '0.69', model: 'FinBERT' },
+  { title: 'Thợ đào Bitcoin giảm lượng bán sau kỳ điều chỉnh độ khó', summary: 'Lượng BTC chuyển ra khỏi ví thợ đào xuống mức thấp nhất trong hai tháng.', source: 'The Block', time: '10:05', sentiment: 'POSITIVE', conf: '0.86', model: 'FinBERT' },
+  { title: 'Quan chức Fed nhắc lại lộ trình lãi suất thận trọng', summary: 'Thị trường crypto phản ứng dè dặt, thanh khoản giảm trong phiên châu Á.', source: 'Reuters', time: '09:52', sentiment: 'NEGATIVE', conf: '0.74', model: 'FinBERT' },
+  { title: 'Số địa chỉ Bitcoin hoạt động hàng ngày tăng 12% theo tuần', summary: 'Chỉ số on-chain cho thấy hoạt động mạng phục hồi sau giai đoạn trầm lắng.', source: 'Glassnode', time: '09:40', sentiment: 'POSITIVE', conf: '0.83', model: 'FinBERT' },
+  { title: 'Sàn giao dịch lớn báo cáo sự cố rút tiền trong 40 phút', summary: 'Sự cố đã được khắc phục, không ghi nhận thiệt hại tài sản người dùng.', source: 'Decrypt', time: '09:18', sentiment: 'NEGATIVE', conf: '0.71', model: 'FinBERT' },
+  { title: 'Phái sinh Bitcoin: funding rate trở về mức trung tính', summary: 'Đòn bẩy trên thị trường hạ nhiệt sau đợt thanh lý cuối tuần.', source: 'Coinglass', time: '09:02', sentiment: 'NEUTRAL', conf: '0.67', model: 'FinBERT' },
+  { title: 'Một quốc gia Đông Nam Á công bố khung thử nghiệm cho tài sản số', summary: 'Khung pháp lý mới cho phép các tổ chức lưu ký thí điểm BTC trong 12 tháng.', source: 'Bloomberg', time: '08:45', sentiment: 'POSITIVE', conf: '0.79', model: 'FinBERT' },
+  { title: 'Khối lượng giao dịch BTC trên sàn phi tập trung giảm 18%', summary: 'Người dùng quay lại các sàn tập trung khi phí gas tăng.', source: 'The Defiant', time: '08:20', sentiment: 'NEUTRAL', conf: '0.65', model: 'FinBERT' }
+];
+
+const PY_CODE = `from csl.strategy import Strategy, Signal
+from csl.indicators import rsi, bollinger
+
+
+class RsiBbMeanReversion(Strategy):
+    """Sinh từ prompt của người dùng student@example.com."""
+
+    name = "RSI_BB_LONG_SL2_TP4"
+    version = "1.0.0"
+    timeframe = "1h"
+    symbol = "BTCUSDT"
+
+    params = dict(
+        rsi_period=14,
+        rsi_oversold=30,
+        rsi_overbought=70,
+        bb_period=20,
+        bb_std=2.0,
+        stop_loss=0.02,
+        take_profit=0.04,
+    )
+
+    def on_bar(self, ctx):
+        r = rsi(ctx.close, self.params["rsi_period"])
+        lower, _, upper = bollinger(
+            ctx.close, self.params["bb_period"], self.params["bb_std"]
+        )
+
+        if r[-1] < self.params["rsi_oversold"] and ctx.close[-1] < lower[-1]:
+            return Signal.LONG(
+                sl=self.params["stop_loss"],
+                tp=self.params["take_profit"],
+            )
+
+        if r[-1] > self.params["rsi_overbought"] and ctx.close[-1] > upper[-1]:
+            return Signal.SHORT(
+                sl=self.params["stop_loss"],
+                tp=self.params["take_profit"],
+            )
+
+        return Signal.HOLD`;
+
+const NAV = [
+  { id: 'realtime', label: 'Realtime' },
+  { id: 'strategy', label: 'Strategy Engine' },
+  { id: 'ai', label: 'AI Strategy' },
+  { id: 'backtest', label: 'Backtest' },
+  { id: 'leaderboard', label: 'Leaderboard' },
+  { id: 'news', label: 'News & Sentiment' }
+];
+
+const PAGE_META = {
+  realtime: ['Realtime chart BTC đa khung thời gian', 'Theo dõi tối đa 4 khung thời gian của BTCUSDT trên một màn hình'],
+  strategy: ['Strategy Engine', 'Strategy đơn của hệ thống và của AI, trọng số và tín hiệu tổng hợp'],
+  ai: ['AI Strategy — Prompt sang Python', 'Mô tả ý tưởng, AI sinh strategy Python riêng cho tài khoản của bạn'],
+  backtest: ['Backtest & Search', 'Cấu hình để sinh Leaderboard, và xem chi tiết kết quả của một candidate'],
+  leaderboard: ['Leaderboard tổ hợp strategy', 'Xếp hạng các version tổ hợp sinh bởi Domain-guide Random Search'],
+  news: ['News & Sentiment', 'Crawl tin tức BTC và phân loại sentiment bằng model NLP']
+};
+
+const TF_ALL = ['1m', '5m', '15m', '1h', '4h'];
+const TF_CFG = { '1m': [3, 0.28], '5m': [7, 0.5], '15m': [13, 0.8], '1h': [21, 1.3], '4h': [33, 2.1] };
+
+class Component extends DCLogic {
+  state = {
+    view: 'login', authMode: 'login',
+    page: 'realtime',
+    tfs: ['1m', '5m', '15m', '1h'],
+    live: true, tick: 0,
+    weights: { MA: 0.4, RSI: 0.3, BB: 0.2, SR: 0.3, SMC: 0.25, WY: 0.25, SENT: 0.2, AI1: 0.3, AI2: 0.25 },
+    hist: {}, draft: {}, verSel: {},
+    sel: { MA: true, RSI: true, BB: true, SR: true, SMC: false, WY: false, SENT: true, AI1: true, AI2: false },
+    runSel: { MA: true, RSI: true, BB: true, SR: true, SMC: false, WY: false, SENT: true, AI1: true, AI2: false },
+    runWeights: { MA: 0.4, RSI: 0.3, BB: 0.2, SR: 0.3, SMC: 0.25, WY: 0.25, SENT: 0.2, AI1: 0.3, AI2: 0.25 },
+    comboRev: 0,
+    detail: 'MA', bumpNote: '',
+    dirtyCfg: false, candQuery: '', candOpen: false,
+    prompt: 'Khi RSI dưới 30 và giá nằm dưới Bollinger Lower Band thì LONG. Stop loss 2%, take profit 4%. Áp dụng cho BTCUSDT khung 1h.',
+    generated: true,
+    dir: 'ALL', tpage: 1,
+    cfgTf: '5m', cfgFrom: '2026-05-01', cfgTo: '2026-05-15',
+    runSeq: 1, confirmOpen: false,
+    iteration: 500, selIdx: 0, btIdx: 0,
+    newsSent: 'ALL', newsPage: 1, crawl: true
+  };
+
+  componentDidMount() {
+    const sp = this.props.startPage;
+    if (sp && sp !== 'login') this.setState({ view: 'app', page: sp });
+    this.timer = setInterval(() => {
+      if (this.state.view === 'app' && this.state.page === 'realtime' && this.state.live) {
+        this.setState((s) => ({ tick: s.tick + 1 }));
+      }
+    }, 2200);
+  }
+
+  componentWillUnmount() { clearInterval(this.timer); }
+
+  icon(d, extra) {
+    return React.createElement('svg', { width: 17, height: 17, viewBox: '0 0 24 24', fill: 'none',
+      stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' },
+      d.map((p, i) => React.createElement(p.t || 'path', Object.assign({ key: i }, p.a))), extra);
+  }
+
+  navIcon(id) {
+    const P = {
+      realtime: [{ a: { d: 'M22 12h-4l-3 9L9 3l-3 9H2' } }],
+      strategy: [{ t: 'circle', a: { cx: 6, cy: 6, r: 2.5 } }, { t: 'circle', a: { cx: 6, cy: 18, r: 2.5 } }, { t: 'circle', a: { cx: 18, cy: 12, r: 2.5 } }, { a: { d: 'M8.5 7.2 15.6 10.9M8.5 16.8 15.6 13.1' } }],
+      ai: [{ a: { d: 'M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z' } }, { a: { d: 'M18 16l.8 2.2L21 19l-2.2.8L18 22l-.8-2.2L15 19l2.2-.8z' } }],
+      backtest: [{ a: { d: 'M3 3v18h18' } }, { a: { d: 'M7 15v3M12 9v9M17 12v6' } }],
+      leaderboard: [{ a: { d: 'M8 21h8M12 17v4' } }, { a: { d: 'M7 4h10v5a5 5 0 0 1-10 0z' } }, { a: { d: 'M7 5H4v2a3 3 0 0 0 3 3M17 5h3v2a3 3 0 0 1-3 3' } }],
+      news: [{ t: 'rect', a: { x: 3, y: 4, width: 18, height: 16 } }, { a: { d: 'M7 8h7M7 12h10M7 16h6' } }]
+    };
+    return this.icon(P[id] || P.realtime);
+  }
+
+  chart(o) {
+    const R = React.createElement;
+    const cs = o.candles, n = cs.length;
+    let hi = -Infinity, lo = Infinity;
+    cs.forEach((c) => { if (c.h > hi) hi = c.h; if (c.l < lo) lo = c.l; });
+    if (o.lines) o.lines.forEach((l) => { if (l.p > hi) hi = l.p; if (l.p < lo) lo = l.p; });
+    const pad = (hi - lo) * 0.1;
+    const top = hi + pad, bot = lo - pad, span = top - bot || 1;
+    const y = (p) => ((top - p) / span) * 100;
+    const cw = 100 / n;
+    const h = o.height || 190;
+
+    const grid = [0, 25, 50, 75, 100].map((g, i) => R('div', { key: 'g' + i, style: { position: 'absolute', left: 0, right: 0, top: g + '%', borderTop: '1px solid color-mix(in srgb, var(--color-text) 6%, transparent)' } }));
+
+    const candles = cs.map((c, i) => {
+      const col = c.c >= c.o ? UP : DOWN;
+      const a = y(c.o), b = y(c.c);
+      return R('div', { key: 'c' + i, style: { position: 'absolute', left: i * cw + '%', width: cw + '%', top: 0, bottom: 0 } },
+        R('div', { style: { position: 'absolute', left: '50%', marginLeft: '-0.5px', width: '1px', top: y(c.h) + '%', height: (y(c.l) - y(c.h)) + '%', background: col } }),
+        R('div', { style: { position: 'absolute', left: '20%', width: '60%', top: Math.min(a, b) + '%', height: Math.max(Math.abs(a - b), 0.7) + '%', background: col } }));
+    });
+
+    const svgLines = (o.ma || []).map((m, k) => {
+      const pts = m.data.map((v, i) => (v == null ? null : (i + 0.5) + ',' + y(v))).filter(Boolean).join(' ');
+      return R('polyline', { key: 'm' + k, points: pts, fill: 'none', stroke: m.color, strokeWidth: 1.2, vectorEffect: 'non-scaling-stroke' });
+    });
+    const overlay = R('svg', { key: 'svg', viewBox: '0 0 ' + n + ' 100', preserveAspectRatio: 'none', style: { position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible' } }, svgLines);
+
+    const hlines = (o.lines || []).map((l, i) => R('div', { key: 'h' + i, style: { position: 'absolute', left: 0, right: 0, top: y(l.p) + '%', borderTop: '1px dashed ' + l.color } },
+      R('span', { style: { position: 'absolute', right: 2, top: -8, fontSize: '9.5px', fontFamily: "'IBM Plex Mono', monospace", color: l.color, background: 'var(--color-bg)', padding: '0 3px' } }, l.label)));
+
+    const marks = (o.marks || []).map((m, i) => {
+      const c = cs[m.i];
+      const isUp = m.dir === 'LONG';
+      return R('div', { key: 'k' + i, style: { position: 'absolute', left: (m.i + 0.5) * cw + '%', top: isUp ? y(c.l) + '%' : y(c.h) + '%', transform: isUp ? 'translate(-50%, 4px)' : 'translate(-50%, -100%) translateY(-4px)', fontSize: '9.5px', fontFamily: "'IBM Plex Mono', monospace", whiteSpace: 'nowrap', border: '1px solid ' + (isUp ? UP : DOWN), color: isUp ? UP_TXT : DOWN_TXT, background: 'var(--color-bg)', padding: '0 4px', lineHeight: '14px' } }, m.text);
+    });
+
+    const axisVals = [0, 0.25, 0.5, 0.75, 1].map((f, i) => R('div', { key: 'a' + i, style: { position: 'absolute', top: f * 100 + '%', right: 0, transform: 'translateY(-50%)', fontSize: '10px', fontFamily: "'IBM Plex Mono', monospace", color: 'var(--color-neutral-600)' } }, fmt(top - f * span, 0)));
+
+    const vmax = Math.max.apply(null, cs.map((c) => c.v));
+    const vols = cs.map((c, i) => R('div', { key: 'v' + i, style: { position: 'absolute', left: i * cw + '%', width: cw + '%', bottom: 0, height: (c.v / vmax) * 100 + '%' } },
+      R('div', { style: { width: '60%', marginLeft: '20%', height: '100%', background: c.c >= c.o ? UP : DOWN, opacity: 0.35 } })));
+
+    const times = (o.times || []).map((t, i) => R('span', { key: 't' + i, style: { fontSize: '10px', fontFamily: "'IBM Plex Mono', monospace", color: 'var(--color-neutral-600)' } }, t));
+
+    return R('div', { style: { display: 'flex', flexDirection: 'column' } },
+      R('div', { style: { display: 'flex', gap: '6px' } },
+        R('div', { style: { position: 'relative', flex: 1, height: h + 'px', minWidth: 0 } }, grid, overlay, candles, hlines, marks),
+        R('div', { style: { position: 'relative', width: '58px', height: h + 'px' } }, axisVals)),
+      R('div', { style: { display: 'flex', gap: '6px', marginTop: '4px' } },
+        R('div', { style: { position: 'relative', flex: 1, height: (o.volHeight || 34) + 'px', minWidth: 0, borderTop: '1px solid var(--color-divider)' } }, vols),
+        R('div', { style: { width: '58px' } })),
+      R('div', { style: { display: 'flex', justifyContent: 'space-between', paddingRight: '64px', marginTop: '4px' } }, times));
+  }
+
+  trades(seed, count) {
+    const rnd = prng(seed);
+    const out = [];
+    let day = 1, hour = 6;
+    for (let i = 0; i < count; i++) {
+      hour += 2 + Math.floor(rnd() * 5);
+      if (hour >= 24) { hour -= 24; day += 1; }
+      const dir = rnd() > 0.48 ? 'LONG' : 'SHORT';
+      const entry = BASE * (1 + (rnd() - 0.5) * 0.03);
+      const sl = dir === 'LONG' ? entry * 0.98 : entry * 1.02;
+      const tp = dir === 'LONG' ? entry * 1.04 : entry * 0.96;
+      const win = rnd() > 0.38;
+      const exit = win ? tp * (1 - (rnd() - 0.5) * 0.002) : sl * (1 + (rnd() - 0.5) * 0.002);
+      const size = 100 + Math.floor(rnd() * 9) * 50;
+      const gross = dir === 'LONG' ? (exit - entry) / entry : (entry - exit) / entry;
+      const profit = gross * size - size * 0.0008 - size * 0.0005;
+      out.push({
+        pair: PAIR,
+        time: String(day).padStart(2, '0') + '/05/2026 ' + String(hour).padStart(2, '0') + ':' + String(Math.floor(rnd() * 6)) + '5',
+        dir: dir, size: fmt(size, 0), entry: fmt(entry, 2), sl: fmt(sl, 2), tp: fmt(tp, 2), exit: fmt(exit, 2),
+        raw: profit
+      });
+    }
+    return out;
+  }
+
+  decorate(rows) {
+    return rows.map((t, i) => Object.assign({}, t, {
+      key: i,
+      dirStyle: BADGE + ' ' + (t.dir === 'LONG' ? UP + '; color: ' + UP_TXT : DOWN + '; color: ' + DOWN_TXT),
+      profit: (t.raw >= 0 ? '+' : '') + fmt(t.raw, 2),
+      profitStyle: 'color: ' + (t.raw >= 0 ? UP_TXT : DOWN_TXT)
+    }));
+  }
+
+  sigMeta(v) {
+    if (v > 0) return ['LONG', BADGE + ' ' + UP + '; color: ' + UP_TXT];
+    if (v < 0) return ['SHORT', BADGE + ' ' + DOWN + '; color: ' + DOWN_TXT];
+    return ['HOLD', BADGE + ' var(--color-divider); color: var(--color-neutral-700)'];
+  }
+
+  // Lịch sử version tham số của một strategy đơn
+  histOf(id) {
+    return this.state.hist[id] || [BY_ID[id].params];
+  }
+
+  verNum(id) {
+    return BY_ID[id].base + this.histOf(id).length - 1;
+  }
+
+  scopeIds(which) {
+    const m = this.state[which || 'sel'];
+    return STRATS.filter((s) => m[s.id]).map((s) => s.id);
+  }
+
+  // Tổ hợp được sinh từ đúng bộ strategy đơn của lần chạy Search gần nhất
+  combos() {
+    const ids = this.scopeIds('runSel');
+    if (ids.length < 2) return [];
+    const all = [];
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        all.push([ids[i], ids[j]]);
+        if (j + 1 < ids.length) all.push([ids[i], ids[j], ids[j + 1]]);
+      }
+    }
+    const step = Math.max(1, Math.floor(all.length / 8));
+    const out = [];
+    for (let k = 0; k < all.length && out.length < 8; k += step) {
+      const c = all[k];
+      out.push({ ids: c, seed: 11 + k * 13 + c.length * 7 });
+    }
+    return out;
+  }
+
+  // Danh sách candidate: mỗi tổ hợp mang một version tính từ version tham số của các strategy đơn
+  candidates() {
+    const st = this.state;
+    const rows = this.combos().map((c, i) => {
+      const rnd = prng(c.seed + st.runSeq * 7);
+      const bump = c.ids.reduce((a, id) => a + (this.histOf(id).length - 1), 0);
+      const version = 1 + bump + st.comboRev;
+      const profit = (700 + rnd() * 1800) * (1 + bump * 0.06);
+      return {
+        idx: i,
+        ids: c.ids,
+        seed: c.seed + st.runSeq,
+        name: c.ids.map((id) => BY_ID[id].short).join(' + '),
+        version: 'Version ' + version,
+        vnum: version,
+        profitRaw: profit,
+        win: fmt(54 + rnd() * 15, 2) + '%',
+        mdd: '-' + fmt(2.6 + rnd() * 4, 2) + '%',
+        trades: 110 + Math.floor(rnd() * 80)
+      };
+    });
+    rows.sort((a, b) => b.profitRaw - a.profitRaw);
+    rows.forEach((r, i) => { r.rank = i + 1; });
+    return rows;
+  }
+
+  renderVals() {
+    const st = this.state;
+    const set = (patch) => this.setState(patch);
+    const jitter = 1 + Math.sin(st.tick * 0.7) * 0.0006;
+    const chip = (on) => (on ? CHIP_ON : CHIP);
+
+    const nav = NAV.map((it) => ({
+      label: it.label,
+      icon: this.navIcon(it.id),
+      go: () => set({ page: it.id }),
+      pressed: st.page === it.id ? 'true' : 'false',
+      style: 'display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; cursor: pointer; font-family: var(--font-heading); font-size: 15px; padding: 8px 8px; border: 1px solid ' +
+        (st.page === it.id ? 'var(--color-accent); background: var(--color-accent); color: var(--color-bg);' : 'transparent; background: transparent; color: var(--color-text);')
+    }));
+
+    const meta = PAGE_META[st.page] || PAGE_META.realtime;
+
+    // ---- realtime
+    const panes = st.tfs.map((tf) => {
+      const cfg = TF_CFG[tf];
+      const cs = mkSeries(cfg[0] + 7, 58, BASE * (1 - cfg[1] / 220), cfg[1]);
+      const k = BASE / cs[cs.length - 1].c;
+      cs.forEach((c) => { c.o *= k; c.h *= k; c.l *= k; c.c *= k; });
+      const last = cs[cs.length - 1];
+      last.c = last.c * jitter;
+      const ma20 = sma(cs, 20);
+      const first = cs[0].o;
+      const chg = ((last.c - first) / first) * 100;
+      const times = tf === '1m' ? ['09:45', '10:00', '10:15', '10:30', '10:45'] :
+        tf === '5m' ? ['06:00', '07:00', '08:00', '09:00', '10:00'] :
+        tf === '15m' ? ['18:00', '21:00', '00:00', '03:00', '09:00'] :
+        tf === '1h' ? ['12/05', '13/05', '14/05', '15/05', '16/05'] : ['02/05', '06/05', '10/05', '14/05', '18/05'];
+      return {
+        key: tf,
+        title: PAIR + ' · ' + tf,
+        price: fmt(last.c, 2),
+        change: (chg >= 0 ? '+' : '') + fmt(chg, 2) + '%',
+        changeStyle: 'font-family: \'IBM Plex Mono\', monospace; font-size: 12px; color: ' + (chg >= 0 ? UP_TXT : DOWN_TXT),
+        signal: chg >= 0 ? 'BUY' : 'SELL',
+        signalStyle: BADGE + ' ' + (chg >= 0 ? UP + '; color: ' + UP_TXT : DOWN + '; color: ' + DOWN_TXT),
+        ma: fmt(ma20[ma20.length - 1] || last.c, 2),
+        vol: fmt(last.v * (tf === '1m' ? 198 : tf === '5m' ? 1240 : tf === '15m' ? 3210 : 12470), 0),
+        chart: this.chart({ candles: cs, height: st.tfs.length > 2 ? 176 : 260, ma: [{ data: ma20, color: 'var(--color-accent)' }], times: times })
+      };
+    });
+
+    const ticks = [0, 1, 2, 3, 4].map((i) => {
+      const rnd = prng(900 + i + st.tick);
+      const buy = rnd() > 0.45;
+      return {
+        key: i,
+        time: '10:45:3' + (8 - i) + '.' + String(120 - i * 17).padStart(3, '0'),
+        price: fmt(BASE * jitter - i * 0.4, 2),
+        qty: fmt(0.004 + rnd() * 0.02, 3),
+        side: buy ? 'Buy' : 'Sell',
+        style: 'font-family: \'IBM Plex Mono\', monospace; color: ' + (buy ? UP_TXT : DOWN_TXT)
+      };
+    });
+
+    // ---- strategy engine
+    const stratRow = (s) => {
+      const sm = this.sigMeta(s.sig);
+      const focus = st.detail === s.id;
+      const inScope = !!st.sel[s.id];
+      return {
+        key: s.id, name: s.name, desc: s.desc, on: inScope,
+        sigLabel: sm[0], sigStyle: sm[1],
+        verText: s.file + ' · v' + this.verNum(s.id) + '.0 · ' + this.histOf(s.id).length + ' version',
+        select: () => set({ detail: s.id, bumpNote: '' }),
+        toggle: () => set({ sel: Object.assign({}, st.sel, { [s.id]: !inScope }) }),
+        style: 'display: flex; align-items: flex-start; gap: 10px; padding: 10px; border: 1px solid ' + (focus ? 'var(--color-accent);' : 'var(--color-divider);') + ' background: ' + (inScope ? 'color-mix(in srgb, var(--color-accent) 7%, transparent)' : 'transparent') + ';'
+      };
+    };
+
+    const scopeIds = this.scopeIds('sel');
+    const runIds = this.scopeIds('runSel');
+    const scopeChanged = scopeIds.join(',') !== runIds.join(',');
+    const weightsChanged = STRATS.some((s) => st.weights[s.id] !== st.runWeights[s.id]);
+    const setChanged = scopeChanged || weightsChanged;
+    const dirty = st.dirtyCfg || setChanged;
+    const selected = STRATS.filter((s) => st.sel[s.id]);
+    let num = 0, den = 0;
+    selected.forEach((s) => { num += st.weights[s.id] * s.sig; den += st.weights[s.id]; });
+    const score = den ? num / den : 0;
+    const thr = this.props.signalThreshold != null ? this.props.signalThreshold : 0.3;
+    const decision = score >= thr ? 'LONG' : score <= -thr ? 'SHORT' : 'HOLD';
+
+    const voteCards = [
+      { key: 'L', label: 'LONG', value: fmt(Math.max(score, 0), 2), note: 'score ≥ ' + fmt(thr, 2) + ' → vào lệnh', on: decision === 'LONG', color: UP },
+      { key: 'H', label: 'HOLD', value: fmt(score > -thr && score < thr ? score : 0, 2), note: '|score| < ' + fmt(thr, 2) + ' → đứng ngoài', on: decision === 'HOLD', color: 'var(--color-neutral-500)' },
+      { key: 'S', label: 'SHORT', value: fmt(Math.min(score, 0), 2), note: 'score ≤ -' + fmt(thr, 2) + ' → vào lệnh', on: decision === 'SHORT', color: DOWN }
+    ].map((c) => ({
+      key: c.key, label: c.label, value: c.value, note: c.note,
+      style: 'background: var(--color-bg); padding: 14px; ' + (c.on ? 'border: 1px solid ' + c.color + '; color: ' + (c.color === UP ? UP_TXT : c.color === DOWN ? DOWN_TXT : 'var(--color-text)') + ';' : 'color: var(--color-neutral-600);')
+    }));
+
+    const detailStrat = BY_ID[st.detail] || STRATS[0];
+    const dId = detailStrat.id;
+    const dHist = this.histOf(dId);
+    const dLast = dHist.length - 1;
+    const dIdx = st.verSel[dId] == null ? dLast : Math.min(st.verSel[dId], dLast);
+    const dLatest = dIdx === dLast;
+    const dDraft = st.draft[dId] || dHist[dLast];
+    const dShown = dLatest ? dDraft : dHist[dIdx];
+    const sc = mkSeries(19, 58, BASE * 0.996, 0.8);
+    const scMa = sma(sc, 20);
+    const scHi = Math.max.apply(null, sc.map((c) => c.h));
+    const scLo = Math.min.apply(null, sc.map((c) => c.l));
+
+    // ---- leaderboard / candidates
+    const cands = this.candidates();
+    const EMPTY_CAND = { idx: 0, ids: [], seed: 5, rank: 0, name: '—', version: 'Version 1', vnum: 1, profitRaw: 0, win: '0.00%', mdd: '0.00%', trades: 0 };
+    const selCand = cands.find((c) => c.idx === st.selIdx) || cands[0] || EMPTY_CAND;
+    const btCand = cands.find((c) => c.idx === st.btIdx) || cands[0] || EMPTY_CAND;
+    const cq = st.candQuery.trim().toLowerCase();
+    const candMatches = cq ? cands.filter((c) => (c.name + ' ' + c.version + ' #' + c.rank).toLowerCase().indexOf(cq) >= 0) : cands;
+
+    const compRows = (cand) => cand.ids.map((id) => {
+      const s = BY_ID[id];
+      const sm = this.sigMeta(s.sig);
+      return {
+        key: id, name: s.name,
+        src: s.src === 'ai' ? 'AI generate' : 'Hệ thống',
+        srcStyle: BADGE + ' ' + (s.src === 'ai' ? 'var(--color-accent); color: var(--color-accent-700)' : 'var(--color-divider); color: var(--color-neutral-700)'),
+        ver: 'v' + this.verNum(id) + '.0',
+        params: this.histOf(id)[this.histOf(id).length - 1].map((p) => p[0] + ' ' + p[1]).join(' · '),
+        w: fmt(st.weights[id], 2),
+        sigLabel: sm[0], sigStyle: sm[1]
+      };
+    });
+
+    // ---- backtest trades of the chosen candidate
+    const allTrades = this.trades(btCand.seed, 24);
+    const filtered = st.dir === 'ALL' ? allTrades : allTrades.filter((t) => t.dir === st.dir);
+    const per = this.props.tradesPerPage != null ? this.props.tradesPerPage : 8;
+    const pages = Math.max(1, Math.ceil(filtered.length / per));
+    const page = Math.min(st.tpage, pages);
+    const slice = filtered.slice((page - 1) * per, page * per);
+    const wins = allTrades.filter((t) => t.raw > 0).length;
+    const total = allTrades.reduce((a, t) => a + t.raw, 0);
+
+    const bt = mkSeries(41 + st.btIdx * 3, 64, BASE * 0.99, 0.9);
+    const btMa20 = sma(bt, 20), btMa50 = sma(bt, 50);
+    const btHi = Math.max.apply(null, bt.map((c) => c.h));
+    const btLo = Math.min.apply(null, bt.map((c) => c.l));
+
+    // ---- news
+    const newsAll = NEWS.filter((n) => st.newsSent === 'ALL' || n.sentiment === st.newsSent);
+    const nPer = 4;
+    const nPages = Math.max(1, Math.ceil(newsAll.length / nPer));
+    const nPage = Math.min(st.newsPage, nPages);
+    const newsSlice = newsAll.slice((nPage - 1) * nPer, nPage * nPer);
+
+    const runMeta = 'Run #' + st.runSeq + ' · ' + PAIR + ' · ' + st.cfgTf + ' · ' + st.cfgFrom + ' → ' + st.cfgTo + ' · ' + cands.length + ' tổ hợp';
+
+    return {
+      isLogin: st.view === 'login',
+      isApp: st.view === 'app',
+      isRegister: st.authMode === 'register',
+      authTitle: st.authMode === 'register' ? 'Tạo tài khoản' : 'Đăng nhập',
+      authSub: st.authMode === 'register' ? 'Tài khoản riêng để lưu strategy Python do AI sinh ra.' : 'Dùng tài khoản của bạn để mở workspace strategy.',
+      authCta: st.authMode === 'register' ? 'Tạo tài khoản' : 'Đăng nhập',
+      tabLogin: 'flex: 1; padding: 9px; cursor: pointer; font-family: var(--font-heading); font-size: 14px; border: 0; ' + (st.authMode === 'login' ? 'background: var(--color-accent); color: var(--color-bg);' : 'background: transparent; color: var(--color-text);'),
+      tabRegister: 'flex: 1; padding: 9px; cursor: pointer; font-family: var(--font-heading); font-size: 14px; border: 0; border-left: 1px solid var(--color-divider); ' + (st.authMode === 'register' ? 'background: var(--color-accent); color: var(--color-bg);' : 'background: transparent; color: var(--color-text);'),
+      toLogin: () => set({ authMode: 'login' }),
+      toRegister: () => set({ authMode: 'register' }),
+      signIn: () => set({ view: 'app', page: 'realtime' }),
+      signOut: () => set({ view: 'login', authMode: 'login' }),
+      iconLogout: this.icon([{ a: { d: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4' } }, { a: { d: 'M16 17l5-5-5-5M21 12H9' } }]),
+
+      nav: nav,
+      pageTitle: meta[0],
+      pageSub: meta[1],
+      lastPrice: fmt(BASE * jitter, 2),
+
+      isRealtime: st.page === 'realtime',
+      isStrategy: st.page === 'strategy',
+      isAi: st.page === 'ai',
+      isBacktest: st.page === 'backtest',
+      isLeaderboard: st.page === 'leaderboard',
+      isNews: st.page === 'news',
+
+      tfChips: TF_ALL.map((tf) => ({
+        key: tf, label: tf, style: chip(st.tfs.indexOf(tf) >= 0), pressed: st.tfs.indexOf(tf) >= 0 ? 'true' : 'false',
+        go: () => {
+          const has = st.tfs.indexOf(tf) >= 0;
+          if (has && st.tfs.length > 1) set({ tfs: st.tfs.filter((x) => x !== tf) });
+          else if (!has && st.tfs.length < 4) set({ tfs: TF_ALL.filter((x) => st.tfs.indexOf(x) >= 0 || x === tf) });
+        }
+      })),
+      toggleLive: () => set({ live: !st.live }),
+      liveLabel: st.live ? 'Đang nhận dữ liệu' : 'Đã tạm dừng',
+      liveStyle: chip(st.live),
+      livePressed: st.live ? 'true' : 'false',
+      panes: panes,
+      ticks: ticks,
+      connRows: [
+        { key: 1, k: 'Trạng thái', v: st.live ? 'Đã kết nối' : 'Tạm dừng' },
+        { key: 2, k: 'Nguồn dữ liệu', v: 'Binance WS' },
+        { key: 3, k: 'Độ trễ', v: (98 + (st.tick % 9)) + ' ms' },
+        { key: 4, k: 'Dữ liệu cuối', v: '10:45:38' },
+        { key: 5, k: 'Nến lịch sử / pane', v: '1000' }
+      ],
+
+      sysStrategies: STRATS.filter((s) => s.src === 'system').map(stratRow),
+      aiStrategies: STRATS.filter((s) => s.src === 'ai').map(stratRow),
+      stratCount: STRATS.length,
+      scopeCount: scopeIds.length + ' / ' + STRATS.length + ' strategy đơn',
+      scopeNote: setChanged
+        ? 'Bộ strategy hoặc trọng số đã thay đổi. Leaderboard vẫn là kết quả Run #' + st.runSeq + '; lưu bộ strategy để sinh version tổ hợp mới.'
+        : 'Bộ strategy đang khớp với Leaderboard hiện tại (Run #' + st.runSeq + ').',
+      scopeNoteStyle: 'margin-top: 12px; padding: 9px 10px; font-size: 11px; line-height: 1.5; border: 1px solid ' + (setChanged ? 'oklch(0.53 0.15 25); color: oklch(0.47 0.15 25);' : 'var(--color-divider); color: var(--color-neutral-700);'),
+      setChanged: setChanged,
+      setUnchanged: !setChanged,
+      saveSetDisabled: !setChanged || scopeIds.length < 2,
+      saveSetNote: scopeIds.length < 2
+        ? 'Cần ít nhất 2 strategy đơn được chọn để tạo tổ hợp.'
+        : setChanged
+          ? 'Sẽ sinh lại toàn bộ candidate với version tổ hợp mới rồi backtest theo config hiện tại.'
+          : 'Đã lưu — Leaderboard đang khớp với bộ strategy và trọng số này (Run #' + st.runSeq + ').',
+      saveSet: () => set({
+        runSel: Object.assign({}, st.sel),
+        runWeights: Object.assign({}, st.weights),
+        comboRev: st.comboRev + 1,
+        runSeq: st.runSeq + 1,
+        selIdx: 0, btIdx: 0, tpage: 1, candQuery: '',
+        page: 'leaderboard'
+      }),
+      scopeChips: STRATS.map((s) => ({
+        key: s.id, label: s.short,
+        pressed: st.sel[s.id] ? 'true' : 'false',
+        style: chip(!!st.sel[s.id]),
+        go: () => set({ sel: Object.assign({}, st.sel, { [s.id]: !st.sel[s.id] }) })
+      })),
+      votingRows: selected.map((s) => {
+        const sm = this.sigMeta(s.sig);
+        return {
+          key: s.id, name: s.name, weight: st.weights[s.id], weightText: fmt(st.weights[s.id], 2),
+          sigLabel: sm[0], sigStyle: sm[1],
+          setWeight: (e) => set({ weights: Object.assign({}, st.weights, { [s.id]: Number(e.target.value) }) })
+        };
+      }),
+      voteCards: voteCards,
+      thresholdText: fmt(thr, 2),
+      comboText: scopeIds.length ? scopeIds.map((id) => BY_ID[id].short).join(' + ') : 'chưa chọn strategy nào',
+      detailName: detailStrat.name,
+      detailMeta: detailStrat.file + ' · v' + this.verNum(dId) + '.0 · ' + (detailStrat.src === 'ai' ? 'AI generate' : 'Hệ thống'),
+      verValue: String(dIdx),
+      verOptions: dHist.map((_, i) => ({ key: i, v: String(i), label: 'Version ' + (i + 1) + (i === dLast ? ' — mới nhất' : '') })),
+      setVer: (e) => set({ verSel: Object.assign({}, st.verSel, { [dId]: Number(e.target.value) }) }),
+      isLatestVer: dLatest,
+      isOldVer: !dLatest,
+      restoreVer: () => set({
+        draft: Object.assign({}, st.draft, { [dId]: dHist[dIdx].map((p) => p.slice()) }),
+        verSel: Object.assign({}, st.verSel, { [dId]: dLast })
+      }),
+      detailParams: dShown.map((p, i) => ({
+        key: dId + i, k: p[0], v: p[1], ro: !dLatest,
+        style: dLatest ? '' : 'background: color-mix(in srgb, var(--color-text) 4%, transparent);',
+        set: (e) => {
+          const next = dShown.map((q) => q.slice());
+          next[i][1] = e.target.value;
+          set({ draft: Object.assign({}, st.draft, { [dId]: next }) });
+        }
+      })),
+      saveParams: () => {
+        const affected = this.combos().filter((c) => c.ids.indexOf(dId) >= 0).length;
+        const nextHist = dHist.concat([dDraft.map((p) => p.slice())]);
+        set({
+          hist: Object.assign({}, st.hist, { [dId]: nextHist }),
+          draft: Object.assign({}, st.draft, { [dId]: null }),
+          verSel: Object.assign({}, st.verSel, { [dId]: nextHist.length - 1 }),
+          bumpNote: 'Đã lưu Version ' + nextHist.length + ' của ' + detailStrat.name + '. Hệ thống sinh lại ' + affected + ' tổ hợp có chứa strategy này thành version tổ hợp mới trong Leaderboard.'
+        });
+      },
+      hasBump: !!st.bumpNote,
+      bumpNote: st.bumpNote,
+      strategyChart: this.chart({
+        candles: sc, height: 230,
+        ma: [{ data: scMa, color: 'var(--color-accent)' }],
+        lines: [{ p: scHi * 0.999, color: DOWN, label: 'Kháng cự ' + fmt(scHi * 0.999, 2) }, { p: scLo * 1.001, color: UP, label: 'Hỗ trợ ' + fmt(scLo * 1.001, 2) }],
+        marks: [{ i: 12, dir: 'LONG', text: 'LONG' }, { i: 34, dir: 'SHORT', text: 'SHORT' }, { i: 49, dir: 'LONG', text: 'LONG' }],
+        times: ['18:00', '21:00', '00:00', '03:00', '06:00']
+      }),
+      goBacktest: () => set({ page: 'backtest' }),
+      goStrategy: () => set({ page: 'strategy' }),
+      goAi: () => set({ page: 'ai' }),
+
+      prompt: st.prompt,
+      promptLen: st.prompt.length,
+      setPrompt: (e) => set({ prompt: e.target.value }),
+      clearPrompt: () => set({ prompt: '', generated: false }),
+      generate: () => set({ generated: true }),
+      generateLabel: st.generated ? 'Sinh lại bằng AI' : 'Sinh strategy bằng AI',
+      aiStatus: st.generated ? 'Hợp lệ · sẵn sàng lưu' : 'Chưa sinh',
+      aiStatusStyle: BADGE + ' ' + (st.generated ? UP + '; color: ' + UP_TXT : 'var(--color-divider); color: var(--color-neutral-700)'),
+      pythonCode: st.generated ? PY_CODE : '# Nhập mô tả strategy ở cột bên trái, sau đó bấm "Sinh strategy bằng AI".',
+      promptSamples: [
+        { key: 1, label: 'MA(20) cắt lên MA(50) và RSI > 55 thì LONG, đảo chiều thì đóng lệnh.', go: () => set({ prompt: 'MA(20) cắt lên MA(50) và RSI > 55 thì LONG, đảo chiều thì đóng lệnh.', generated: false }) },
+        { key: 2, label: 'Giá phá vùng kháng cự kèm volume gấp 1.5 lần trung bình thì LONG, SL 1.5%.', go: () => set({ prompt: 'Giá phá vùng kháng cự kèm volume gấp 1.5 lần trung bình thì LONG, SL 1.5%.', generated: false }) },
+        { key: 3, label: 'Theo SMC: chờ break of structure rồi vào lệnh tại order block gần nhất.', go: () => set({ prompt: 'Theo SMC: chờ break of structure rồi vào lệnh tại order block gần nhất.', generated: false }) }
+      ],
+      validations: [
+        { key: 1, k: 'Trường bắt buộc', v: 'name, timeframe, params đầy đủ', mark: '✓', markStyle: 'color: ' + UP_TXT },
+        { key: 2, k: 'Logic điều kiện', v: 'LONG / SHORT không xung đột nhau', mark: '✓', markStyle: 'color: ' + UP_TXT },
+        { key: 3, k: 'Chỉ báo hỗ trợ', v: 'rsi, bollinger đều có trong csl.indicators', mark: '✓', markStyle: 'color: ' + UP_TXT },
+        { key: 4, k: 'Quản trị rủi ro', v: 'stop_loss 2% · take_profit 4%', mark: '✓', markStyle: 'color: ' + UP_TXT }
+      ],
+      myStrategies: [
+        { key: 1, name: 'RSI_BB_LONG_SL2_TP4', created: '20/05/2026 10:42', version: 'v1.0', status: 'Đang dùng', statusStyle: BADGE + ' ' + UP + '; color: ' + UP_TXT },
+        { key: 2, name: 'MA_CROSS_TRENDFOLLOW', created: '19/05/2026 16:30', version: 'v2.0', status: 'Đang dùng', statusStyle: BADGE + ' ' + UP + '; color: ' + UP_TXT },
+        { key: 3, name: 'SMC_OB_RETEST', created: '18/05/2026 09:12', version: 'v0.4', status: 'Nháp', statusStyle: BADGE + ' var(--color-divider); color: var(--color-neutral-700)' }
+      ],
+
+      cfgTf: st.cfgTf,
+      setCfgTf: (e) => set({ cfgTf: e.target.value, dirtyCfg: true }),
+      cfgFrom: st.cfgFrom,
+      setCfgFrom: (e) => set({ cfgFrom: e.target.value, dirtyCfg: true }),
+      cfgTo: st.cfgTo,
+      setCfgTo: (e) => set({ cfgTo: e.target.value, dirtyCfg: true }),
+      markDirty: () => set({ dirtyCfg: true }),
+      tfOptions: TF_ALL.map((t) => ({ key: t, v: t })),
+      runMeta: runMeta,
+      runDisabled: !dirty || scopeIds.length < 2,
+      runTitle: scopeIds.length < 2 ? 'Cần chọn ít nhất 2 strategy đơn để tạo tổ hợp' : dirty ? 'Chạy Domain-guide Random Search với bộ strategy và config hiện tại' : 'Bộ strategy và config chưa thay đổi từ lần chạy trước',
+      runHint: scopeIds.length < 2
+        ? 'Chọn ít nhất 2 strategy đơn để hệ thống tạo tổ hợp.'
+        : dirty
+          ? 'Chạy lại sẽ xoá toàn bộ Leaderboard hiện tại và tạo lại từ đầu với bộ strategy và config mới.'
+          : 'Đã chạy với bộ strategy và config này (Run #' + st.runSeq + '). Thay đổi để chạy lại.',
+      runHintStyle: dirty
+        ? 'border: 1px solid oklch(0.53 0.15 25); color: oklch(0.47 0.15 25); padding: 5px 10px;'
+        : 'border: 1px solid var(--color-divider); color: var(--color-neutral-700); padding: 5px 10px;',
+      askRun: () => set({ confirmOpen: true }),
+      confirmOpen: st.confirmOpen,
+      confirmMeta: PAIR + ' · ' + st.cfgTf + ' · ' + st.cfgFrom + ' → ' + st.cfgTo + ' · ' + scopeIds.length + ' strategy đơn (' + scopeIds.map((id) => BY_ID[id].short).join(', ') + ')',
+      cancelRun: () => set({ confirmOpen: false }),
+      confirmRun: () => set({ confirmOpen: false, dirtyCfg: false, runSel: Object.assign({}, st.sel), runWeights: Object.assign({}, st.weights), runSeq: st.runSeq + 1, selIdx: 0, btIdx: 0, tpage: 1, candQuery: '', iteration: 500, page: 'leaderboard' }),
+
+      candQuery: st.candQuery,
+      candOpen: st.candOpen,
+      candPlaceholder: 'Tìm: MA, RSI, version…',
+      candCurrent: '#' + btCand.rank + ' · ' + btCand.name + ' · ' + btCand.version,
+      setCandQuery: (e) => set({ candQuery: e.target.value, candOpen: true }),
+      openCand: () => set({ candOpen: true }),
+      closeCand: () => { setTimeout(() => this.setState({ candOpen: false }), 140); },
+      candResults: candMatches.map((c) => ({
+        key: c.idx,
+        label: '#' + c.rank + ' · ' + c.name + ' — ' + c.version,
+        go: () => set({ btIdx: c.idx, tpage: 1, candOpen: false, candQuery: '' }),
+        style: 'display: block; width: 100%; text-align: left; cursor: pointer; font: inherit; font-size: 13px; padding: 9px 12px; border: 0; border-bottom: 1px solid var(--color-divider); background: ' + (st.btIdx === c.idx ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent') + '; color: var(--color-text);'
+      })),
+      candEmpty: candMatches.length === 0,
+
+      metrics: [
+        { key: 1, k: 'Winrate', v: fmt((wins / allTrades.length) * 100, 2) + '%', note: wins + ' / ' + allTrades.length + ' lệnh', valueStyle: 'font-family: \'IBM Plex Mono\', monospace; font-size: 24px; margin: 4px 0 2px; color: ' + UP_TXT },
+        { key: 2, k: 'Wins', v: String(wins), note: 'Tổng lệnh thắng', valueStyle: 'font-family: \'IBM Plex Mono\', monospace; font-size: 24px; margin: 4px 0 2px;' },
+        { key: 3, k: 'Losses', v: String(allTrades.length - wins), note: 'Tổng lệnh thua', valueStyle: 'font-family: \'IBM Plex Mono\', monospace; font-size: 24px; margin: 4px 0 2px;' },
+        { key: 4, k: 'Net Profit', v: (total >= 0 ? '+' : '') + fmt(total, 2) + ' USD', note: 'Sau phí và slippage', valueStyle: 'font-family: \'IBM Plex Mono\', monospace; font-size: 24px; margin: 4px 0 2px; color: ' + (total >= 0 ? UP_TXT : DOWN_TXT) },
+        { key: 5, k: 'Max Drawdown', v: btCand.mdd, note: 'Sụt giảm sâu nhất', valueStyle: 'font-family: \'IBM Plex Mono\', monospace; font-size: 24px; margin: 4px 0 2px; color: ' + DOWN_TXT },
+        { key: 6, k: 'Total Trades', v: String(allTrades.length), note: 'Trong khoảng đã chọn', valueStyle: 'font-family: \'IBM Plex Mono\', monospace; font-size: 24px; margin: 4px 0 2px;' }
+      ],
+      backtestChart: this.chart({
+        candles: bt, height: 280, volHeight: 46,
+        ma: [{ data: btMa20, color: 'var(--color-accent)' }, { data: btMa50, color: 'var(--color-accent-400)' }],
+        lines: [{ p: btHi * 0.998, color: DOWN, label: 'Kháng cự ' + fmt(btHi * 0.998, 2) }, { p: btLo * 1.002, color: UP, label: 'Hỗ trợ ' + fmt(btLo * 1.002, 2) }],
+        marks: [{ i: 9, dir: 'LONG', text: 'LONG entry' }, { i: 26, dir: 'SHORT', text: 'SHORT entry' }, { i: 41, dir: 'LONG', text: 'LONG entry' }, { i: 57, dir: 'SHORT', text: 'Exit' }],
+        times: ['01/05', '04/05', '07/05', '11/05', '15/05']
+      }),
+      dirFilters: ['ALL', 'LONG', 'SHORT'].map((d) => ({ key: d, label: d === 'ALL' ? 'Tất cả' : d, go: () => set({ dir: d, tpage: 1 }), pressed: st.dir === d ? 'true' : 'false', style: chip(st.dir === d) })),
+      tradeRows: this.decorate(slice),
+      tradeRange: 'Hiển thị ' + ((page - 1) * per + 1) + '–' + Math.min(page * per, filtered.length) + ' của ' + filtered.length + ' lệnh',
+      pageBtns: Array.from({ length: pages }, (_, i) => i + 1).map((p) => ({ key: p, label: String(p), go: () => set({ tpage: p }), pressed: page === p ? 'true' : 'false', style: chip(page === p) })),
+
+      leaderRows: cands.map((c) => ({
+        key: c.idx, rank: c.rank, name: c.name, version: c.version, vnum: c.vnum,
+        profit: '+' + fmt(c.profitRaw, 2), win: c.win, mdd: c.mdd, trades: c.trades,
+        go: () => set({ selIdx: c.idx }),
+        style: 'cursor: pointer; ' + (st.selIdx === c.idx ? 'background: color-mix(in srgb, var(--color-accent) 12%, transparent);' : '')
+      })),
+      selName: selCand.name,
+      selVersion: selCand.version,
+      selMeta: 'Rank #' + selCand.rank + ' · ' + selCand.trades + ' lệnh · winrate ' + selCand.win + ' · MDD ' + selCand.mdd + ' · profit +' + fmt(selCand.profitRaw, 2) + ' USD',
+      selComps: compRows(selCand),
+      viewInBacktest: () => set({ page: 'backtest', btIdx: selCand.idx, tpage: 1 }),
+      iteration: st.iteration,
+      candidates: fmt(st.iteration * 4, 0),
+      progressStyle: 'height: 100%; width: ' + (st.iteration / 5) + '%; background: var(--color-accent);',
+      stepLoop: () => set({ iteration: Math.min(500, st.iteration + 10) }),
+      cfgRows: [
+        { key: 0, k: 'Strategy được Search', v: scopeIds.length + '/' + STRATS.length },
+        { key: 1, k: 'Coin', v: PAIR },
+        { key: 2, k: 'Timeframe', v: st.cfgTf },
+        { key: 3, k: 'Khoảng ngày', v: st.cfgFrom + ' → ' + st.cfgTo },
+        { key: 4, k: 'Phí / slippage', v: '0.08% / 5 bps' },
+        { key: 5, k: 'Run', v: '#' + st.runSeq }
+      ],
+
+      newsList: newsSlice.map((n, i) => Object.assign({ key: nPage + '-' + i, coin: 'BTC' }, n, {
+        badgeStyle: BADGE + ' ' + (n.sentiment === 'POSITIVE' ? UP + '; color: ' + UP_TXT : n.sentiment === 'NEGATIVE' ? DOWN + '; color: ' + DOWN_TXT : 'var(--color-divider); color: var(--color-neutral-700)')
+      })),
+      newsMeta: newsAll.length + ' tin · model FinBERT · cập nhật 10:45:18',
+      newsRange: 'Hiển thị ' + ((nPage - 1) * nPer + 1) + '–' + Math.min(nPage * nPer, newsAll.length) + ' của ' + newsAll.length + ' tin',
+      newsPageBtns: Array.from({ length: nPages }, (_, i) => i + 1).map((p) => ({ key: p, label: String(p), go: () => set({ newsPage: p }), pressed: nPage === p ? 'true' : 'false', style: chip(nPage === p) })),
+      sentFilters: ['ALL', 'POSITIVE', 'NEUTRAL', 'NEGATIVE'].map((s) => ({ key: s, label: s === 'ALL' ? 'Tất cả' : s === 'POSITIVE' ? 'Pos' : s === 'NEUTRAL' ? 'Neu' : 'Neg', go: () => set({ newsSent: s, newsPage: 1 }), pressed: st.newsSent === s ? 'true' : 'false', style: chip(st.newsSent === s) })),
+      toggleCrawl: () => set({ crawl: !st.crawl }),
+      crawlLabel: st.crawl ? 'Đang bật' : 'Đã tắt',
+      crawlStyle: chip(st.crawl),
+      crawlPressed: st.crawl ? 'true' : 'false'
+    };
+  }
+}
+
+</script>
+</body>
+</html>
