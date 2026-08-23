@@ -1,0 +1,35 @@
+{
+    "_id": "uuid",
+    "source": {
+        "name": "CoinDesk",
+        "url": "https://...",
+        "type": "WEB"
+    },
+    "title": "Bitcoin ETF sees strong inflows",
+    "content": "Full cleaned article content...",
+    "url": "https://...",
+    "publishedAt": "2026-08-12T08:30:00Z",
+    "collectedAt": "2026-08-12T08:35:21Z",
+    "relatedCoins": [
+        "BTC"
+    ],
+    "metadata": {
+        "author": "...",
+        "language": "en",
+        "tags": [
+            "bitcoin",
+            "ETF"
+        ]
+    },
+    "crawl": {
+        "crawler": "news-crawler-v1",
+        "status": "SUCCESS"
+    },
+    "sentiment": {
+        "label": "POSITIVE",
+        "score": 0.82,
+        "model": "PhoBERT",
+        "modelVersion": "1.0",
+        "analyzedAt": "2026-08-12T08:36:10Z"
+    }
+}
