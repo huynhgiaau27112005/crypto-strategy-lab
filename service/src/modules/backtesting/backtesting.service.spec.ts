@@ -24,19 +24,18 @@ describe('BacktestingService', () => {
           domain: 'MOMENTUM',
           pluginVersion: 1,
           parameters: { period: 14, buyThreshold: 35, sellThreshold: 65 },
-          weight: 0.5,
         },
         {
           type: 'SUPPORT_RESISTANCE',
           domain: 'STRUCTURE',
           pluginVersion: 1,
           parameters: { lookback: 20, proximityPercent: 1.5 },
-          weight: 0.5,
         },
       ],
     };
-    const first = service.run(candidate, candles);
-    const second = service.run(candidate, candles);
+    const weights = { RSI: 0.5, SUPPORT_RESISTANCE: 0.5 };
+    const first = service.run(candidate, candles, weights);
+    const second = service.run(candidate, candles, weights);
     expect(first).toEqual(second);
     expect(Number.isFinite(first.evaluation.totalReturn)).toBe(true);
     expect(Number.isFinite(first.evaluation.overallScore)).toBe(true);

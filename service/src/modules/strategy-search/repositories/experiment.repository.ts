@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { PoolClient } from 'pg';
 import { DatabaseService } from '../../../database/database.service';
 import { CandleEntity, ExperimentEntity } from '../../../database/types';
 
@@ -28,12 +29,17 @@ export interface SearchTopRow {
 export class ExperimentRepository {
   constructor(private readonly database: DatabaseService) {}
 
-  async create(userId: string, name: string | null): Promise<ExperimentEntity> {
-    const result = await this.database.query<ExperimentEntity>(
-      `INSERT INTO experiments (user_id, name, status)
-       VALUES ($1, $2, 'PENDING') RETURNING *`,
-      [userId, name],
-    );
+  async create(
+    userId: string,
+    name: string | null,
+    client?: PoolClient,
+  ): Promise<ExperimentEntity> {
+    const sql = `INSERT INTO experiments (user_id, name, status)
+       VALUES ($1, $2, 'PENDING') RETURNING *`;
+    const params = [userId, name];
+    const result = client
+      ? await client.query<ExperimentEntity>(sql, params)
+      : await this.database.query<ExperimentEntity>(sql, params);
     return result.rows[0];
   }
 

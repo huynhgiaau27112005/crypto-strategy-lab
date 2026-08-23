@@ -4,7 +4,12 @@ import {
   CompositeSignalResult,
   SignalContext,
 } from '../strategy-engine/strategy.types';
-import { CandidateDefinition } from '../strategy-search/domain/search.types';
+import {
+  CandidateDefinition,
+  SearchStrategyType,
+} from '../strategy-search/domain/search.types';
+
+export type StrategyWeightMap = Partial<Record<SearchStrategyType, number>>;
 
 @Injectable()
 export class CompositeStrategyService {
@@ -13,6 +18,7 @@ export class CompositeStrategyService {
   analyze(
     candidate: CandidateDefinition,
     context: SignalContext,
+    weights: StrategyWeightMap,
   ): CompositeSignalResult {
     const memberSignals = candidate.members.map((member) => ({
       member,
@@ -21,7 +27,7 @@ export class CompositeStrategyService {
     const score = memberSignals.reduce((total, item) => {
       const encoded =
         item.signal === 'BUY' ? 1 : item.signal === 'SELL' ? -1 : 0;
-      return total + encoded * item.member.weight;
+      return total + encoded * (weights[item.member.type] ?? 0);
     }, 0);
     const signal =
       score > candidate.combination.buyThreshold

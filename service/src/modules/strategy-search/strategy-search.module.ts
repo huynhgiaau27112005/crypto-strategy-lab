@@ -5,6 +5,9 @@ import { BacktestingModule } from '../backtesting/backtesting.module';
 import { LeaderboardModule } from '../leaderboard/leaderboard.module';
 import { DomainGuidedRandomGenerator } from './generators/domain-guided-random.generator';
 import { ExperimentRepository } from './repositories/experiment.repository';
+import { ExperimentConfigRepository } from './repositories/experiment-config.repository';
+import { ExperimentIterationRepository } from './repositories/experiment-iteration.repository';
+import { CandidateRepository } from './repositories/candidate.repository';
 import { StrategyRepository } from './repositories/strategy.repository';
 import { CandidateFingerprintService } from './services/candidate-fingerprint.service';
 
@@ -15,6 +18,9 @@ import { CandidateFingerprintService } from './services/candidate-fingerprint.se
     StrategySearchService,
     DomainGuidedRandomGenerator,
     ExperimentRepository,
+    ExperimentConfigRepository,
+    ExperimentIterationRepository,
+    CandidateRepository,
     StrategyRepository,
     CandidateFingerprintService,
   ],

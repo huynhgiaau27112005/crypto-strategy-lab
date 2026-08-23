@@ -16,14 +16,12 @@ describe('CandidateFingerprintService', () => {
         domain: 'TREND',
         pluginVersion: 1,
         parameters: { slowPeriod: 50, fastPeriod: 20 },
-        weight: 0.5,
       },
       {
         type: 'RSI',
         domain: 'MOMENTUM',
         pluginVersion: 1,
         parameters: { sellThreshold: 70, period: 14, buyThreshold: 30 },
-        weight: 0.5,
       },
     ],
   };

@@ -12,14 +12,15 @@ export class ExperimentIterationRepository {
     experimentId: string,
   ): Promise<ExperimentIterationEntity> {
     const result = await client.query<ExperimentIterationEntity>(
-      `INSERT INTO experiment_iterations (experiment_id, iteration_number, status)
+      `INSERT INTO experiment_iterations (experiment_id, iteration_number, status, started_at)
        VALUES (
          $1,
          COALESCE(
            (SELECT MAX(iteration_number) FROM experiment_iterations WHERE experiment_id = $1),
            0
          ) + 1,
-         'RUNNING'
+         'RUNNING',
+         NOW()
        )
        RETURNING *`,
       [experimentId],
