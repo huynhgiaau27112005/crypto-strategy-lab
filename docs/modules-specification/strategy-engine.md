@@ -292,7 +292,7 @@ The module satisfies this specification when:
 
 ## 16. Strategy Description
 
-### SMA - Simple Moving Average
+### 16.1 SMA - Simple Moving Average
 
 #### What is SMA?
 
@@ -422,7 +422,7 @@ A simplified SMA analysis system could classify market conditions as follows:
 
 For stronger analysis, SMA signals can be evaluated alongside trading volume or indicators such as RSI, MACD, or Bollinger Bands.
 
-### RSI - Relative Strength Index
+### 16.2 RSI - Relative Strength Index
 
 #### What is RSI?
 
@@ -708,7 +708,7 @@ A simplified combined analysis could use:
 * RSI can generate false signals if the broader market trend is ignored.
 * RSI should generally be combined with trend, price-action, volume, or volatility analysis.
 
-### Support and Resistance
+### 16.3 Support and Resistance
 
 #### What are support and resistance?
 
@@ -1064,7 +1064,7 @@ $$
 
 Using it before that index would allow the strategy to access information that was not available at the time.
 
-### Bollinger Bands
+### 16.4 Bollinger Bands
 
 #### What are Bollinger Bands?
 
