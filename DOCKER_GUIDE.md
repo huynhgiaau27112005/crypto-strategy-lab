@@ -41,8 +41,11 @@ cd database
 node migrate.js
 node seed.js
 ```
+Kiểm tra lại database bên trong docker
 
----
+```docker
+docker exec -it crypto-strategy-lab-db psql -U postgres -d crypto_strategy_lab
+```
 
 ## 3. Danh sách Endpoint & Hướng dẫn Test API
 
