@@ -8,7 +8,6 @@ export interface CandidateMember {
   domain: StrategyDomain;
   pluginVersion: number;
   parameters: Record<string, number>;
-  weight: number;
 }
 
 export interface CandidateDefinition {
@@ -19,6 +18,11 @@ export interface CandidateDefinition {
     sellThreshold: number;
   };
   members: CandidateMember[];
+}
+
+export interface StrategyWeight {
+  type: SearchStrategyType;
+  weight: number;
 }
 
 export interface SearchConfig {
@@ -44,6 +48,7 @@ export interface StartSearchRequest {
   minimumTrades?: number;
   randomSeed?: number;
   enabledDomains?: StrategyDomain[];
+  strategyWeights?: StrategyWeight[];
 }
 
 export interface SearchAlgorithm {
@@ -61,3 +66,19 @@ export const DEFAULT_SEARCH_CONFIG: SearchConfig = {
   minimumTrades: 20,
   parameterSpaceVersion: 1,
 };
+
+// Equal-weight default when the caller does not specify strategyWeights,
+// applied per artifacts/decisions.md §4b (weight is fixed per Experiment
+// Configuration, not randomized per candidate).
+export function defaultEqualWeights(
+  types: SearchStrategyType[],
+): StrategyWeight[] {
+  const weight = Number((1 / types.length).toFixed(6));
+  return types.map((type, index) => ({
+    type,
+    weight:
+      index === types.length - 1
+        ? Number((1 - weight * (types.length - 1)).toFixed(6))
+        : weight,
+  }));
+}

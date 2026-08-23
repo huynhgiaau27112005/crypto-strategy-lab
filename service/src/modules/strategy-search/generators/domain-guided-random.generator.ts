@@ -15,17 +15,6 @@ export class DomainGuidedRandomGenerator implements SearchAlgorithm {
       STRATEGY_CATALOG[domain].sample(random),
     );
 
-    const rawWeights = members.map(() => 1 + Math.floor(random() * 3));
-    const totalWeight = rawWeights.reduce((sum, value) => sum + value, 0);
-    members.forEach((item, index) => {
-      item.weight = Number((rawWeights[index] / totalWeight).toFixed(6));
-    });
-    const roundingDifference =
-      1 - members.reduce((sum, item) => sum + item.weight, 0);
-    members[0].weight = Number(
-      (members[0].weight + roundingDifference).toFixed(6),
-    );
-
     return {
       schemaVersion: 1,
       combination: {

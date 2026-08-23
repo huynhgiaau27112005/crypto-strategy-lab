@@ -19,7 +19,7 @@ function member(
   domain: StrategyDomain,
   parameters: Record<string, number>,
 ): CandidateMember {
-  return { type, domain, pluginVersion: 1, parameters, weight: 0 };
+  return { type, domain, pluginVersion: 1, parameters };
 }
 
 export const STRATEGY_CATALOG: Record<StrategyDomain, CatalogEntry> = {

@@ -6,7 +6,6 @@ import { LeaderboardModule } from '../leaderboard/leaderboard.module';
 import { DomainGuidedRandomGenerator } from './generators/domain-guided-random.generator';
 import { ExperimentRepository } from './repositories/experiment.repository';
 import { StrategyRepository } from './repositories/strategy.repository';
-import { ExperimentStrategyRepository } from './repositories/experiment-strategy.repository';
 import { CandidateFingerprintService } from './services/candidate-fingerprint.service';
 
 @Module({
@@ -17,7 +16,6 @@ import { CandidateFingerprintService } from './services/candidate-fingerprint.se
     DomainGuidedRandomGenerator,
     ExperimentRepository,
     StrategyRepository,
-    ExperimentStrategyRepository,
     CandidateFingerprintService,
   ],
   exports: [StrategySearchService],
