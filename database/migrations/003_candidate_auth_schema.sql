@@ -67,8 +67,8 @@ CREATE TABLE IF NOT EXISTS users (
       revoked_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now()
     );
-    CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens(user_id);
-    CREATE INDEX idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
+    CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
 
     -- MARKET DATA (create only if the pre-existing candles table is absent)
     CREATE TABLE IF NOT EXISTS candles (
@@ -97,9 +97,9 @@ CREATE TABLE IF NOT EXISTS users (
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
-    CREATE INDEX idx_strategies_owner_user_id ON strategies(owner_user_id);
-    CREATE UNIQUE INDEX uk_strategies_name_version ON strategies(name, version);
-    CREATE INDEX idx_strategies_type ON strategies(type);
+    CREATE INDEX IF NOT EXISTS idx_strategies_owner_user_id ON strategies(owner_user_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS uk_strategies_name_version ON strategies(name, version);
+    CREATE INDEX IF NOT EXISTS idx_strategies_type ON strategies(type);
 
     -- EXPERIMENTS & SEARCH CONFIGURATION
     CREATE TABLE IF NOT EXISTS experiments (
@@ -111,8 +111,8 @@ CREATE TABLE IF NOT EXISTS users (
       completed_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now()
     );
-    CREATE INDEX idx_experiments_user_id ON experiments(user_id);
-    CREATE INDEX idx_experiments_status ON experiments(status);
+    CREATE INDEX IF NOT EXISTS idx_experiments_user_id ON experiments(user_id);
+    CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status);
 
     CREATE TABLE IF NOT EXISTS experiment_configs (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -132,8 +132,8 @@ CREATE TABLE IF NOT EXISTS users (
       created_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE (experiment_config_id, strategy_id)
     );
-    CREATE INDEX idx_ecs_config_id ON experiment_config_strategies(experiment_config_id);
-    CREATE INDEX idx_ecs_strategy_id ON experiment_config_strategies(strategy_id);
+    CREATE INDEX IF NOT EXISTS idx_ecs_config_id ON experiment_config_strategies(experiment_config_id);
+    CREATE INDEX IF NOT EXISTS idx_ecs_strategy_id ON experiment_config_strategies(strategy_id);
 
     -- SEARCH ITERATIONS
     CREATE TABLE IF NOT EXISTS experiment_iterations (
@@ -147,8 +147,8 @@ CREATE TABLE IF NOT EXISTS users (
       created_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE (experiment_id, iteration_number)
     );
-    CREATE INDEX idx_iterations_experiment_id ON experiment_iterations(experiment_id);
-    CREATE INDEX idx_iterations_status ON experiment_iterations(status);
+    CREATE INDEX IF NOT EXISTS idx_iterations_experiment_id ON experiment_iterations(experiment_id);
+    CREATE INDEX IF NOT EXISTS idx_iterations_status ON experiment_iterations(status);
 
     -- CANDIDATES
     CREATE TABLE IF NOT EXISTS candidates (
@@ -165,8 +165,8 @@ CREATE TABLE IF NOT EXISTS users (
       created_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE (candidate_id, strategy_id)
     );
-    CREATE INDEX idx_cs_candidate_id ON candidate_strategies(candidate_id);
-    CREATE INDEX idx_cs_strategy_id ON candidate_strategies(strategy_id);
+    CREATE INDEX IF NOT EXISTS idx_cs_candidate_id ON candidate_strategies(candidate_id);
+    CREATE INDEX IF NOT EXISTS idx_cs_strategy_id ON candidate_strategies(strategy_id);
 
     -- BACKTEST EXECUTION
     CREATE TABLE IF NOT EXISTS backtest_runs (
@@ -178,9 +178,9 @@ CREATE TABLE IF NOT EXISTS users (
       error_message text,
       created_at timestamptz NOT NULL DEFAULT now()
     );
-    CREATE INDEX idx_backtest_runs_status ON backtest_runs(status);
+    CREATE INDEX IF NOT EXISTS idx_backtest_runs_status ON backtest_runs(status);
 
-    CREATE TABLE trades (
+    CREATE TABLE IF NOT EXISTS trades (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       backtest_run_id uuid NOT NULL REFERENCES backtest_runs(id) ON DELETE CASCADE,
       side trade_side NOT NULL,
@@ -196,10 +196,10 @@ CREATE TABLE IF NOT EXISTS users (
       exit_reason exit_reason,
       created_at timestamptz NOT NULL DEFAULT now()
     );
-    CREATE INDEX idx_trades_backtest_run_id ON trades(backtest_run_id);
-    CREATE INDEX idx_trades_run_entry_time ON trades(backtest_run_id, entry_time);
+    CREATE INDEX IF NOT EXISTS idx_trades_backtest_run_id ON trades(backtest_run_id);
+    CREATE INDEX IF NOT EXISTS idx_trades_run_entry_time ON trades(backtest_run_id, entry_time);
 
-    CREATE TABLE evaluations (
+    CREATE TABLE IF NOT EXISTS evaluations (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       backtest_run_id uuid NOT NULL UNIQUE REFERENCES backtest_runs(id) ON DELETE CASCADE,
       total_return numeric(18,8),
@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS users (
     );
 
     -- LEADERBOARD
-    CREATE TABLE leaderboards (
+    CREATE TABLE IF NOT EXISTS leaderboards (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       experiment_id uuid NOT NULL UNIQUE REFERENCES experiments(id) ON DELETE CASCADE,
       name varchar(255) NOT NULL DEFAULT 'Search Leaderboard',
@@ -223,7 +223,7 @@ CREATE TABLE IF NOT EXISTS users (
       updated_at timestamptz NOT NULL DEFAULT now()
     );
 
-    CREATE TABLE leaderboard_entries (
+    CREATE TABLE IF NOT EXISTS leaderboard_entries (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       leaderboard_id uuid NOT NULL REFERENCES leaderboards(id) ON DELETE CASCADE,
       candidate_id uuid NOT NULL REFERENCES candidates(id),
@@ -233,7 +233,7 @@ CREATE TABLE IF NOT EXISTS users (
       UNIQUE (leaderboard_id, candidate_id),
       UNIQUE (leaderboard_id, rank)
     );
-    CREATE INDEX idx_leaderboard_entries_leaderboard_id ON leaderboard_entries(leaderboard_id);
+    CREATE INDEX IF NOT EXISTS idx_leaderboard_entries_leaderboard_id ON leaderboard_entries(leaderboard_id);
 
     -- NEWS (relational store; see docs/database/design.dbml note — kept in
     -- Postgres per artifacts/decisions.md rather than a separate NoSQL store)
