@@ -13,7 +13,15 @@ coverage/
 # Environment / secrets
 .env
 .env.*
+*.env
 !.env.example
+
+# Python build/test artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
 
 # Logs & OS
 *.log
