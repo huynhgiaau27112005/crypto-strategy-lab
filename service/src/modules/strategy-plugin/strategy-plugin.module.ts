@@ -4,7 +4,9 @@ import { StrategyPluginService } from './strategy-plugin.service';
 
 @Module({
   controllers: [StrategyPluginController],
-  providers: [StrategyPluginService],
+  providers: [
+    StrategyPluginService,
+  ],
   exports: [StrategyPluginService],
 })
 export class StrategyPluginModule {}
