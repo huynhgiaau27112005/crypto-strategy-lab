@@ -49,3 +49,44 @@ export interface ApiErrorBody {
   message: string | string[]
   error: string
 }
+
+/** The five intervals the market-data REST endpoint and the /market socket both allow. */
+export type MarketInterval = '1m' | '5m' | '15m' | '1h' | '4h'
+
+/**
+ * One element of GET /market-data/candles — artifacts/api-contract.md §3.
+ * Prices/volume arrive as strings (Postgres `numeric` / Binance JSON), and
+ * `timestamp` is ISO 8601. Only closed candles are ever included.
+ */
+export interface CandleDto {
+  timeframe: string
+  timestamp: string
+  open: string
+  high: string
+  low: string
+  close: string
+  volume: string
+}
+
+/** Server -> client `candle` event on the /market namespace — same shape as CandleDto but keyed `interval` instead of `timeframe`. */
+export interface MarketCandleEvent {
+  interval: string
+  timestamp: string
+  open: string
+  high: string
+  low: string
+  close: string
+  volume: string
+}
+
+/** Server -> client `status` event on the /market namespace. */
+export interface MarketStatusEvent {
+  connected: boolean
+  interval: string
+  lastMessageAt: string | null
+}
+
+/** Server -> client `error` event on the /market namespace (invalid interval on subscribe). */
+export interface MarketErrorEvent {
+  message: string
+}
