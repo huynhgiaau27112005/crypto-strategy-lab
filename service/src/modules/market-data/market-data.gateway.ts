@@ -80,12 +80,16 @@ export class MarketDataGateway
         try {
             assertAllowedInterval(interval);
         } catch (error) {
-            client.emit('error', {
-                message:
-                    error instanceof BadRequestException
-                        ? error.message
-                        : `Unsupported interval "${interval}".`,
-            });
+            const message = error instanceof Error ? error.message : String(error);
+            if (!(error instanceof BadRequestException)) {
+                // assertAllowedInterval only ever throws BadRequestException;
+                // anything else is unexpected and worth surfacing, not
+                // silently mislabelled as "unsupported interval".
+                this.logger.warn(
+                    `Unexpected error validating interval "${interval}": ${message}`,
+                );
+            }
+            client.emit('error', { message });
             return;
         }
 
@@ -96,12 +100,14 @@ export class MarketDataGateway
             subscriberIds = new Set();
             this.subscribers.set(interval, subscriberIds);
         }
-        const isFirstSubscriber = subscriberIds.size === 0;
         subscriberIds.add(client.id);
 
-        if (isFirstSubscriber) {
-            this.ensureStream(interval);
-        }
+        // Idempotent: a no-op if a stream is already open for this
+        // interval. Called unconditionally (not gated on "first
+        // subscriber") so a subscriber that arrives after a previous
+        // ensureStream() attempt threw retries opening the upstream
+        // instead of the interval being permanently stuck with no stream.
+        this.ensureStream(interval);
 
         client.emit('status', this.currentStatus(interval));
     }
@@ -156,16 +162,27 @@ export class MarketDataGateway
             handle: null as unknown as KlineStreamHandle,
         };
 
-        const handle = this.binanceClient.streamCandles(SYMBOL, interval, {
-            onUpdate: (update) => this.handleUpstreamUpdate(interval, update),
-            onConnectionChange: (connected) => {
-                state.connected = connected;
-                this.broadcastStatus(interval);
-            },
-        });
+        try {
+            const handle = this.binanceClient.streamCandles(SYMBOL, interval, {
+                onUpdate: (update) => this.handleUpstreamUpdate(interval, update),
+                onConnectionChange: (connected) => {
+                    state.connected = connected;
+                    this.broadcastStatus(interval);
+                },
+            });
 
-        state.handle = handle;
-        this.streams.set(interval, state);
+            state.handle = handle;
+            this.streams.set(interval, state);
+        } catch (error) {
+            // Do NOT register a broken entry in `this.streams` — leaving one
+            // there would make `this.streams.has(interval)` true forever,
+            // permanently skipping retries for every later subscriber. The
+            // next subscribe() for this interval calls ensureStream() again
+            // and gets a fresh attempt.
+            this.logger.error(
+                `Failed to open upstream stream for interval "${interval}": ${String(error)}`,
+            );
+        }
     }
 
     private teardownStream(interval: string): void {

@@ -4,14 +4,35 @@ import {
     Logger,
 } from '@nestjs/common';
 
-export type BinanceKline = [
-    openTime: number,
-    open: string,
-    high: string,
-    low: string,
-    close: string,
-    volume: string,
-];
+export interface BinanceKline {
+    openTime: number;
+    open: string;
+    high: string;
+    low: string;
+    close: string;
+    volume: string;
+    closeTime: number;
+    /**
+     * True once this candle's close time has passed. This is the REST-side
+     * equivalent of the `isClosed` flag on {@link KlineUpdate}: the
+     * WebSocket stream gets it directly from Binance's `k.x` field, while
+     * the REST klines endpoint doesn't expose that flag, so it's derived
+     * from `closeTime` here — once, in this file — instead of every caller
+     * re-deriving (or forgetting to derive) it independently.
+     */
+    isClosed: boolean;
+}
+
+/**
+ * Pure "is this candle closed yet" check shared by every REST kline row.
+ * Exported so it can be unit-tested without a network call.
+ */
+export function isKlineClosed(
+    closeTime: number,
+    referenceTimeMs: number = Date.now(),
+): boolean {
+    return referenceTimeMs > closeTime;
+}
 
 /**
  * Normalized shape of a single kline (candle) update pushed by Binance's
@@ -106,20 +127,25 @@ export class BinanceClient {
             );
         }
 
-        return payload.map((row: unknown) => {
-            if (!Array.isArray(row) || row.length < 6) {
+        return payload.map((row: unknown): BinanceKline => {
+            // Binance's raw row: [openTime, open, high, low, close, volume,
+            // closeTime, quoteVolume, trades, takerBaseVol, takerQuoteVol, ignore].
+            if (!Array.isArray(row) || row.length < 7) {
                 throw new InternalServerErrorException(
                     'Binance API returned an invalid kline row',
                 );
             }
-            return [
-                Number(row[0]),
-                String(row[1]),
-                String(row[2]),
-                String(row[3]),
-                String(row[4]),
-                String(row[5]),
-            ];
+            const closeTime = Number(row[6]);
+            return {
+                openTime: Number(row[0]),
+                open: String(row[1]),
+                high: String(row[2]),
+                low: String(row[3]),
+                close: String(row[4]),
+                volume: String(row[5]),
+                closeTime,
+                isClosed: isKlineClosed(closeTime),
+            };
         });
     }
 

@@ -67,12 +67,12 @@ export class MarketDataService {
     ): MarketCandle {
         return {
             timeframe: interval,
-            timestamp: new Date(row[0]),
-            open: row[1],
-            high: row[2],
-            low: row[3],
-            close: row[4],
-            volume: row[5],
+            timestamp: new Date(row.openTime),
+            open: row.open,
+            high: row.high,
+            low: row.low,
+            close: row.close,
+            volume: row.volume,
         };
     }
 }

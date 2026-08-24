@@ -189,4 +189,61 @@ describe('MarketDataGateway', () => {
 
         expect(binanceClient.streamCandles).toHaveBeenCalledTimes(2);
     });
+
+    it('retries opening the upstream stream on the next subscribe after a failed attempt (does not permanently brick the interval)', () => {
+        binanceClient.streamCandles
+            .mockImplementationOnce(() => {
+                throw new Error('no global WebSocket in this environment');
+            })
+            .mockImplementationOnce(
+                (
+                    _symbol: string,
+                    interval: string,
+                    callbacks: KlineStreamCallbacks,
+                ): KlineStreamHandle => {
+                    capturedCallbacksByInterval.set(interval, callbacks);
+                    const stop = jest.fn();
+                    stopByInterval.set(interval, stop);
+                    return { stop, getLastMessageAt: () => null };
+                },
+            );
+
+        const clientA = makeSocket('socket-a');
+        expect(() =>
+            gateway.handleSubscribe(clientA as any, { interval: '5m' }),
+        ).not.toThrow();
+
+        expect(binanceClient.streamCandles).toHaveBeenCalledTimes(1);
+        // The first subscriber is still recorded and gets a status snapshot,
+        // even though the upstream failed to open.
+        expect(clientA.emit).toHaveBeenCalledWith(
+            'status',
+            expect.objectContaining({ connected: false, interval: '5m' }),
+        );
+
+        const clientB = makeSocket('socket-b');
+        gateway.handleSubscribe(clientB as any, { interval: '5m' });
+
+        // A second subscribe on the same interval must retry — not skip
+        // creation just because it isn't the "first" subscriber.
+        expect(binanceClient.streamCandles).toHaveBeenCalledTimes(2);
+        expect(capturedCallbacksByInterval.has('5m')).toBe(true);
+    });
+
+    it('does not log a warning for the ordinary disallowed-interval (BadRequestException) case', () => {
+        const client = makeSocket('socket-1');
+        const loggerWarnSpy = jest
+            .spyOn((gateway as any).logger, 'warn')
+            .mockImplementation(() => undefined);
+
+        gateway.handleSubscribe(client as any, { interval: '2h' });
+
+        // Only genuinely unexpected (non-BadRequestException) failures are
+        // logged — the routine "unsupported interval" case is not.
+        expect(loggerWarnSpy).not.toHaveBeenCalled();
+        expect(client.emit).toHaveBeenCalledWith(
+            'error',
+            expect.objectContaining({ message: expect.stringContaining('2h') }),
+        );
+    });
 });

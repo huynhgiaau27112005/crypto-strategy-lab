@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { BinanceClient } from '../modules/market-data/clients/binance.client';
+import { BinanceClient, BinanceKline } from '../modules/market-data/clients/binance.client';
 import { CandleRepository } from '../modules/market-data/repositories/candle.repository';
 import { DatabaseService } from '../database/database.service';
 import { ALLOWED_INTERVALS } from '../modules/market-data/config';
@@ -43,7 +43,21 @@ function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function backfillInterval(
+/**
+ * Pick only the rows this script is allowed to persist. The most recent
+ * page (the one fetched with no `endTime`) can include the currently-
+ * forming candle as its last element — writing that row would store a
+ * partial OHLCV snapshot that never gets corrected, corrupting the series
+ * every backtest reads. `row.isClosed` is the same closed-candle criterion
+ * MarketDataGateway already applies to WebSocket updates before persisting
+ * them; this reuses BinanceClient's computed flag rather than a second,
+ * independently-written "drop the last element" heuristic.
+ */
+function onlyClosed(rows: BinanceKline[]): BinanceKline[] {
+    return rows.filter((row) => row.isClosed);
+}
+
+export async function backfillInterval(
     binanceClient: BinanceClient,
     candleRepository: CandleRepository,
     interval: string,
@@ -66,26 +80,37 @@ async function backfillInterval(
             break;
         }
 
-        await candleRepository.insertCandles(
-            rows.map((row) => ({
-                timeframe: interval,
-                timestamp: new Date(row[0]),
-                open: row[1],
-                high: row[2],
-                low: row[3],
-                close: row[4],
-                volume: row[5],
-            })),
-        );
+        const closedRows = onlyClosed(rows);
+        const skipped = rows.length - closedRows.length;
 
-        totalFetched += rows.length;
+        if (closedRows.length > 0) {
+            await candleRepository.insertCandles(
+                closedRows.map((row) => ({
+                    timeframe: interval,
+                    timestamp: new Date(row.openTime),
+                    open: row.open,
+                    high: row.high,
+                    low: row.low,
+                    close: row.close,
+                    volume: row.volume,
+                })),
+            );
+        }
+
+        totalFetched += closedRows.length;
+        if (skipped > 0) {
+            console.log(
+                `[${interval}] skipped ${skipped} still-forming (unclosed) candle(s) — not persisted.`,
+            );
+        }
         console.log(
-            `[${interval}] fetched ${rows.length} (running total ${totalFetched}/${targetCount})`,
+            `[${interval}] fetched ${closedRows.length} closed candles (running total ${totalFetched}/${targetCount})`,
         );
 
         // Binance returns each page in ascending time order, so the oldest
-        // row in this batch becomes the cursor for the next, older page.
-        endTime = rows[0][0] - 1;
+        // row in this batch (closed or not) becomes the cursor for the
+        // next, older page.
+        endTime = rows[0].openTime - 1;
 
         if (rows.length < limit) {
             console.log(`[${interval}] reached the earliest data Binance has; stopping.`);
@@ -121,12 +146,16 @@ async function main(): Promise<void> {
     await database.onModuleDestroy();
 }
 
-main()
-    .then(() => {
-        console.log('\nBackfill complete.');
-        process.exit(0);
-    })
-    .catch((error: unknown) => {
-        console.error('Backfill failed:', error);
-        process.exit(1);
-    });
+// Only auto-run when executed directly (`npm run seed:candles`), not when
+// imported by tests — `backfillInterval` is unit-tested in isolation.
+if (require.main === module) {
+    main()
+        .then(() => {
+            console.log('\nBackfill complete.');
+            process.exit(0);
+        })
+        .catch((error: unknown) => {
+            console.error('Backfill failed:', error);
+            process.exit(1);
+        });
+}
