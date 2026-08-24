@@ -211,7 +211,6 @@ Table experiment_configs {
 
   indexes {
     experiment_id [unique]
-    (timeframe, start_time, end_time)
   }
 }
 
@@ -384,7 +383,7 @@ Table evaluations {
 // LEADERBOARD
 // ============================================================
 
-// One leaderboard per experiment (not per user): every +iteration run keeps
+// One leaderboard per experiment (not per user): every iteration run keeps
 // the same leaderboard, while changing the search configuration creates a
 // new experiment and therefore a new leaderboard.
 
