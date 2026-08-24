@@ -1,8 +1,10 @@
 import { CandidateDefinition } from '../domain/search.types';
 import { CandidateFingerprintService } from './candidate-fingerprint.service';
+import { StrategyRegistry } from '../../strategy-plugin/strategy-registry';
 
 describe('CandidateFingerprintService', () => {
-  const service = new CandidateFingerprintService();
+  const registry = new StrategyRegistry();
+  const service = new CandidateFingerprintService(registry);
   const candidate: CandidateDefinition = {
     schemaVersion: 1,
     combination: {

@@ -1,4 +1,5 @@
 import { Module, OnModuleInit } from '@nestjs/common';
+import { DatabaseModule } from '../../database/database.module';
 import { StrategyRegistry } from './strategy-registry';
 import { MaPlugin } from './plugins/ma.plugin';
 import { RsiPlugin } from './plugins/rsi.plugin';
@@ -6,8 +7,10 @@ import { BollingerPlugin } from './plugins/bollinger.plugin';
 import { SupportResistancePlugin } from './plugins/support-resistance.plugin';
 import { StrategyPluginService } from './strategy-plugin.service';
 import { StrategyPluginController } from './strategy-plugin.controller';
+import { StrategyRepository } from '../strategy-search/repositories/strategy.repository';
 
 @Module({
+  imports: [DatabaseModule],
   controllers: [StrategyPluginController],
   providers: [
     StrategyRegistry,
@@ -15,6 +18,7 @@ import { StrategyPluginController } from './strategy-plugin.controller';
     RsiPlugin,
     BollingerPlugin,
     SupportResistancePlugin,
+    StrategyRepository,
     StrategyPluginService,
   ],
   exports: [StrategyRegistry, StrategyPluginService],

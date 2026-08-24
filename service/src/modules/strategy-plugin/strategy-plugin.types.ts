@@ -23,3 +23,13 @@ export interface StrategyPlugin {
   readonly parameterSchema: ParameterSpec[];
   analyze(member: CandidateMember, context: SignalContext): StrategySignal;
 }
+
+export interface StrategyCatalogItem {
+  type: SearchStrategyType;
+  domain: StrategyDomain;
+  displayName: string;
+  description: string;
+  parameterSchema: ParameterSpec[];
+  strategyId: string | null;
+  version: number | null;
+}
