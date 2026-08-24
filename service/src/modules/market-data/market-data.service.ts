@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { BinanceClient } from './clients/binance.client';
+import { BinanceClient, BinanceKline } from './clients/binance.client';
 import { CandleRepository } from './repositories/candle.repository';
 import { assertAllowedInterval } from './config';
 
@@ -26,6 +26,17 @@ export class MarketDataService {
         private readonly candleRepository: CandleRepository,
     ) { }
 
+    /**
+     * Fetches candles straight from Binance (no DB read — see
+     * artifacts/api-contract.md). Binance's most recent page always ends
+     * with the currently-forming candle, whose close/volume are partial and
+     * still changing; returning it indistinguishable from a closed candle
+     * would corrupt any chart or downstream computation reading this
+     * response the same way persisting it would corrupt the `candles`
+     * table. So it's dropped here rather than flagged, keeping "every
+     * MarketCandle this service hands out already closed" true for every
+     * caller, with no extra field for consumers to remember to check.
+     */
     async getCandles(
         symbol: string,
         interval: string,
@@ -36,7 +47,7 @@ export class MarketDataService {
             interval,
             limit,
         );
-        return rows.map((row) => this.toCandle(interval, row));
+        return this.onlyClosed(rows).map((row) => this.toCandle(interval, row));
     }
 
     async importCandles(
@@ -50,15 +61,26 @@ export class MarketDataService {
             interval,
             limit,
         );
-        const candles = rows.map((row) => this.toCandle(interval, row));
+        // Same rule as MarketDataGateway (WebSocket) and seed-candles.ts
+        // (backfill script): never persist the still-forming candle. All
+        // three write paths into `candles` share this one derived flag
+        // (BinanceKline#isClosed, computed once in binance.client.ts)
+        // instead of each re-deriving "is this candle done" independently.
+        const candles = this.onlyClosed(rows).map((row) => this.toCandle(interval, row));
 
-        await this.candleRepository.insertCandles(candles);
+        if (candles.length > 0) {
+            await this.candleRepository.insertCandles(candles);
+        }
 
         return {
             symbol,
             interval,
             count: candles.length,
         };
+    }
+
+    private onlyClosed(rows: BinanceKline[]): BinanceKline[] {
+        return rows.filter((row) => row.isClosed);
     }
 
     private toCandle(

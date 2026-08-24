@@ -288,6 +288,8 @@ Không cần auth. Trả `{ "status": "ok", "module": "strategy-search" }`.
 
 Lấy nến **trực tiếp từ Binance** (không đọc DB). `limit` mặc định 500.
 
+**Nến đang hình thành (chưa đóng) bị loại khỏi response.** Trang mới nhất Binance trả về luôn có phần tử cuối là cây nến hiện tại còn đang chạy — `close`/`volume` của nó còn thay đổi, chưa phải giá trị cuối cùng. Nếu trả về lẫn với các nến đã đóng mà không phân biệt được, mọi consumer (chart, tính toán phía sau) đều có nguy cơ đọc nhầm số liệu tạm là số liệu thật. Do endpoint này chưa có field nào để đánh dấu "chưa đóng", lựa chọn là **loại bỏ hẳn** nến đó khỏi mảng trả về (cùng tiêu chí `isClosed` dùng bởi `POST /market-data/import` và WebSocket) thay vì trả về kèm cờ — giữ bất biến "mọi nến endpoint này trả về đều đã đóng" cho toàn bộ consumer, không cần nhớ check thêm field. Hệ quả: mảng trả về có thể ngắn hơn `limit` tối đa 1 phần tử.
+
 **Response `200`** — mảng:
 ```json
 [
@@ -306,6 +308,8 @@ Lấy nến **trực tiếp từ Binance** (không đọc DB). `limit` mặc đ�
 ### `POST /market-data/import`
 
 Tải nến từ Binance và **ghi vào bảng `candles`**. Đây là cách nạp dữ liệu lịch sử trước khi chạy search.
+
+**Nến đang hình thành (chưa đóng) không được ghi xuống DB** — cùng tiêu chí `isClosed` như `GET /market-data/candles`, `MarketDataGateway` (WebSocket), và script `npm run seed:candles` (một nguồn sự thật duy nhất, tính một lần trong `binance.client.ts`). `count` trong response là số nến **thực sự ghi được** (đã đóng), có thể nhỏ hơn `limit` yêu cầu tối đa 1 nếu trang cuối chứa nến chưa đóng.
 
 **Request**
 ```json
