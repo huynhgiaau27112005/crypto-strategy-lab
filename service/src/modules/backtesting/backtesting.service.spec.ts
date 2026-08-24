@@ -1,12 +1,26 @@
 import { CandleEntity } from '../../database/types';
 import { CompositeStrategyService } from '../composite-strategy/composite-strategy.service';
 import { StrategyEngineService } from '../strategy-engine/strategy-engine.service';
+import { StrategyRegistry } from '../strategy-plugin/strategy-registry';
+import { MaPlugin } from '../strategy-plugin/plugins/ma.plugin';
+import { RsiPlugin } from '../strategy-plugin/plugins/rsi.plugin';
+import { BollingerPlugin } from '../strategy-plugin/plugins/bollinger.plugin';
+import { SupportResistancePlugin } from '../strategy-plugin/plugins/support-resistance.plugin';
 import { CandidateDefinition } from '../strategy-search/domain/search.types';
 import { BacktestingService } from './backtesting.service';
 
+function makeRegistry(): StrategyRegistry {
+  const registry = new StrategyRegistry();
+  registry.register(new MaPlugin());
+  registry.register(new RsiPlugin());
+  registry.register(new BollingerPlugin());
+  registry.register(new SupportResistancePlugin());
+  return registry;
+}
+
 describe('BacktestingService', () => {
   const service = new BacktestingService(
-    new CompositeStrategyService(new StrategyEngineService()),
+    new CompositeStrategyService(new StrategyEngineService(makeRegistry())),
   );
 
   it('produces a finite evaluation and reproducible trades', () => {

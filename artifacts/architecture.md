@@ -23,13 +23,13 @@
 ┌──────────────────────────────────────────────────────────────────────┐
 │                    NESTJS MODULAR MONOLITH (1 process)                │
 │                                                                        │
-│  ┌──────────┐   ┌────────────────┐   ┌──────────────┐                │
-│  │   Auth   │   │  Market Data   │   │ Strategy     │                │
-│  │  Module  │   │    Module      │   │ Engine       │                │
-│  │          │   │ - BinanceClient│   │ Module       │                │
-│  │ JWT +    │   │ - CandleRepo   │   │ (switch/case │                │
-│  │ refresh  │   │                │   │  4 strategy) │                │
-│  └────┬─────┘   └────────┬───────┘   └──────┬───────┘                │
+│  ┌──────────┐   ┌────────────────┐   ┌──────────────┐   ┌──────────┐  │
+│  │   Auth   │   │  Market Data   │   │ Strategy     │──▶│ Strategy │  │
+│  │  Module  │   │    Module      │   │ Engine       │   │ Plugin   │  │
+│  │          │   │ - BinanceClient│   │ Module       │   │ Module   │  │
+│  │ JWT +    │   │ - CandleRepo   │   │ (delegates   │   │ (Registry│  │
+│  │ refresh  │   │                │   │  to Registry)│   │ + 4 plugin)│ │
+│  └────┬─────┘   └────────┬───────┘   └──────┬───────┘   └──────────┘  │
 │       │                  │                   │                        │
 │       │                  │           ┌───────▼────────┐               │
 │       │                  │           │  Composite     │               │
@@ -141,6 +141,30 @@ POST /strategy-search/experiments/:id/cancel → dừng giữa chừng
 
 4. **Auth 404 thay vì 403 cho tài nguyên không thuộc về mình** — tránh rò rỉ thông tin (xem `artifacts/api-contract.md` mục 5).
 
+## 4b. Strategy Plugin Registry — thay `switch (member.type)` (đã fix, task 2026-08-24)
+
+**Vấn đề cũ:** `StrategyEngineService.analyze()` là 1 hàm `switch (member.type)` với cả 4 nhánh code tín hiệu (MA/RSI/BOLLINGER/SUPPORT_RESISTANCE) viết inline trong cùng 1 class. Đây đúng là anti-pattern "Hard-coded Strategy" mà đề bài liệt kê tường minh — thêm 1 strategy thứ 5 buộc phải sửa file `strategy-engine.service.ts` (thêm 1 `case`), vi phạm trực tiếp yêu cầu "adding a strategy must not require rewriting the Strategy Engine".
+
+**Giải pháp — Registry pattern (Open/Closed Principle):**
+
+- `service/src/modules/strategy-plugin/strategy-plugin.types.ts` định nghĩa interface `StrategyPlugin` (mỗi strategy tự khai báo `type`, `domain`, `displayName`, `description`, `parameterSchema`, và hàm `analyze(member, context): StrategySignal` của riêng nó) và `ParameterSpec` (mô tả 1 tham số: `key/label/type/min/max/step/default`, dùng để build UI form động sau này thay vì hard-code form theo từng strategy).
+- `service/src/modules/strategy-plugin/strategy-registry.ts`: `StrategyRegistry` là 1 `Map<SearchStrategyType, StrategyPlugin>` bọc trong `@Injectable`. `register()` từ chối đăng ký trùng type; `get()` ném lỗi rõ ràng nếu type chưa đăng ký (không âm thầm trả `undefined`); `list()` phục vụ liệt kê toàn bộ plugin (vd cho endpoint catalog UI sau này).
+- `service/src/modules/strategy-plugin/plugins/{ma,rsi,bollinger,support-resistance}.plugin.ts`: mỗi file là 1 class implement `StrategyPlugin`, chứa **nguyên vẹn** phần thân tín hiệu (signal math) từng được copy từ nhánh `switch` cũ — không đổi 1 dòng logic, chỉ di chuyển vị trí. `parameterSchema` lấy đúng range/tên tham số từ `strategy-search/catalog/strategy-catalog.ts` (nguồn sự thật duy nhất cho không gian tham số của search).
+- `StrategyPluginModule` (`onModuleInit`) đăng ký cả 4 plugin vào `StrategyRegistry` khi app khởi động, và export `StrategyRegistry` để module khác inject.
+- `StrategyEngineService` giờ chỉ còn 1 dòng nghiệp vụ: `this.registry.get(member.type).analyze(member, context)`. **Không còn `switch`, không còn `if (type === ...)` nào trong file này.**
+- `StrategyEngineModule` import `StrategyPluginModule` để `StrategyRegistry` được inject qua constructor — không có vòng phụ thuộc (`strategy-plugin` **không** import `strategy-search` module, dù dùng type `CandidateMember`/`SearchStrategyType` từ đó — chỉ import kiểu dữ liệu (type-only ở mức module graph), không import class/service, nên không đóng vòng DI dù `strategy-search → backtesting → composite-strategy → strategy-engine → strategy-plugin`).
+
+**Cách thêm strategy thứ 5 (vd MACD) mà KHÔNG sửa 1 dòng nào trong `strategy-engine.service.ts` hay `strategy-registry.ts`:**
+
+1. Thêm `'MACD'` vào union type `SearchStrategyType` (`strategy-search/domain/search.types.ts`) — bước duy nhất chạm vào file ngoài `strategy-plugin/`.
+2. Tạo `service/src/modules/strategy-plugin/plugins/macd.plugin.ts`, class `MacdPlugin implements StrategyPlugin` với `type = 'MACD'`, `domain`, `parameterSchema`, và `analyze()` chứa signal math riêng.
+3. Thêm `MacdPlugin` vào mảng `providers` + vào vòng lặp `onModuleInit` của `StrategyPluginModule`.
+4. (Tuỳ chọn) thêm entry vào `STRATEGY_CATALOG` nếu muốn search engine sinh candidate loại này.
+
+Không cần sửa `StrategyEngineService`, `StrategyRegistry`, `CompositeStrategyService`, hay `BacktestingService` — đúng tinh thần Open/Closed: engine đóng với sửa đổi, mở với mở rộng.
+
+**Test:** `strategy-plugin/strategy-registry.spec.ts` (đăng ký/duplicate/unknown-type/list) và `strategy-engine/strategy-engine.service.spec.ts` (engine chỉ delegate, không tự biết logic strategy nào) — cả hai mock hoàn toàn `StrategyPlugin`, không phụ thuộc plugin thật. Ngược lại, `backtesting/backtesting.service.spec.ts` cố tình dùng **registry thật + 4 plugin thật** (không mock) để làm regression guard: nếu số liệu backtest đổi sau refactor này, nghĩa là có nhánh bị sửa logic thay vì chỉ di chuyển vị trí.
+
 ## 5. Rủi ro đã tìm thấy và vá trong lúc build (đáng nói khi vấn đáp)
 
 Đây là các lỗi **thật, được subagent review tìm ra khi triển khai**, không phải giả định — cho thấy quy trình review nhiều lớp có tác dụng:
@@ -161,13 +185,16 @@ Bản code cũ (mô hình phẳng) dùng `fingerprint` (SHA-256 của tham số)
 
 ## 6. Nợ kiến trúc lớn nhất còn lại — ưu tiên cao nhất cho việc tiếp theo
 
-**`StrategyEngineService` dùng `switch (member.type)` với cả 4 strategy code inline trong 1 class; `StrategyPluginService` là stub rỗng.** Đây là vi phạm trực tiếp yêu cầu "Adding a strategy must not require rewriting the Strategy Engine" và anti-pattern "Hard-coded Strategy" mà đề bài liệt kê tường minh (`docs/about-projects/03-anti-patterns-to-avoid.md` #2). `docs/modules-specification/strategy-plugin.md` + `strategy-engine.md` đã đặc tả sẵn lời giải (Registry + Facade). **Không sửa trong đợt migrate này** (ngoài phạm vi, rủi ro deadline) — khuyến nghị là plan tiếp theo, ưu tiên cao nhất vì đây là tiêu chí chấm điểm nặng nhất của đồ án.
+~~`StrategyEngineService` dùng `switch (member.type)` với cả 4 strategy code inline trong 1 class; `StrategyPluginService` là stub rỗng.~~ **Đã fix — xem mục 4b (Strategy Plugin Registry, 2026-08-24).** `StrategyEngineService` giờ chỉ delegate qua `StrategyRegistry`, không còn `switch`/`if` theo strategy type nào trong engine.
+
+Nợ kiến trúc lớn nhất còn lại sau khi mục này được xử lý: xem mục 7 bên dưới (thứ tự ưu tiên đã cập nhật).
 
 ## 7. Việc chưa làm (theo thứ tự khuyến nghị ưu tiên)
 
-1. Strategy Registry/Plugin refactor (mục 6) — điểm số cao nhất.
+1. ~~Strategy Registry/Plugin refactor~~ — **đã xong (mục 4b)**.
 2. `market-data` chưa có auth guard.
 3. News crawler + Sentiment worker thật (theo `artifacts/decisions.md` mục 3: crawl thật, sentiment dùng model có sẵn — không train từ đầu).
 4. WebSocket realtime cho chart + leaderboard push.
 5. Port UI từ `docs/ui-prototype/` sang `web-platform/` (chưa động tới gì).
 6. Redis + BullMQ nếu quy mô search cần chạy song song thật (hiện tuần tự vẫn đáp ứng MVP).
+7. `CandidateFingerprintService.displayName()` (`strategy-search/services/candidate-fingerprint.service.ts`) vẫn có `switch (member.type)` riêng — nhưng đây là format tên hiển thị (cosmetic), không phải signal engine, và ngoài phạm vi task Registry này. Cân nhắc dọn sau nếu muốn nhất quán tuyệt đối.
