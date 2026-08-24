@@ -115,3 +115,55 @@ export interface RealtimeSignalDto {
   lastClose: number
   changePct: number | null
 }
+
+/**
+ * Strategy domain — one plugin belongs to exactly one domain in this
+ * system (TREND -> MA, MOMENTUM -> RSI, VOLATILITY -> BOLLINGER,
+ * STRUCTURE -> SUPPORT_RESISTANCE). See
+ * service/src/modules/strategy-search/domain/search.types.ts and
+ * artifacts/api-contract.md §2 (`enabledDomains`).
+ */
+export type StrategyDomain = 'TREND' | 'MOMENTUM' | 'VOLATILITY' | 'STRUCTURE'
+
+/** The four registered plugin types — service/src/modules/strategy-plugin/plugins/*. */
+export type SearchStrategyType = 'MA' | 'RSI' | 'BOLLINGER' | 'SUPPORT_RESISTANCE'
+
+/** One numeric parameter a plugin exposes, part of GET /strategy-plugin/strategies. */
+export interface ParameterSpec {
+  key: string
+  label: string
+  type: 'int' | 'float'
+  min: number
+  max: number
+  step: number
+  default: number
+}
+
+/**
+ * One row of `GET /strategy-plugin/strategies` — requires auth, not yet
+ * documented in artifacts/api-contract.md (stale on this endpoint); see
+ * service/src/modules/strategy-plugin/strategy-plugin.controller.ts and
+ * strategy-plugin.types.ts for the source of truth. `strategyId`/`version`
+ * are null when the plugin has no matching row in the `strategies` DB
+ * table yet (no persisted version history for it).
+ */
+export interface StrategyCatalogItem {
+  type: SearchStrategyType
+  domain: StrategyDomain
+  displayName: string
+  description: string
+  parameterSchema: ParameterSpec[]
+  strategyId: string | null
+  version: number | null
+}
+
+/**
+ * One entry of `POST /strategy-search/experiments`'s `strategyWeights`
+ * field — artifacts/api-contract.md §2. The backend rejects a set whose
+ * weights don't sum to 1 (tolerance 1e-4) or whose types don't exactly
+ * cover the strategy types implied by the enabled domains.
+ */
+export interface StrategyWeight {
+  type: SearchStrategyType
+  weight: number
+}

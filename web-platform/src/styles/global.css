@@ -194,6 +194,16 @@ img { display: block; max-width: 100%; }
   box-shadow: inset 0 0 0 4px var(--color-bg);
 }
 .radio input:focus-visible + .dot { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+/* Square variant — the prototype's "include in Search" checkbox uses a
+   square dot instead of the round radio dot to read as a checkbox. */
+.radio-square .dot { border-radius: 0; }
+
+.kicker {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-accent-700);
+}
 
 /* — cards — */
 .card {
@@ -591,3 +601,64 @@ img { display: block; max-width: 100%; }
 .legend-line { width: 10px; height: 2px; background: var(--color-accent); margin-top: 7px; flex: none; }
 
 .tab-placeholder { max-width: 640px; }
+
+/* ═══════════════════════ Strategy Engine tab ═══════════════════════ */
+
+.strategy-page { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.strategy-groups { display: flex; flex-direction: column; gap: 16px; min-width: 0; flex: 1 1 280px; max-width: 340px; }
+.strategy-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; flex: 3 1 470px; }
+.strategy-detail { display: flex; flex-direction: column; gap: 16px; min-width: 0; flex: 1 1 250px; max-width: 320px; }
+
+.strategy-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--color-divider);
+}
+.strategy-row-on { background: color-mix(in srgb, var(--color-accent) 7%, transparent); }
+.strategy-row-focus { border-color: var(--color-accent); }
+.strategy-row-btn {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--color-text);
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.strategy-row-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.strategy-name { font-family: var(--font-heading); font-size: 15px; }
+.strategy-desc { display: block; font-size: 12px; margin-top: 2px; }
+.strategy-version { display: block; font-size: 11px; margin-top: 3px; }
+
+.voting-panel { padding: 14px 16px; }
+.strategy-formula { font-size: 12px; margin: 0 0 14px; }
+.range { width: 100%; accent-color: var(--color-accent); }
+
+.strategy-save-row {
+  margin-top: 14px;
+  border-top: 1px solid var(--color-divider);
+  padding-top: 12px;
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.strategy-save-status { flex: 1; min-width: 220px; }
+.strategy-reasons {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--color-danger);
+}
+
+.parameter-panel-title { font-size: 18px; margin: 4px 0 2px; }
+.parameter-panel-meta { font-size: 11px; margin-bottom: 12px; }
+.parameter-panel-empty { font-size: 13px; }
+.parameter-fields { display: flex; flex-direction: column; gap: 10px; }
+.parameter-range { display: block; font-size: 11px; margin-top: 3px; }
+.parameter-note { font-size: 11px; margin: 10px 0 0; line-height: 1.5; }

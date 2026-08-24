@@ -1,0 +1,192 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
+import { apiFetch } from '../api/client'
+import type { SearchStrategyType, StrategyCatalogItem, StrategyWeight } from '../api/types'
+
+/**
+ * A weight set is only sendable to `POST /strategy-search/experiments` if
+ * it covers at least one "directional" domain (decides entry direction)
+ * and one "confirmation" domain (confirms it) — artifacts/api-contract.md
+ * §2: "search bắt buộc phải có ít nhất một strategy định hướng (MA hoặc
+ * Support/Resistance) và một strategy xác nhận (RSI hoặc Bollinger)".
+ * Expressed as domain sets (not hard-coded type names) so this stays
+ * correct if the plugin registry grows within the same two domain roles.
+ */
+const DIRECTIONAL_DOMAINS = new Set(['TREND', 'STRUCTURE'])
+const CONFIRMATION_DOMAINS = new Set(['MOMENTUM', 'VOLATILITY'])
+const WEIGHT_SUM_TOLERANCE = 1e-4
+
+export interface StrategyWeightValidation {
+  valid: boolean
+  /** Human-readable, Vietnamese reasons for why the set is currently invalid — empty when valid. */
+  reasons: string[]
+}
+
+interface StrategySelectionContextValue {
+  strategies: StrategyCatalogItem[]
+  loading: boolean
+  error: string | null
+  /** Whether each strategy type is included in Search — keyed by `type`. */
+  selected: Record<string, boolean>
+  /** Editable weight per strategy type, meaningful only while `selected[type]` is true. */
+  weights: Record<string, number>
+  toggleSelected: (type: SearchStrategyType) => void
+  setWeight: (type: SearchStrategyType, weight: number) => void
+  /** The exact shape `POST /strategy-search/experiments` expects for `strategyWeights` — selected strategies only. */
+  strategyWeights: StrategyWeight[]
+  validation: StrategyWeightValidation
+  /**
+   * True once the user has confirmed the current, valid selection via
+   * `confirmSelection()`. Cleared automatically on the next edit so stale
+   * "saved" state is never shown after a change. The Backtest tab reads
+   * `strategyWeights` directly regardless of this flag; it exists purely
+   * as the UI's "did I save this" affordance (mirrors the approved
+   * prototype's save-set panel).
+   */
+  confirmed: boolean
+  confirmSelection: () => void
+}
+
+const StrategySelectionContext = createContext<StrategySelectionContextValue | undefined>(undefined)
+
+function computeValidation(
+  strategyWeights: StrategyWeight[],
+  strategies: StrategyCatalogItem[],
+): StrategyWeightValidation {
+  const reasons: string[] = []
+
+  if (strategyWeights.length === 0) {
+    return { valid: false, reasons: ['Chưa chọn strategy nào để đưa vào Search.'] }
+  }
+
+  const sum = strategyWeights.reduce((total, w) => total + w.weight, 0)
+  if (Math.abs(sum - 1) > WEIGHT_SUM_TOLERANCE) {
+    reasons.push(`Tổng trọng số phải bằng 1 (hiện tại ${sum.toFixed(2)}).`)
+  }
+
+  const byType = new Map(strategies.map((s) => [s.type, s]))
+  const domains = new Set(strategyWeights.map((w) => byType.get(w.type)?.domain).filter(Boolean))
+  const hasDirectional = [...domains].some((d) => d && DIRECTIONAL_DOMAINS.has(d))
+  const hasConfirmation = [...domains].some((d) => d && CONFIRMATION_DOMAINS.has(d))
+  if (!hasDirectional) {
+    reasons.push('Cần ít nhất 1 strategy định hướng (domain TREND hoặc STRUCTURE — vd. MA, Support/Resistance).')
+  }
+  if (!hasConfirmation) {
+    reasons.push('Cần ít nhất 1 strategy xác nhận (domain MOMENTUM hoặc VOLATILITY — vd. RSI, Bollinger).')
+  }
+
+  return { valid: reasons.length === 0, reasons }
+}
+
+/**
+ * Owns the strategy catalog (`GET /strategy-plugin/strategies`) plus the
+ * user's current Search selection + weights, so the Strategy Engine tab
+ * and a later Backtest tab (`strategyWeights` -> `POST
+ * /strategy-search/experiments`) read the same live state without a
+ * second fetch or a backend endpoint to store it — this is pure client
+ * app state, never persisted server-side.
+ */
+export function StrategySelectionProvider({ children }: { children: ReactNode }) {
+  const [strategies, setStrategies] = useState<StrategyCatalogItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Record<string, boolean>>({})
+  const [weights, setWeights] = useState<Record<string, number>>({})
+  const [confirmed, setConfirmed] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const controller = new AbortController()
+
+    setLoading(true)
+    setError(null)
+
+    apiFetch<StrategyCatalogItem[]>('/strategy-plugin/strategies', { signal: controller.signal })
+      .then((catalog) => {
+        if (cancelled) return
+        setStrategies(catalog)
+        // Default: every strategy included, equal weight — mirrors the
+        // backend's own default when `strategyWeights` is omitted
+        // (artifacts/api-contract.md §2: "chia đều").
+        const equalWeight = catalog.length > 0 ? 1 / catalog.length : 0
+        const nextSelected: Record<string, boolean> = {}
+        const nextWeights: Record<string, number> = {}
+        for (const item of catalog) {
+          nextSelected[item.type] = true
+          nextWeights[item.type] = equalWeight
+        }
+        setSelected(nextSelected)
+        setWeights(nextWeights)
+      })
+      .catch((err: unknown) => {
+        if (cancelled || controller.signal.aborted) return
+        setError(err instanceof Error ? err.message : 'Không tải được danh sách strategy.')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [])
+
+  const toggleSelected = useCallback((type: SearchStrategyType) => {
+    setSelected((prev) => ({ ...prev, [type]: !prev[type] }))
+    setConfirmed(false)
+  }, [])
+
+  const setWeight = useCallback((type: SearchStrategyType, weight: number) => {
+    setWeights((prev) => ({ ...prev, [type]: weight }))
+    setConfirmed(false)
+  }, [])
+
+  const strategyWeights = useMemo<StrategyWeight[]>(
+    () =>
+      strategies
+        .filter((s) => selected[s.type])
+        .map((s) => ({ type: s.type, weight: weights[s.type] ?? 0 })),
+    [strategies, selected, weights],
+  )
+
+  const validation = useMemo(() => computeValidation(strategyWeights, strategies), [strategyWeights, strategies])
+
+  const confirmSelection = useCallback(() => {
+    if (validation.valid) setConfirmed(true)
+  }, [validation.valid])
+
+  const value = useMemo<StrategySelectionContextValue>(
+    () => ({
+      strategies,
+      loading,
+      error,
+      selected,
+      weights,
+      toggleSelected,
+      setWeight,
+      strategyWeights,
+      validation,
+      confirmed,
+      confirmSelection,
+    }),
+    [strategies, loading, error, selected, weights, toggleSelected, setWeight, strategyWeights, validation, confirmed, confirmSelection],
+  )
+
+  return <StrategySelectionContext.Provider value={value}>{children}</StrategySelectionContext.Provider>
+}
+
+export function useStrategySelection(): StrategySelectionContextValue {
+  const ctx = useContext(StrategySelectionContext)
+  if (!ctx) {
+    throw new Error('useStrategySelection must be used within a <StrategySelectionProvider>.')
+  }
+  return ctx
+}
