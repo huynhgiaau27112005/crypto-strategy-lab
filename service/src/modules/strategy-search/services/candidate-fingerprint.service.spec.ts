@@ -89,4 +89,46 @@ describe('CandidateFingerprintService', () => {
     expect(nameB).toContain('10');
     expect(nameB).toContain('30');
   });
+
+  it('falls back to the raw type string instead of throwing for an unregistered plugin type', () => {
+    // BOLLINGER is a valid SearchStrategyType but was never registered on this
+    // spec's local registry, standing in for a candidate row whose plugin
+    // is absent, renamed, or not yet registered in a partially-booted context.
+    const unregistered: CandidateDefinition = {
+      schemaVersion: 1,
+      combination: candidate.combination,
+      members: [
+        {
+          type: 'BOLLINGER',
+          domain: 'VOLATILITY',
+          pluginVersion: 1,
+          parameters: { period: 20 },
+        },
+      ],
+    };
+
+    expect(() => service.displayName(unregistered)).not.toThrow();
+    expect(service.displayName(unregistered)).toContain('BOLLINGER');
+  });
+
+  it('holds the position of a missing parameter with a placeholder instead of shifting the remaining values', () => {
+    const partial: CandidateDefinition = {
+      schemaVersion: 1,
+      combination: candidate.combination,
+      members: [
+        {
+          type: 'MA',
+          domain: 'TREND',
+          pluginVersion: 1,
+          // fastPeriod deliberately missing — must not cause slowPeriod's 50
+          // to be displayed as if it were the fast period.
+          parameters: { slowPeriod: 50 },
+        },
+      ],
+    };
+
+    const name = service.displayName(partial);
+
+    expect(name).toBe('Moving Average Crossover (?/50)');
+  });
 });
