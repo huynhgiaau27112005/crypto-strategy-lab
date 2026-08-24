@@ -153,6 +153,12 @@ POST /strategy-search/experiments/:id/cancel → dừng giữa chừng
 | Leaderboard rebuild nằm trong cùng try-block với backtest | 1 lỗi tạm thời khi rebuild leaderboard → backtest **đã thành công** bị đánh dấu FAILED, evaluation tốt bị loại vĩnh viễn khỏi Top-K | Đã vá (Task 8) — tách ra try-block riêng |
 | Test cho `BacktestRunRepository` chỉ kiểm `.some()` substring | Không phát hiện được bug hoán đổi `profit_loss`/`return_pct`, thiếu câu lệnh DELETE, sai thứ tự ghi | Đã vá (Task 7) — test giờ kiểm thứ tự + tham số ràng buộc |
 
+## 5b. Giới hạn đã biết: mất cơ chế chống trùng candidate
+
+Bản code cũ (mô hình phẳng) dùng `fingerprint` (SHA-256 của tham số) + `ON CONFLICT` để bỏ qua candidate đã test trùng, không tính vào `generated`. Khi rewire sang schema Candidate mới (Task 8), cơ chế này **chưa được khôi phục** — mỗi candidate sinh ra đều tạo iteration + lưu DB + tính vào `generated`, kể cả khi trùng tham số với candidate trước đó. Hệ quả: trong không gian tham số hẹp (vd chỉ bật 2 domain), có thể thấy nhiều candidate giống hệt nhau trong Top-K. **Không phải lỗi dữ liệu/crash** — chỉ là kết quả kém đa dạng hơn mong đợi.
+
+**Quyết định:** không sửa trong đợt migrate này (cần thêm cột `fingerprint` + unique index vào `candidates`, tức thêm 1 migration nữa, rủi ro cho deadline). `CandidateFingerprintService` hiện chưa được dùng ở luồng chính (chỉ còn test riêng của nó). Việc tiếp theo (nếu còn thời gian): thêm cột fingerprint hoặc dọn hẳn code chết (`attempts`/`maximumAttempts`/`SEARCH_SPACE_EXHAUSTED` hiện không bao giờ kích hoạt vì lý do tương tự — `attempts` tăng cùng nhịp `generated`).
+
 ## 6. Nợ kiến trúc lớn nhất còn lại — ưu tiên cao nhất cho việc tiếp theo
 
 **`StrategyEngineService` dùng `switch (member.type)` với cả 4 strategy code inline trong 1 class; `StrategyPluginService` là stub rỗng.** Đây là vi phạm trực tiếp yêu cầu "Adding a strategy must not require rewriting the Strategy Engine" và anti-pattern "Hard-coded Strategy" mà đề bài liệt kê tường minh (`docs/about-projects/03-anti-patterns-to-avoid.md` #2). `docs/modules-specification/strategy-plugin.md` + `strategy-engine.md` đã đặc tả sẵn lời giải (Registry + Facade). **Không sửa trong đợt migrate này** (ngoài phạm vi, rủi ro deadline) — khuyến nghị là plan tiếp theo, ưu tiên cao nhất vì đây là tiêu chí chấm điểm nặng nhất của đồ án.
