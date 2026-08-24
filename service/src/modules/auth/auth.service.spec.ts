@@ -51,9 +51,22 @@ describe('AuthService', () => {
       id: 'u1',
       email: 'a@example.com',
       password_hash: await service.hashPassword('correct-password'),
+      status: 'ACTIVE',
     });
     await expect(
       service.login('a@example.com', 'wrong-password'),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('rejects login for a non-ACTIVE account even with the correct password', async () => {
+    (users.findByEmail as jest.Mock).mockResolvedValue({
+      id: 'u1',
+      email: 'a@example.com',
+      password_hash: await service.hashPassword('correct-password'),
+      status: 'SUSPENDED',
+    });
+    await expect(
+      service.login('a@example.com', 'correct-password'),
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 

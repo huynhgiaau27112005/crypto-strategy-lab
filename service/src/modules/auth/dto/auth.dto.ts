@@ -1,17 +1,23 @@
-export interface RegisterDto {
-  email: string;
-  password: string;
-  displayName?: string;
-}
+import { z } from 'zod';
 
-export interface LoginDto {
-  email: string;
-  password: string;
-}
+export const registerSchema = z.object({
+  email: z.string().trim().email(),
+  password: z.string().min(8),
+  displayName: z.string().trim().min(1).optional(),
+});
 
-export interface RefreshDto {
-  refreshToken: string;
-}
+export const loginSchema = z.object({
+  email: z.string().trim().email(),
+  password: z.string().min(1),
+});
+
+export const refreshSchema = z.object({
+  refreshToken: z.string().min(1),
+});
+
+export type RegisterDto = z.infer<typeof registerSchema>;
+export type LoginDto = z.infer<typeof loginSchema>;
+export type RefreshDto = z.infer<typeof refreshSchema>;
 
 export interface AuthTokens {
   accessToken: string;

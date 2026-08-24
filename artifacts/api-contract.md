@@ -106,7 +106,7 @@ Bắt đầu một lần chạy tìm kiếm. Chạy **bất đồng bộ**: tr�
   "maxNoImprovement": 50,
   "topK": 10,
   "minimumTrades": 20,
-  "enabledDomains": ["TREND", "MOMENTUM", "VOLATILITY", "STRUCTURE"],
+  "enabledDomains": ["TREND", "MOMENTUM", "VOLATILITY"],
   "strategyWeights": [
     { "type": "MA", "weight": 0.3 },
     { "type": "RSI", "weight": 0.3 },
@@ -127,6 +127,8 @@ Bắt đầu một lần chạy tìm kiếm. Chạy **bất đồng bộ**: tr�
 | `enabledDomains` | ❌ | cả 4 | `TREND` / `MOMENTUM` / `VOLATILITY` / `STRUCTURE` |
 | `strategyWeights` | ❌ | chia đều | tổng phải **= 1** (sai số ≤ 1e-4) |
 
+> **Ràng buộc coverage:** `strategyWeights` phải khớp **chính xác** với tập strategy type suy ra từ `enabledDomains` (TREND→MA, MOMENTUM→RSI, VOLATILITY→BOLLINGER, STRUCTURE→SUPPORT_RESISTANCE) — theo cả hai chiều: thiếu weight cho domain đã bật, hoặc thừa weight cho domain chưa bật, đều bị từ chối với `400`.
+
 **Response `202 Accepted`**
 ```json
 { "experimentId": "3f2a...-....", "status": "PENDING" }
@@ -135,7 +137,7 @@ Bắt đầu một lần chạy tìm kiếm. Chạy **bất đồng bộ**: tr�
 **Lỗi**
 | Mã | Khi nào |
 |---|---|
-| `400` | `timeframe` không hỗ trợ; khoảng thời gian không hợp lệ; số nằm ngoài khoảng; `strategyWeights` không tổng bằng 1; strategy type không tồn tại; thiếu ít nhất 1 domain "định hướng" (TREND/STRUCTURE) và 1 domain "xác nhận" (MOMENTUM/VOLATILITY); **dữ liệu nến không đủ** |
+| `400` | `timeframe` không hỗ trợ; khoảng thời gian không hợp lệ; số nằm ngoài khoảng; `strategyWeights` không tổng bằng 1; `strategyWeights` không khớp chính xác với các type suy ra từ `enabledDomains` (thiếu hoặc thừa type, xem ghi chú coverage phía trên); strategy type không tồn tại; thiếu ít nhất 1 domain "định hướng" (TREND/STRUCTURE) và 1 domain "xác nhận" (MOMENTUM/VOLATILITY); **dữ liệu nến không đủ** |
 | `401` | Thiếu/sai token |
 
 **Về lỗi "không đủ nến"** — thông báo dạng `"Dataset has 0 candles; at least 202 are required."`. Số nến tối thiểu phụ thuộc domain được bật: TREND cần 202, STRUCTURE 102, VOLATILITY 31, MOMENTUM 23 (lấy giá trị lớn nhất trong các domain đã bật). Đây **không phải bug** — nghĩa là bảng `candles` chưa có đủ dữ liệu lịch sử cho khoảng thời gian yêu cầu, cần nạp dữ liệu trước (xem `POST /market-data/import`).

@@ -136,16 +136,47 @@ export class StrategySearchService implements OnApplicationBootstrap {
     const cached = this.configCache.get(experimentId);
     if (cached) return cached;
     // Reconstructed defaults if the process restarted; maxCandidates comes
-    // from experiment_configs.iteration_limit, other bounds fall back to
-    // DEFAULT_SEARCH_CONFIG since they are not separately persisted.
+    // from experiment_configs.iteration_limit, enabledDomains is derived from
+    // the persisted experiment_config_strategies weight rows (see
+    // domainsFromWeightRows), other bounds fall back to DEFAULT_SEARCH_CONFIG
+    // since they are not separately persisted.
     const config = await this.experimentConfigs.findByExperimentId(experimentId);
+    const weightRows =
+      await this.experimentConfigs.weightsByExperimentId(experimentId);
+    const enabledDomains =
+      weightRows.length > 0
+        ? this.domainsFromWeightRows(weightRows)
+        : DEFAULT_SEARCH_CONFIG.enabledDomains;
     const resolved: SearchConfig = {
       ...DEFAULT_SEARCH_CONFIG,
+      enabledDomains,
       maxCandidates:
         config?.iteration_limit ?? DEFAULT_SEARCH_CONFIG.maxCandidates,
     };
     this.configCache.set(experimentId, resolved);
     return resolved;
+  }
+
+  // Inverts typesForDomain() to recover which StrategyDomains are
+  // represented by the persisted experiment_config_strategies rows. This
+  // keeps a resumed-after-restart config's enabledDomains in sync with the
+  // weights that were actually persisted for the experiment, instead of
+  // defaulting to all four domains regardless of what the experiment was
+  // started with.
+  private domainsFromWeightRows(
+    rows: Array<{ name: string }>,
+  ): StrategyDomain[] {
+    const allDomains: StrategyDomain[] = [
+      'TREND',
+      'MOMENTUM',
+      'VOLATILITY',
+      'STRUCTURE',
+    ];
+    const typesPresent = new Set(rows.map((row) => row.name));
+    const domains = allDomains.filter((domain) =>
+      this.typesForDomain(domain).some((type) => typesPresent.has(type)),
+    );
+    return domains.length > 0 ? domains : DEFAULT_SEARCH_CONFIG.enabledDomains;
   }
 
   private schedule(experimentId: string): void {

@@ -1,6 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { BinanceClient } from './clients/binance.client';
 import { CandleRepository } from './repositories/candle.repository';
+
+// Must match the app_timeframe enum in database/migrations/003_candidate_auth_schema.sql.
+const ALLOWED_INTERVALS = ['1m', '5m', '15m', '1h', '4h'] as const;
+type AllowedInterval = (typeof ALLOWED_INTERVALS)[number];
 
 export interface MarketCandle {
     timeframe: string;
@@ -43,6 +47,7 @@ export class MarketDataService {
         interval: string,
         limit = 500,
     ): Promise<CandleImportResult> {
+        this.assertAllowedInterval(interval);
         const rows = await this.binanceClient.getKlines(
             symbol,
             interval,
@@ -57,6 +62,16 @@ export class MarketDataService {
             interval,
             count: candles.length,
         };
+    }
+
+    private assertAllowedInterval(
+        interval: string,
+    ): asserts interval is AllowedInterval {
+        if (!ALLOWED_INTERVALS.includes(interval as AllowedInterval)) {
+            throw new BadRequestException(
+                `Unsupported interval "${interval}". Allowed values: ${ALLOWED_INTERVALS.join(', ')}.`,
+            );
+        }
     }
 
     private toCandle(

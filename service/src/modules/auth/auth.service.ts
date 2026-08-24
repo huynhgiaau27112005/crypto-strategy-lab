@@ -45,6 +45,9 @@ export class AuthService {
   async login(email: string, password: string): Promise<AuthTokens> {
     const user = await this.users.findByEmail(email);
     if (!user) throw new UnauthorizedException('Invalid credentials.');
+    if (user.status !== 'ACTIVE') {
+      throw new UnauthorizedException('Invalid credentials.');
+    }
     const matches = await bcrypt.compare(password, user.password_hash);
     if (!matches) throw new UnauthorizedException('Invalid credentials.');
     return this.issueTokens(user.id, user.email);

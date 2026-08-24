@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../../database/database.service';
 import { UserEntity } from '../../../database/types';
+
+const POSTGRES_UNIQUE_VIOLATION = '23505';
 
 @Injectable()
 export class UserRepository {
@@ -27,11 +29,27 @@ export class UserRepository {
     passwordHash: string,
     displayName: string | null,
   ): Promise<UserEntity> {
-    const result = await this.database.query<UserEntity>(
-      `INSERT INTO users (email, password_hash, display_name)
-       VALUES ($1, $2, $3) RETURNING *`,
-      [email, passwordHash, displayName],
+    try {
+      const result = await this.database.query<UserEntity>(
+        `INSERT INTO users (email, password_hash, display_name)
+         VALUES ($1, $2, $3) RETURNING *`,
+        [email, passwordHash, displayName],
+      );
+      return result.rows[0];
+    } catch (error) {
+      if (this.isUniqueViolation(error)) {
+        throw new ConflictException('Email is already registered.');
+      }
+      throw error;
+    }
+  }
+
+  private isUniqueViolation(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === POSTGRES_UNIQUE_VIOLATION
     );
-    return result.rows[0];
   }
 }
