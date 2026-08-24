@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { CandleEntity } from '../../database/types';
-import { CompositeStrategyService } from '../composite-strategy/composite-strategy.service';
+import {
+  CompositeStrategyService,
+  StrategyWeightMap,
+} from '../composite-strategy/composite-strategy.service';
 import { CandidateDefinition } from '../strategy-search/domain/search.types';
 import {
   BacktestEvaluation,
@@ -14,7 +17,11 @@ export class BacktestingService {
 
   constructor(private readonly compositeStrategy: CompositeStrategyService) {}
 
-  run(candidate: CandidateDefinition, candles: CandleEntity[]): BacktestResult {
+  run(
+    candidate: CandidateDefinition,
+    candles: CandleEntity[],
+    weights: StrategyWeightMap,
+  ): BacktestResult {
     if (candles.length < 2)
       throw new Error('At least two candles are required.');
     const trades: SimulatedTrade[] = [];
@@ -30,10 +37,14 @@ export class BacktestingService {
     for (let index = 0; index < candles.length; index += 1) {
       const candle = candles[index];
       const close = Number(candle.close);
-      const result = this.compositeStrategy.analyze(candidate, {
-        candles,
-        index,
-      });
+      const result = this.compositeStrategy.analyze(
+        candidate,
+        {
+          candles,
+          index,
+        },
+        weights,
+      );
       if (!position && result.signal === 'BUY') {
         position = {
           entryTime: candle.timestamp,

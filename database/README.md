@@ -2,14 +2,14 @@
 
 ## 1. Overview
 
-This document describes the PostgreSQL + TimescaleDB schema used by Crypto Strategy Lab.
+This document describes the PostgreSQL + TimescaleDB schema used by Crypto Strategy Lab, as actually created by `database/migrations/003_candidate_auth_schema.sql` (the source of truth — see `artifacts/database.md` for a deeper, Vietnamese-language walkthrough).
 
 The current MVP intentionally uses a fixed market scope:
 
 - **Exchange:** Binance
 - **Symbol:** BTCUSDT
 
-The database is divided into two major categories:
+This replaces the project's earlier flat, session-based schema (`001_initial_schema.sql`): there is no more `sessions` table or cookie-based scoping. Every experiment belongs to an authenticated `users` row, and access control is by real user identity (JWT), not an anonymous session cookie.
 
 ```text
                     Database
@@ -17,61 +17,45 @@ The database is divided into two major categories:
           ┌────────────┴────────────┐
           │                         │
           ▼                         ▼
-     Shared Data              Session Data
+     Shared Data               User Data
           │                         │
-       candles             experiments
-                            strategies
-                            trades
-                            evaluations
-                            leaderboards
+       candles                   users
+                             refresh_tokens
+                              strategies
+                             experiments
+                          experiment_configs
+                    experiment_config_strategies
+                       experiment_iterations
+                              candidates
+                         candidate_strategies
+                            backtest_runs
+                                trades
+                              evaluations
+                             leaderboards
+                          leaderboard_entries
+                                 news
 ```
 
 ### Shared data
 
-Shared data is not owned by an individual session and can be reused by all users:
+Shared data is not owned by an individual user and can be reused by everyone:
 
 - `candles`
 
-News data is intentionally excluded from this PostgreSQL schema because it is stored in a NoSQL database.
-
-### Session data
-
-Data related to search, backtesting, strategies, and rankings is associated with a session:
-
-- `sessions`
-- `strategies`
-- `experiments`
-- `experiment_strategies`
-- `trades`
-- `evaluations`
-- `leaderboards`
-- `leaderboard_entries`
+News (`news`) is stored in this same PostgreSQL schema rather than a separate NoSQL store — a deliberate change from the original design; see `artifacts/decisions.md`.
 
 ---
 
-## 2. Session and Cookie-Based Isolation
+## 2. Authentication — real user accounts
 
-The backend creates a `session_id` for a browser/session and stores it in a cookie.
+Unlike the old cookie/session model, the backend now issues real JWTs:
 
-The first request creates the session:
+- **`users`** — login accounts. `email` is unique, `password_hash` is a bcrypt hash (never plaintext), `status` (`ACTIVE` / `INACTIVE` / `SUSPENDED`) gates login.
+- **`refresh_tokens`** — long-lived sessions. Only the SHA-256 **hash** of the refresh token is stored (`token_hash`, unique), never the raw token — if the DB leaked, the hash alone can't be used to log in. `revoked_at` marks a token dead on logout or rotation.
 
-```http
-Set-Cookie: session_id=<session-id>
-```
+Access tokens are short-lived JWTs (default 15 minutes) verified by signature only — they are never persisted. Refresh tokens are longer-lived (default 30 days), stored hashed, and rotated on every `/auth/refresh` call.
 
-Subsequent requests automatically send:
-
-```http
-Cookie: session_id=<session-id>
-```
-
-The backend uses this value to retrieve session-specific data.
-
-A session represents an anonymous user workspace for the current MVP. It does not require a user account or authentication system.
-
-The important rule is:
-
-> `session_id` identifies the owner/scope of user-generated experiment data. It is not attached to shared market data.
+Every `experiments` row now carries a `user_id` foreign key, and API endpoints scope reads/writes to the authenticated user (see `artifacts/api-contract.md`).
 
 ---
 
@@ -81,7 +65,7 @@ The `candles` table stores OHLCV data for BTCUSDT from Binance.
 
 ```text
 candles
-├── timeframe
+├── timeframe   (enum app_timeframe: 1m / 5m / 15m / 1h / 4h)
 ├── timestamp
 ├── open
 ├── high
@@ -90,616 +74,104 @@ candles
 └── volume
 ```
 
-There is intentionally no:
-
-```text
-candles.session_id
-candles.symbol_id
-candles.exchange_id
-```
-
-because the current MVP has only one market source and one trading pair:
-
-```text
-Binance / BTCUSDT
-```
+There is intentionally no `candles.user_id` / `candles.symbol_id` / `candles.exchange_id` — the current MVP has only one market source and one trading pair (Binance / BTCUSDT), and market data is an objective shared fact, not owned by any one user.
 
 ### TimescaleDB Hypertable
 
-`candles` is implemented as a TimescaleDB hypertable.
-
-The DBML describes the logical table, while the migration converts it into a hypertable:
+`candles` is converted into a TimescaleDB hypertable, partitioned by `timestamp`:
 
 ```sql
-SELECT create_hypertable(
-    'candles',
-    by_range('timestamp')
-);
+SELECT create_hypertable('candles', by_range('timestamp'), if_not_exists => TRUE);
 ```
 
-The primary key is:
+The primary key is `(timeframe, timestamp)` — a candle is uniquely identified by its timeframe and timestamp. For example, `5m + 2026-08-17 10:00:00` identifies one unique 5-minute candle.
 
-```text
-(timeframe, timestamp)
-```
-
-because a candle is uniquely identified by its timeframe and timestamp.
-
-For example:
-
-```text
-5m + 2026-08-17 10:00:00
-```
-
-identifies one unique 5-minute candle.
+`candles` predates this migration (created by `001_initial_schema.sql`) and is intentionally left untouched by `003` — its shape did not need to change.
 
 ---
 
-## 4. How Historical Candles Are Used by Backtesting
+## 4. The four core concepts
 
-Historical candles are not copied into experiments.
-
-An experiment stores the specification of the dataset it wants to backtest:
+This is the schema's central design decision: separating four things a simpler system would collapse into one.
 
 ```text
-timeframe
-start_time
-end_time
-```
-
-For example:
-
-```text
-Experiment #182
-────────────────────────
-timeframe: 5m
-start:     2026-01-01
-end:       2026-07-01
-```
-
-The Backtest Engine retrieves the required historical candles from the TimescaleDB hypertable:
-
-```sql
-SELECT
-    timestamp,
-    open,
-    high,
-    low,
-    close,
-    volume
-FROM candles
-WHERE timeframe = '5m'
-  AND timestamp >= '2026-01-01T00:00:00Z'
-  AND timestamp <  '2026-07-01T00:00:00Z'
-ORDER BY timestamp ASC;
-```
-
-The resulting dataset is then processed by the Backtest Engine.
-
-Conceptually:
-
-```text
-TimescaleDB
+Strategy    = WHICH ALGORITHM exists           → MA, RSI, BOLLINGER, SUPPORT_RESISTANCE
      │
-     │ historical candle query
-     ▼
-Backtest Worker
+Experiment  = ONE search run                    → "the search kicked off at 14:00 on 2026-08-24"
      │
-     ├── Candle data
+Config      = HOW that search is configured     → timeframe 5m, 2026-01-01→2026-07-01, weights MA .3/RSI .3/BB .4, 50-iteration budget
      │
-     ├── Strategy
-     │
-     └── Trade Simulator
-             │
-             ▼
-           Trades
-             │
-             ▼
-         Evaluation
+Candidate   = ONE concrete parameter combo      → MA(20,50) + RSI(14,30,70) + BB(20, 2.0)
 ```
 
-This allows many experiments to reuse the same historical market data without duplicating candles.
+**Why split them?** If Strategy and Candidate were the same table, every search run that generates 100 parameter combinations would insert 100 new "strategy" rows — `strategies` would grow without bound and stop meaning "algorithm". Splitting them keeps `strategies` at a small, stable set of immutable rows (4 SYSTEM strategies today), while every generated parameter variant lives in `candidate_strategies`.
+
+**Where does weight live, and why?** `weight` — how much each strategy type counts toward a candidate's combined signal — belongs to the **Config**, not the Candidate. Within one search run the user fixes "I trust MA 30%, RSI 30%, BB 40%" and lets the engine search parameters; every candidate in that experiment shares that same weight set. Changing the weights is a different research question — it produces a new Experiment, leaving the old one intact for comparison.
 
 ---
 
-## 5. Strategy — `strategies`
+## 5. Table groups
 
-A strategy record represents an immutable version of a strategy.
+### 5.1 Authentication
 
-Example:
+| Table | Purpose |
+|---|---|
+| `users` | login accounts (email, bcrypt password hash, status, display name) |
+| `refresh_tokens` | hashed long-lived refresh tokens, revocable |
 
-```text
-MA + RSI v1
-```
+### 5.2 Strategy
 
-with:
+`strategies` holds a small, versioned, largely-immutable catalog — currently 4 `SYSTEM` rows (`MA`, `RSI`, `BOLLINGER`, `SUPPORT_RESISTANCE`). `owner_user_id` is `NULL` for `SYSTEM` strategies and required for `USER` / `AI_GENERATED` ones. Changing a strategy's logic/parameters creates a new `version` row rather than mutating an existing one, so a past experiment can always be traced back to the exact strategy version it used.
 
-```json
-{
-  "ma_fast": 20,
-  "ma_slow": 50,
-  "rsi_period": 14
-}
-```
+**Important:** the 4 `SYSTEM` strategy names must exactly match the `SearchStrategyType` union in `service/src/modules/strategy-search/domain/search.types.ts` — the application looks strategies up by name, so a mismatch fails at runtime, not at compile time.
 
-If the parameters change, a new strategy version should be created instead of overwriting the existing one.
+### 5.3 Experiment & search configuration
 
-For example:
+- `experiments` — one search run, owned by a user (`user_id`), with a lifecycle `status` (`PENDING` / `RUNNING` / `COMPLETED` / `FAILED` / `CANCELLED`).
+- `experiment_configs` — 1:1 with an experiment (`experiment_id` is `UNIQUE`); holds the dataset window (`timeframe`, `start_time`, `end_time`) and `iteration_limit`.
+- `experiment_config_strategies` — which strategy types are enabled for this run and their `weight` (convention: `weight >= 0` and `SUM(weight) = 1` across a config, enforced at the application layer).
 
-```text
-MA + RSI v1
-MA + RSI v2
-```
+### 5.4 Iterations & Candidates
 
-This is important for reproducibility: an old experiment must continue to reference the exact strategy configuration that was used when it ran.
+- `experiment_iterations` — one row per loop of the search engine, tracked with its own `status` and `error_message` (a failed iteration is still recorded, not discarded).
+- `candidates` — the result of exactly one iteration (`iteration_id` is `UNIQUE`, a 1:1 relationship).
+- `candidate_strategies` — the concrete generated `parameters` (as `jsonb`, since each strategy type has a different parameter shape) for each strategy member of a candidate. `jsonb` avoids an `ALTER TABLE` every time a new strategy type is added.
 
-A strategy belongs to the session that created it.
+### 5.5 Backtest
 
-Generated composite strategies also have a `configuration_hash`. It is the
-SHA-256 hash of the canonical strategy JSON and prevents the same session from
-storing and backtesting the same generated configuration more than once.
+- `backtest_runs` — 1:1 with a candidate; tracks background backtest execution status so the frontend can show progress without holding an HTTP request open.
+- `trades` — simulated trades produced by a backtest run (side, entry/exit price and time, stop loss/take profit, P&L, exit reason).
+- `evaluations` — 1:1 with a backtest run; the MVP-required metrics (total return, win rate, max drawdown, number of trades) plus profit factor, Sharpe ratio, and an `overall_score` used for ranking.
 
----
+### 5.6 Leaderboard
 
-## 6. Experiment — `experiments`
+- `leaderboards` — 1:1 with an experiment (not with a user). Ranking only makes sense among candidates evaluated under the *same* conditions (timeframe, date range, weights), so each experiment gets its own leaderboard; changing the configuration creates a new experiment and therefore a new leaderboard.
+- `leaderboard_entries` — ranked candidates within a leaderboard, unique per `(leaderboard_id, candidate_id)` and per `(leaderboard_id, rank)`.
 
-An experiment represents one Search/Backtest run.
+### 5.7 News
 
-Example:
-
-```text
-Experiment #182
-────────────────────────
-session_id:       A
-timeframe:        5m
-start_time:       2026-01-01
-end_time:         2026-07-01
-search_algorithm: DOMAIN_GUIDED_RANDOM
-random_seed:      123456
-status:           COMPLETED
-```
-
-An experiment does **not** contain candle data.
-
-Instead, it stores the dataset specification that the Backtest Engine uses to retrieve candles from the shared TimescaleDB hypertable.
-
-### Search Engine
-
-The `search_algorithm` field records the implementation used by an experiment.
-`search_config` stores its parameter space and stop conditions, while
-`random_seed` makes random candidate generation reproducible.
-
-Possible future values could include:
-
-```text
-RANDOM
-GENETIC
-DOMAIN_GUIDED_RANDOM
-```
-
-`stop_reason` and `error_message` make completed, cancelled, and failed loops
-observable without relying only on application logs.
+`news` stores crawled articles plus sentiment analysis output (`sentiment`, `sentiment_score`), deduplicated by `url`. The original design left this to a separate NoSQL store; the current schema keeps it in PostgreSQL to avoid operating a second database for this project's scope.
 
 ---
 
-## 7. Experiment Strategies — `experiment_strategies`
+## 6. Business rules enforced at the application layer
 
-One experiment can test many candidate strategies.
+SQL alone can't conveniently express these, so the backend enforces them:
 
-For example:
-
-```text
-Experiment #182
-│
-├── MA20 + RSI14
-├── MA50 + RSI14
-├── MA20 + Bollinger
-└── MA20 + RSI14 + SupportResistance
-```
-
-`experiment_strategies` maps an experiment to the strategy candidates tested by that experiment.
-
-Conceptually:
-
-```text
-experiment
-    │
-    ├── candidate A
-    ├── candidate B
-    ├── candidate C
-    └── candidate D
-```
-
-Each candidate has its own execution status.
+1. `SUM(experiment_config_strategies.weight) = 1` within one config.
+2. `weight >= 0`.
+3. `end_time > start_time` in `experiment_configs`.
+4. `iteration_limit > 0`.
+5. `SYSTEM` strategies have no owner; `USER` / `AI_GENERATED` strategies require an authenticated owner.
+6. A `leaderboard_entries.candidate_id` must belong to the same experiment as its leaderboard (a cross-table invariant a single FK can't express).
+7. `strategies` rows are never updated in place — a change is a new `version` row.
+8. `POST /market-data/import`'s `interval` must be one of the `app_timeframe` values (`1m` / `5m` / `15m` / `1h` / `4h`) — validated in `MarketDataService` before hitting Binance or the DB.
 
 ---
 
-## 8. Trades — `trades`
-
-`trades` contains the simulated trades produced by a backtest candidate.
-
-A single candidate can generate many trades:
-
-```text
-Candidate
-   │
-   ├── Trade #1
-   ├── Trade #2
-   ├── Trade #3
-   └── ...
-```
-
-A trade can contain:
-
-- Side
-- Entry time
-- Entry price
-- Stop loss
-- Take profit
-- Exit time
-- Exit price
-- Quantity
-- Profit/Loss
-- Return
-- Exit reason
-
-Example:
-
-```text
-LONG
-
-Entry       = 108000
-Stop Loss   = 106000
-Take Profit = 112000
-Exit        = 112000
-
-Profit      = +4000
-```
-
-`stop_loss` and `take_profit` are nullable because not every strategy necessarily uses them.
-
-Possible exit reasons include:
-
-```text
-SIGNAL
-STOP_LOSS
-TAKE_PROFIT
-END_OF_BACKTEST
-```
-
----
-
-## 9. Evaluation — `evaluations`
-
-`evaluations` stores the evaluation result of one experiment candidate.
-
-The MVP metrics include:
-
-- Total Return
-- Profit/Loss
-- Win Rate
-- Max Drawdown
-- Number of Trades
-
-The schema also provides:
-
-- Profit Factor
-- Sharpe Ratio
-- Overall Score
-
-The `overall_score` is used as the primary value for ranking candidates.
-
-Relationship:
-
-```text
-experiment_strategy
-        │
-        └── evaluation
-```
-
-Each candidate has one evaluation result.
-
----
-
-## 10. Leaderboards
-
-Leaderboards are persisted in PostgreSQL instead of being calculated only at request time.
-
-The system has exactly one leaderboard per session.
-
-There is no concept of multiple personal leaderboards for the same session.
-
-The relationship is:
-
-```text
-Session A ─── Leaderboard A
-
-Session B ─── Leaderboard B
-
-Session C ─── Leaderboard C
-```
-
-This is enforced by:
-
-```text
-leaderboards.session_id UNIQUE
-```
-
-Therefore a session can have at most one leaderboard.
-
-The leaderboard is used to rank the strategies/results generated by that
-session.
-
-The schema contains:
-
-```text
-leaderboards
-leaderboard_entries
-```
-
-
-## 11. Leaderboard Entries
-
-`leaderboard_entries` stores the ranking of an evaluated experiment candidate.
-
-Example:
-
-```text
-Session A
-│
-└── Leaderboard A
-      │
-      ├── #1 MA20 + RSI14
-      ├── #2 MA50 + RSI14
-      └── #3 MA20 + Bollinger
-```
-
-It contains:
-
-```text
-leaderboard_id
-experiment_strategy_id
-rank
-score
-```
-The same experiment strategy can only appear once in a given leaderboard.
-
-Because every leaderboard belongs to exactly one session, the leaderboard
-effectively represents:
-
-```text
-session
-   │
-   └── leaderboard
-          │
-          └── strategies searched/backtested by that session
-```
-
-**Leaderboard Flow**
-When a user requests:
-
-```text
-GET /leaderboard
-Cookie: session_id=A
-```
-
-the backend can resolve:
-
-```text
-session A
-   │
-   ▼
-leaderboard A
-   │
-   ▼
-leaderboard_entries
-   │
-   ▼
-experiment_strategies
-   │
-   ▼
-evaluations
-```
-
-Only the strategies belonging to session A are returned.
-
-This prevents one user's personal leaderboard from exposing another user's
-session data.
-
-## 12. News Data
-
-News is intentionally **not included in this PostgreSQL/TimescaleDB schema**.
-
-The current architecture stores news in a NoSQL database.
-
-Conceptually:
-
-```text
-Crawler
-   │
-   ▼
-NoSQL
-   │
-   ▼
-Sentiment Analysis
-```
-
-PostgreSQL/TimescaleDB is responsible for the relational trading experiment data:
-
-```text
-Market Data
-Session
-Strategy
-Experiment
-Backtest
-Trade
-Evaluation
-Leaderboard
-```
-
----
-
-## 13. Complete Database Relationship
-
-```text
-                         ┌──────────────┐
-                         │   sessions   │
-                         └──────┬───────┘
-                                │
-                ┌───────────────┼────────────────┐
-                │               │                │
-                ▼               ▼                ▼
-          strategies       experiments      leaderboards
-                                │                │
-                                ▼                ▼
-                       experiment_strategies  leaderboard_entries
-                                │                │
-                         ┌──────┴──────┐         │
-                         ▼             ▼         │
-                       trades     evaluations ◄───┘
-
-
-                 SHARED MARKET DATA
-                        │
-                        ▼
-                     candles
-                        │
-                  TimescaleDB
-                   hypertable
-```
-
----
-
-## 14. Complete Backtest Flow
-
-The complete flow is:
-
-```text
-Session
-   │
-   ▼
-Experiment
-   │
-   ├── timeframe
-   ├── start_time
-   ├── end_time
-   └── search_engine
-          │
-          ▼
-   Search Engine
-          │
-          ▼
-   Candidate Strategies
-          │
-          ▼
-   TimescaleDB candles
-          │
-          │ Binance BTCUSDT
-          ▼
-    Backtest Engine
-          │
-          ▼
-    Trade Simulation
-          │
-          ▼
-        Trades
-          │
-          ▼
-      Evaluation
-          │
-          ▼
-      Leaderboard
-```
-
-The important architectural separation is:
-
-```text
-Shared Market Data
-        ≠
-User/Session Experiment Data
-```
-
-Historical BTCUSDT candles are stored once and reused by all sessions, while each session maintains its own experiments, strategies, backtest results, and personal leaderboards.
-
----
-
-## 15. Design Principles
-
-The schema follows these principles:
-
-### Shared market data is stored once
-
-```text
-Binance BTCUSDT candles
-        │
-        ├── Session A
-        ├── Session B
-        └── Session C
-```
-
-There is no per-session duplication of candle data.
-
-### Session data is isolated
-
-```text
-Session A
-    └── Experiments
-          └── Strategies
-                └── Trades
-                      └── Evaluation
-```
-
-Backend APIs use the `session_id` from the cookie to scope access to session-owned data.
-
-### Historical data is reproducible
-
-An experiment records:
-
-```text
-timeframe
-start_time
-end_time
-search_algorithm
-search_config
-random_seed
-strategy/version
-```
-
-so the system can determine which market dataset and strategy configuration were used.
-
-### Strategy versions are immutable
-
-Changing strategy parameters creates a new version instead of modifying an existing version used by an old experiment.
-
-### Leaderboards are persistent
-
-Leaderboards are stored explicitly because the system needs to support both personal and global ranking views.
-
-### Market scope is intentionally limited
-
-The current MVP does not create database abstractions for multiple exchanges or symbols because the project is currently restricted to:
-
-```text
-Binance
-BTCUSDT
-```
-
-If the project is expanded later, exchange/symbol abstraction can be introduced at the application and database levels when there is an actual requirement for it.
-
----
-
-## 16. Related Files
-
-The DBML schema corresponding to this README is maintained separately as:
-
-```text
-crypto_strategy_lab.dbml
-```
-
-The PostgreSQL/TimescaleDB migration should subsequently:
-
-1. Create the relational tables.
-2. Create the `candles` table.
-3. Convert `candles` into a TimescaleDB hypertable.
-4. Create required indexes and constraints.
-5. Create/update the required foreign keys.
+## 7. Related files
+
+- `database/design.dbml` — the DBML schema kept in sync with this README and with the actual migration SQL.
+- `database/migrations/003_candidate_auth_schema.sql` — the source of truth for the schema described here.
+- `artifacts/database.md` — a more detailed Vietnamese-language walkthrough of this same schema, including the full relationship diagram.
+- `docs/database/design.dbml` — the original target-schema design this migration was based on (kept for historical reference).

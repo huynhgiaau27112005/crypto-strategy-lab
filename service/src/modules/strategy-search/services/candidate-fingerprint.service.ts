@@ -1,9 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { CandidateDefinition } from '../domain/search.types';
+import { StrategyRegistry } from '../../strategy-plugin/strategy-registry';
 
 @Injectable()
 export class CandidateFingerprintService {
+  constructor(private readonly registry: StrategyRegistry) {}
+
   canonicalize(candidate: CandidateDefinition): CandidateDefinition {
     return {
       ...candidate,
@@ -27,16 +30,17 @@ export class CandidateFingerprintService {
   displayName(candidate: CandidateDefinition): string {
     return this.canonicalize(candidate)
       .members.map((member) => {
-        switch (member.type) {
-          case 'MA':
-            return `MA${member.parameters.fastPeriod}/${member.parameters.slowPeriod}`;
-          case 'RSI':
-            return `RSI${member.parameters.period}`;
-          case 'BOLLINGER':
-            return `BB${member.parameters.period}`;
-          case 'SUPPORT_RESISTANCE':
-            return `SR${member.parameters.lookback}`;
+        if (!this.registry.has(member.type)) {
+          return member.type;
         }
+        const plugin = this.registry.get(member.type);
+        const values = plugin.parameterSchema.map((spec) => {
+          const value = member.parameters[spec.key];
+          return value === undefined ? '?' : value;
+        });
+        return values.length
+          ? `${plugin.displayName} (${values.join('/')})`
+          : plugin.displayName;
       })
       .join(' + ');
   }

@@ -13,6 +13,7 @@ import { ContinuousLoopModule } from './modules/continuous-loop';
 import { NewsModule } from './modules/news';
 import { SentimentModule } from './modules/sentiment';
 import { DatabaseModule } from './database/database.module';
+import { AuthModule } from './modules/auth/auth.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { DatabaseModule } from './database/database.module';
     NewsModule,
     SentimentModule,
     DatabaseModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

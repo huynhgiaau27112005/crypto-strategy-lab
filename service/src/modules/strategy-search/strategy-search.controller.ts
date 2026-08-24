@@ -2,16 +2,16 @@ import {
   Body,
   Controller,
   Get,
-  Headers,
   HttpCode,
   HttpStatus,
   Param,
   Post,
   Query,
-  Res,
+  UseGuards,
 } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
-import type { Response } from 'express';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { CurrentUserPayload } from '../auth/decorators/current-user.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { StrategySearchService } from './strategy-search.service';
 import type { StartSearchRequest } from './domain/search.types';
 
@@ -24,65 +24,41 @@ export class StrategySearchController {
     return { status: 'ok', module: 'strategy-search' };
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post('experiments')
   @HttpCode(HttpStatus.ACCEPTED)
   async start(
     @Body() body: StartSearchRequest,
-    @Headers('cookie') cookie: string | undefined,
-    @Res({ passthrough: true }) response: Response,
+    @CurrentUser() user: CurrentUserPayload,
   ) {
-    const sessionId = this.resolveSession(cookie);
-    response.cookie('session_id', sessionId, {
-      httpOnly: true,
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-    });
-    const experiment = await this.strategySearchService.start(sessionId, body);
+    const experiment = await this.strategySearchService.start(user.id, body);
     return { experimentId: experiment.id, status: experiment.status };
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get('experiments/:id')
-  getStatus(
-    @Param('id') id: string,
-    @Headers('cookie') cookie: string | undefined,
-  ) {
-    return this.strategySearchService.getStatus(
-      id,
-      this.resolveSession(cookie),
-    );
+  getStatus(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.strategySearchService.getStatus(id, user.id);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get('experiments/:id/top')
   getTop(
     @Param('id') id: string,
     @Query('limit') limit: string | undefined,
-    @Headers('cookie') cookie: string | undefined,
+    @CurrentUser() user: CurrentUserPayload,
   ) {
     const parsedLimit = Number(limit ?? 10);
     return this.strategySearchService.getTop(
       id,
-      this.resolveSession(cookie),
+      user.id,
       Number.isFinite(parsedLimit) ? parsedLimit : 10,
     );
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post('experiments/:id/cancel')
-  cancel(
-    @Param('id') id: string,
-    @Headers('cookie') cookie: string | undefined,
-  ) {
-    return this.strategySearchService.cancel(id, this.resolveSession(cookie));
-  }
-
-  private resolveSession(cookie: string | undefined): string {
-    const match = cookie
-      ?.split(';')
-      .map((item) => item.trim())
-      .find((item) => item.startsWith('session_id='));
-    const sessionId = match?.slice('session_id='.length);
-    const uuidPattern =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    if (sessionId && uuidPattern.test(sessionId)) return sessionId;
-    return randomUUID();
+  cancel(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.strategySearchService.cancel(id, user.id);
   }
 }

@@ -31,9 +31,6 @@ describe('DomainGuidedRandomGenerator', () => {
       expect(
         domains.some((item) => item === 'MOMENTUM' || item === 'VOLATILITY'),
       ).toBe(true);
-      expect(
-        candidate.members.reduce((sum, item) => sum + item.weight, 0),
-      ).toBeCloseTo(1, 6);
       for (const item of candidate.members) {
         if (item.type === 'MA') {
           expect(item.parameters.fastPeriod).toBeLessThan(
@@ -46,6 +43,14 @@ describe('DomainGuidedRandomGenerator', () => {
           );
         }
       }
+    }
+  });
+
+  it('does not assign a weight on generated members (weight lives in experiment_config_strategies)', () => {
+    const random = createSeededRandom(42);
+    const candidate = generator.generate(random, DEFAULT_SEARCH_CONFIG);
+    for (const member of candidate.members) {
+      expect(member).not.toHaveProperty('weight');
     }
   });
 });

@@ -1,12 +1,26 @@
 import { CandleEntity } from '../../database/types';
 import { CompositeStrategyService } from '../composite-strategy/composite-strategy.service';
 import { StrategyEngineService } from '../strategy-engine/strategy-engine.service';
+import { StrategyRegistry } from '../strategy-plugin/strategy-registry';
+import { MaPlugin } from '../strategy-plugin/plugins/ma.plugin';
+import { RsiPlugin } from '../strategy-plugin/plugins/rsi.plugin';
+import { BollingerPlugin } from '../strategy-plugin/plugins/bollinger.plugin';
+import { SupportResistancePlugin } from '../strategy-plugin/plugins/support-resistance.plugin';
 import { CandidateDefinition } from '../strategy-search/domain/search.types';
 import { BacktestingService } from './backtesting.service';
 
+function makeRegistry(): StrategyRegistry {
+  const registry = new StrategyRegistry();
+  registry.register(new MaPlugin());
+  registry.register(new RsiPlugin());
+  registry.register(new BollingerPlugin());
+  registry.register(new SupportResistancePlugin());
+  return registry;
+}
+
 describe('BacktestingService', () => {
   const service = new BacktestingService(
-    new CompositeStrategyService(new StrategyEngineService()),
+    new CompositeStrategyService(new StrategyEngineService(makeRegistry())),
   );
 
   it('produces a finite evaluation and reproducible trades', () => {
@@ -24,19 +38,18 @@ describe('BacktestingService', () => {
           domain: 'MOMENTUM',
           pluginVersion: 1,
           parameters: { period: 14, buyThreshold: 35, sellThreshold: 65 },
-          weight: 0.5,
         },
         {
           type: 'SUPPORT_RESISTANCE',
           domain: 'STRUCTURE',
           pluginVersion: 1,
           parameters: { lookback: 20, proximityPercent: 1.5 },
-          weight: 0.5,
         },
       ],
     };
-    const first = service.run(candidate, candles);
-    const second = service.run(candidate, candles);
+    const weights = { RSI: 0.5, SUPPORT_RESISTANCE: 0.5 };
+    const first = service.run(candidate, candles, weights);
+    const second = service.run(candidate, candles, weights);
     expect(first).toEqual(second);
     expect(Number.isFinite(first.evaluation.totalReturn)).toBe(true);
     expect(Number.isFinite(first.evaluation.overallScore)).toBe(true);

@@ -21,11 +21,14 @@ try {
         FROM pg_tables
         WHERE schemaname = 'public'
           AND tablename IN (
-            'sessions',
+            'users',
             'candles',
             'strategies',
             'experiments',
-            'experiment_strategies',
+            'experiment_configs',
+            'experiment_iterations',
+            'candidates',
+            'backtest_runs',
             'trades',
             'evaluations',
             'leaderboards',
@@ -47,24 +50,16 @@ try {
         FROM candles;
     `);
 
-    const searchColumns = await client.query(`
-        SELECT table_name, column_name
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND (
-            (table_name = 'experiments' AND column_name IN (
-              'search_algorithm', 'search_config', 'random_seed',
-              'stop_reason', 'error_message'
-            ))
-            OR (table_name = 'strategies' AND column_name = 'configuration_hash')
-          )
-        ORDER BY table_name, column_name;
+    const userStrategyCount = await client.query(`
+        SELECT COUNT(*) AS count
+        FROM strategies
+        WHERE type = 'SYSTEM';
     `);
 
-    const expectedSearchColumns = 6;
-    if (searchColumns.rowCount !== expectedSearchColumns) {
+    const expectedUserStrategies = 4;
+    if (Number(userStrategyCount.rows[0].count) !== expectedUserStrategies) {
         throw new Error(
-            `Domain-guided search schema is incomplete: expected ${expectedSearchColumns} columns, found ${searchColumns.rowCount}.`
+            `System strategies incomplete: expected ${expectedUserStrategies}, found ${userStrategyCount.rows[0].count}.`
         );
     }
 
@@ -90,13 +85,11 @@ try {
         `Rows: ${candleCount.rows[0].count}`
     );
 
-    console.log('\n=== DOMAIN-GUIDED SEARCH COLUMNS ===');
+    console.log('\n=== SYSTEM STRATEGIES ===');
 
-    for (const row of searchColumns.rows) {
-        console.log(
-            `${row.table_name}.${row.column_name}`
-        );
-    }
+    console.log(
+        `Count: ${userStrategyCount.rows[0].count}`
+    );
 } catch (error) {
     console.error(error);
 
