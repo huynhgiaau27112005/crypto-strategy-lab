@@ -6,6 +6,9 @@ import { MarketDataController }
 import { MarketDataService }
   from './market-data.service';
 
+import { MarketDataGateway }
+  from './market-data.gateway';
+
 import { BinanceClient }
   from './clients/binance.client';
 
@@ -19,6 +22,7 @@ import { CandleRepository }
 
   providers: [
     MarketDataService,
+    MarketDataGateway,
     BinanceClient,
     CandleRepository,
   ],

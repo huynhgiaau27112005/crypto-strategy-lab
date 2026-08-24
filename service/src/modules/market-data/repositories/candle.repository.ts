@@ -104,4 +104,16 @@ export class CandleRepository {
             }
         });
     }
+
+    /** Row count per timeframe — used to report backfill progress and results. */
+    async countByTimeframe(): Promise<Record<string, number>> {
+        const result = await this.database.query<{ timeframe: string; count: string }>(
+            'SELECT timeframe, COUNT(*)::text AS count FROM candles GROUP BY timeframe',
+        );
+        const counts: Record<string, number> = {};
+        for (const row of result.rows) {
+            counts[row.timeframe] = Number(row.count);
+        }
+        return counts;
+    }
 }

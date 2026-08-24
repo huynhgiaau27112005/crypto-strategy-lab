@@ -10,7 +10,7 @@
 |---|---|---|
 | Auth | 4 endpoint | ✅ Hoạt động, đã smoke test thật |
 | Strategy Search | 5 endpoint + health | ✅ Hoạt động, đã smoke test full vòng |
-| Market Data | 2 endpoint | ⚠️ Hoạt động nhưng **chưa có auth**, chưa có realtime WebSocket |
+| Market Data | 2 endpoint + WebSocket `/market` | ⚠️ Hoạt động nhưng **chưa có auth** trên REST; WebSocket đã push realtime |
 | News | 1 endpoint + health | ✅ Hoạt động |
 | Sentiment | 1 endpoint + health | ✅ Hoạt động |
 | Chart / Continuous Loop / Leaderboard / Strategy Engine / Strategy Plugin / Composite / Backtesting | chỉ có `GET /<module>/health` | ❌ Stub, chưa có API thật |
@@ -317,6 +317,37 @@ Tải nến từ Binance và **ghi vào bảng `candles`**. Đây là cách nạ
 { "symbol": "BTCUSDT", "interval": "5m", "count": 500 }
 ```
 
+### WebSocket: push nến realtime — namespace `/market`
+
+Đáp ứng yêu cầu luồng #2 của đề bài: **frontend nhận nến mới qua push**, không polling `GET /market-data/candles`. Không cần auth (giống 2 endpoint REST ở trên — cùng nợ kỹ thuật #1 ở mục 7).
+
+Kết nối Socket.IO tới namespace `/market` (ví dụ `io("http://localhost:3000/market")`). CORS dùng chung `WEB_ORIGIN` như REST.
+
+Phạm vi cố định: chỉ **Binance / BTCUSDT**; `interval` chỉ nhận đúng 5 giá trị `1m`, `5m`, `15m`, `1h`, `4h` (cùng allow-list `assertAllowedInterval` dùng bởi `POST /market-data/import`, định nghĩa một chỗ duy nhất ở `market-data/config.ts`).
+
+**Client → Server**
+
+| Event | Payload | Ý nghĩa |
+|---|---|---|
+| `subscribe` | `{ "interval": "1m" \| "5m" \| "15m" \| "1h" \| "4h" }` | Tham gia room nhận nến của khung thời gian đó. |
+| `unsubscribe` | `{ "interval": "..." }` | Rời room; nếu là subscriber cuối cùng của interval đó, upstream stream Binance cho interval này bị đóng. |
+
+`interval` không hợp lệ (vd `"2h"`) → server emit `error`, **không** mở kết nối lên Binance, **không** join room.
+
+**Server → Client**
+
+| Event | Payload | Khi nào bắn |
+|---|---|---|
+| `candle` | `{ interval, timestamp, open, high, low, close, volume }` — cùng shape với phần tử mảng của `GET /market-data/candles` (`timestamp` là ISO 8601, các giá trị giá/khối lượng là chuỗi) | Chỉ khi nến của Binance đã **đóng** (kline `x: true` phía Binance — chi tiết wire-format này không lộ ra ngoài `binance.client.ts`). Chỉ gửi tới room `interval:<value>` tương ứng, không broadcast toàn namespace. |
+| `status` | `{ connected: boolean, interval: string, lastMessageAt: string \| null }` | Gửi cho client ngay khi `subscribe` thành công (snapshot trạng thái hiện tại), và bắn lại cho cả room mỗi khi upstream đổi trạng thái kết nối (mở/rớt/reconnect). `lastMessageAt` là thời điểm nhận message gần nhất từ Binance, dùng cho panel "Trạng thái kết nối" trên UI — không phải trạng thái lạc quan cố định `connected: true`. |
+| `error` | `{ message: string }` | `subscribe` với interval không hợp lệ. |
+
+**Cơ chế 1 stream upstream / interval, đếm tham chiếu theo room:** nhiều client cùng subscribe `5m` chỉ mở **một** kết nối WebSocket lên Binance (`wss://stream.binance.com:9443/ws/btcusdt@kline_5m`), dùng chung. Subscriber cuối cùng rời đi (`unsubscribe` hoặc disconnect) → đóng stream upstream ngay, tránh rò rỉ kết nối theo từng tab trình duyệt bị đóng không sạch.
+
+**Reconnect:** nếu kết nối lên Binance rớt, `BinanceClient.streamCandles` tự kết nối lại với backoff tăng dần theo cấp số nhân (bắt đầu 1s, tối đa 30s, reset về 1s khi kết nối lại thành công) — không gọi lại liên tục ("uncontrolled infinite loop" là anti-pattern bị cấm ở `docs/about-projects/03-anti-patterns-to-avoid.md`).
+
+**Ghi DB:** chỉ nến đã đóng mới được ghi qua `CandleRepository.insertCandles` (upsert theo khoá `(timeframe, timestamp)`) — nến đang hình thành (chưa đóng) không được ghi, tránh làm hỏng chuỗi lịch sử mà backtest đọc.
+
 ## 4. News & Sentiment
 
 **Cả 2 endpoint dưới đây yêu cầu `Authorization: Bearer <accessToken>`** (`JwtAuthGuard`), nhưng **không** giới hạn theo `user_id` — news là **dữ liệu dùng chung**, không thuộc sở hữu riêng của user nào, nên bất kỳ user đã đăng nhập nào cũng thấy toàn bộ news.
@@ -327,8 +358,10 @@ Bảng `news` (migration `003_candidate_auth_schema.sql`) chỉ có đúng các 
 |---|---|---|
 | `summary` | Cắt ngắn `content` (tối đa 240 ký tự, thêm `...`) | Bài viết gốc không có tóm tắt riêng trong DB |
 | `coin` | Hằng số `"BTC"` | Toàn bộ hệ thống chỉ giới hạn phạm vi Binance BTCUSDT — không có khái niệm coin theo từng bài viết, nên đây là hằng số hệ thống, không phải giá trị theo hàng |
-| `model` | Cấu hình (`SENTIMENT_MODEL_NAME`, mặc định `"FinBERT"` theo `artifacts/decisions.md`) | Model dùng để phân loại là **thuộc tính của pipeline hiện tại**, không lưu theo từng hàng — trả về như một fact cấu hình trong response tổng hợp, không lặp lại trên từng `NewsItem` |
+| `model` | Cấu hình (`SENTIMENT_MODEL_NAME`, mặc định `"FinBERT"` — chỉ là **nhãn hiển thị cấu hình**, xem ghi chú bên dưới) | Model dùng để phân loại là **thuộc tính của pipeline hiện tại**, không lưu theo từng hàng — trả về như một fact cấu hình trong response tổng hợp, không lặp lại trên từng `NewsItem` |
 | `confidence` | Cột `sentiment_score` (đổi tên) | Không cần suy luận gì thêm, chỉ là alias tên trường theo hợp đồng UI |
+
+> **Đính chính:** bản trước của tài liệu này ghi rằng `artifacts/decisions.md` "chốt" model sentiment là FinBERT — **sai**, người viết tài liệu này viết nhầm. `decisions.md` §3 nói ngược lại: **từ chối** phương án tự host/fine-tune FinBERT, và **để ngỏ** việc chọn model/API cụ thể ("cần chốt cụ thể model/API nào... khi bắt đầu code module này"). `"FinBERT"` ở đây chỉ là **giá trị mặc định của biến cấu hình** `SENTIMENT_MODEL_NAME` — một nhãn hiển thị do API báo cáo lại, không phải model sentiment thật đang chạy. Lựa chọn model/pipeline sentiment thật vẫn còn mở, theo đúng `decisions.md` §3.
 
 ### `GET /news?sentiment=POSITIVE\|NEUTRAL\|NEGATIVE&page=1&pageSize=20`
 
@@ -431,7 +464,7 @@ Dùng định dạng lỗi mặc định của NestJS:
 ## 7. Nợ kỹ thuật đã biết
 
 1. `market-data` chưa có auth guard.
-2. Chưa có WebSocket — realtime chart và push leaderboard theo yêu cầu đề bài chưa làm; hiện frontend phải poll `GET /experiments/:id`.
+2. WebSocket `/market` đã push nến realtime (xem mục 3). Push **leaderboard/experiment progress** thì chưa làm; frontend vẫn phải poll `GET /experiments/:id`.
 3. Một phần cấu hình search (`maxDurationSeconds`, `maxNoImprovement`, `topK`, `minimumTrades`) chỉ nằm trong bộ nhớ tiến trình; chỉ `maxCandidates` được lưu xuống DB (cột `experiment_configs.iteration_limit`). Nếu service restart giữa chừng, vòng lặp resume sẽ dùng giá trị mặc định cho các tham số còn lại.
 4. Chưa có validation pipe khai báo (dùng `class-validator`); hiện việc kiểm tra dữ liệu vào làm thủ công trong service (endpoint mới `news`/`sentiment` dùng `zod`, giống `auth`, thay vì `class-validator`).
 5. `SentimentModule` phụ thuộc `NewsRepository` (export từ `NewsModule`) thay vì có repository sentiment riêng — hợp lý vì cả hai đọc cùng bảng `news`, nhưng nghĩa là ranh giới module "Sentiment" hiện chỉ là ranh giới đọc/tổng hợp, không có bảng riêng của nó.

@@ -50,6 +50,17 @@ npm run start:dev
 
 API mặc định: `http://localhost:3000`
 
+### ⚠️ Bắt buộc: nạp dữ liệu nến lịch sử trước khi chạy search/backtest
+
+Database mới khởi tạo gần như **không có nến** — mọi strategy cần tối thiểu 20–50 nến lookback mới sinh tín hiệu đầu tiên, nên chạy search trên DB rỗng sẽ cho kết quả 0 trade, leaderboard trống. Chạy lệnh sau **một lần** sau khi database đã lên (xem mục Docker Compose ở trên) để nạp lịch sử BTCUSDT thật từ Binance cho cả 5 khung thời gian (`1m, 5m, 15m, 1h, 4h`):
+
+```bash
+cd service
+npm run seed:candles
+```
+
+An toàn chạy lại nhiều lần (idempotent — upsert theo khoá `(timeframe, timestamp)`, không tạo trùng dòng). In tiến độ theo từng khung thời gian và tổng số nến cuối cùng khi chạy xong.
+
 Health stub ví dụ:
 
 ```bash
