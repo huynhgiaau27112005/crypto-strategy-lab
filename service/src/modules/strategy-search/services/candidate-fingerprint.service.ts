@@ -29,7 +29,15 @@ export class CandidateFingerprintService {
 
   displayName(candidate: CandidateDefinition): string {
     return this.canonicalize(candidate)
-      .members.map((member) => this.registry.get(member.type).displayName)
+      .members.map((member) => {
+        const plugin = this.registry.get(member.type);
+        const values = plugin.parameterSchema
+          .map((spec) => member.parameters[spec.key])
+          .filter((value) => value !== undefined);
+        return values.length
+          ? `${plugin.displayName} (${values.join('/')})`
+          : plugin.displayName;
+      })
       .join(' + ');
   }
 
