@@ -9,7 +9,7 @@
 | Nhóm | Endpoint | Trạng thái |
 |---|---|---|
 | Auth | 4 endpoint | ✅ Hoạt động, đã smoke test thật |
-| Strategy Search | 4 endpoint + health | ✅ Hoạt động, đã smoke test full vòng |
+| Strategy Search | 5 endpoint + health | ✅ Hoạt động, đã smoke test full vòng |
 | Market Data | 2 endpoint | ⚠️ Hoạt động nhưng **chưa có auth**, chưa có realtime WebSocket |
 | Chart / News / Sentiment / Continuous Loop / Leaderboard / Strategy Engine / Strategy Plugin / Composite / Backtesting | chỉ có `GET /<module>/health` | ❌ Stub, chưa có API thật |
 
@@ -87,7 +87,7 @@ Mô hình: **JWT access token ngắn hạn + refresh token dài hạn**.
 
 ## 2. Strategy Search
 
-**Toàn bộ 4 endpoint dưới đây yêu cầu `Authorization: Bearer <accessToken>`.** Thiếu hoặc sai token → `401`.
+**Toàn bộ 5 endpoint dưới đây yêu cầu `Authorization: Bearer <accessToken>`.** Thiếu hoặc sai token → `401`.
 
 Mọi truy vấn đều **giới hạn theo chủ sở hữu**: user chỉ thấy được experiment của chính mình. Truy cập experiment của người khác trả `404` (không phải `403`) — cố ý không tiết lộ rằng experiment đó có tồn tại.
 
@@ -219,6 +219,60 @@ Dừng vòng lặp đang chạy.
 `cancelled: false` nghĩa là experiment đã ở trạng thái kết thúc (không còn gì để huỷ).
 
 **Lỗi:** `404` / `401` như trên.
+
+### `GET /strategy-search/candidates/:id?tradePage=1&tradePageSize=20`
+
+Chi tiết đầy đủ của **một candidate**: metrics đánh giá, danh sách strategy cấu thành (kèm `weight` lấy từ config của experiment sở hữu candidate đó, không phải từ candidate), và danh sách trade có phân trang. Đây là nguồn dữ liệu cho phần "02" của tab Backtest trên UI.
+
+`id` là uuid của candidate (bảng `candidates`), **không** phải experiment id.
+
+`tradePage` (mặc định `1`) và `tradePageSize` (mặc định `20`, **kẹp tối đa 200** để client không thể xin một trang không giới hạn) đều không bắt buộc; giá trị không phải số nguyên dương tự động rơi về mặc định.
+
+**Truy vấn giới hạn theo chủ sở hữu:** join `candidates → experiment_iterations → experiments` và ràng buộc `experiments.user_id = <user hiện tại>` ngay trong `WHERE`, nên không thể đọc candidate của user khác bằng cách đoán/copy uuid — trả `404` giống các endpoint khác trong module này.
+
+**Response `200`**
+```json
+{
+  "candidateId": "b41e...",
+  "experimentId": "3f2a...",
+  "iterationNumber": 12,
+  "members": [
+    { "type": "MA", "parameters": { "fastPeriod": 20, "slowPeriod": 50 }, "weight": 0.5 },
+    { "type": "RSI", "parameters": { "period": 14 }, "weight": 0.5 }
+  ],
+  "evaluation": {
+    "totalReturn": 18.24,
+    "profitLoss": 1824,
+    "winRate": 0.61,
+    "maxDrawdown": -6.1,
+    "numberOfTrades": 82,
+    "profitFactor": 1.94,
+    "sharpeRatio": 1.12,
+    "overallScore": 81.4
+  },
+  "trades": [
+    {
+      "id": "t1...",
+      "side": "LONG",
+      "entryTime": "2026-07-01T00:05:00.000Z",
+      "entryPrice": 65000,
+      "quantity": 0.1,
+      "stopLoss": null,
+      "takeProfit": null,
+      "exitTime": "2026-07-01T02:10:00.000Z",
+      "exitPrice": 65500,
+      "profitLoss": 50,
+      "returnPct": 0.77,
+      "exitReason": "SIGNAL"
+    }
+  ],
+  "tradeTotal": 82
+}
+```
+
+`members[].type` dùng đúng vocabulary `SearchStrategyType` (`MA` / `RSI` / `BOLLINGER` / `SUPPORT_RESISTANCE`). `evaluation` là `null` nếu candidate chưa có `backtest_runs`/`evaluations` (ví dụ candidate vừa tạo, chưa backtest xong). `trades` chỉ chứa trang hiện tại (sắp theo `entry_time ASC`); `tradeTotal` là tổng số trade thật của candidate đó, dùng để tính số trang ở frontend.
+
+**Lỗi:** `404` nếu candidate không tồn tại hoặc không thuộc experiment của user hiện tại; `401` nếu thiếu token.
 
 ### `GET /strategy-search/health`
 

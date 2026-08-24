@@ -18,7 +18,10 @@ import {
   defaultEqualWeights,
 } from './domain/search.types';
 import { DomainGuidedRandomGenerator } from './generators/domain-guided-random.generator';
-import { CandidateRepository } from './repositories/candidate.repository';
+import {
+  CandidateDetail,
+  CandidateRepository,
+} from './repositories/candidate.repository';
 import { ExperimentConfigRepository } from './repositories/experiment-config.repository';
 import { ExperimentIterationRepository } from './repositories/experiment-iteration.repository';
 import { ExperimentRepository } from './repositories/experiment.repository';
@@ -29,6 +32,9 @@ import { DatabaseService } from '../../database/database.service';
 
 @Injectable()
 export class StrategySearchService implements OnApplicationBootstrap {
+  private static readonly MAX_TRADE_PAGE_SIZE = 200;
+  private static readonly DEFAULT_TRADE_PAGE_SIZE = 20;
+
   private readonly logger = new Logger(StrategySearchService.name);
   private readonly activeRuns = new Set<string>();
   private readonly configCache = new Map<string, SearchConfig>();
@@ -130,6 +136,30 @@ export class StrategySearchService implements OnApplicationBootstrap {
     if (!experiment) throw new NotFoundException('Experiment not found.');
     const cancelled = await this.experiments.cancel(experimentId, userId);
     return { id: experimentId, cancelled };
+  }
+
+  async candidateDetail(
+    userId: string,
+    candidateId: string,
+    tradePage: number,
+    tradePageSize: number,
+  ): Promise<CandidateDetail> {
+    const page = Number.isInteger(tradePage) && tradePage > 0 ? tradePage : 1;
+    // Clamp to at most MAX_TRADE_PAGE_SIZE so a client cannot request an
+    // unbounded page; also fall back to the default on a non-numeric or
+    // zero/negative page size.
+    const pageSize =
+      Number.isInteger(tradePageSize) && tradePageSize > 0
+        ? Math.min(tradePageSize, StrategySearchService.MAX_TRADE_PAGE_SIZE)
+        : StrategySearchService.DEFAULT_TRADE_PAGE_SIZE;
+    const detail = await this.candidates.findDetail(
+      candidateId,
+      userId,
+      page,
+      pageSize,
+    );
+    if (!detail) throw new NotFoundException('Candidate not found.');
+    return detail;
   }
 
   private async loadConfig(experimentId: string): Promise<SearchConfig> {

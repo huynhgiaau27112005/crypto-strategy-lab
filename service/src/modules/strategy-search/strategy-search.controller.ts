@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Post,
   Query,
   UseGuards,
@@ -60,5 +61,21 @@ export class StrategySearchController {
   @Post('experiments/:id/cancel')
   cancel(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.strategySearchService.cancel(id, user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('candidates/:id')
+  candidateDetail(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('tradePage') tradePage: string | undefined,
+    @Query('tradePageSize') tradePageSize: string | undefined,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.strategySearchService.candidateDetail(
+      user.id,
+      id,
+      Number(tradePage ?? '1'),
+      Number(tradePageSize ?? '20'),
+    );
   }
 }
