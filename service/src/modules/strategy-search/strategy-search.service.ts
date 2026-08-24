@@ -80,6 +80,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
         config.enabledDomains.flatMap((domain) => this.typesForDomain(domain)),
       );
     this.assertWeightsSumToOne(weights);
+    this.assertWeightsCoverEnabledDomains(weights, config.enabledDomains);
     const strategyWeights = weights.map((w) => {
       const strategy = byName.get(w.type);
       if (!strategy) {
@@ -238,10 +239,16 @@ export class StrategySearchService implements OnApplicationBootstrap {
             this.candidates.createForIteration(
               client,
               iteration.id,
-              candidateDefinition.members.map((member) => ({
-                strategyId: strategyIdByName.get(member.type)!,
-                parameters: member.parameters,
-              })),
+              candidateDefinition.members.map((member) => {
+                const strategyId = strategyIdByName.get(member.type);
+                if (!strategyId) {
+                  throw new Error(
+                    `No strategyId resolved for generated member type "${member.type}"; ` +
+                      'this indicates enabledDomains/weights validation in start() has a gap.',
+                  );
+                }
+                return { strategyId, parameters: member.parameters };
+              }),
             ),
           );
 
@@ -262,7 +269,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
           } else {
             noImprovement += 1;
           }
-          await this.leaderboard.rebuildForExperiment(experimentId, config.topK);
         } catch (error) {
           noImprovement += 1;
           await this.iterations.fail(iteration.id, this.errorMessage(error));
@@ -280,6 +286,21 @@ export class StrategySearchService implements OnApplicationBootstrap {
           );
         }
 
+        // Rebuild the leaderboard outside the backtest/persist try block: a
+        // rebuild failure (e.g. transient DB error) must not retroactively
+        // flip an already-COMPLETED backtest run / iteration to FAILED.
+        try {
+          await this.leaderboard.rebuildForExperiment(
+            experimentId,
+            config.topK,
+            config.minimumTrades,
+          );
+        } catch (error) {
+          this.logger.warn(
+            `Leaderboard rebuild failed for experiment ${experimentId}: ${this.errorMessage(error)}`,
+          );
+        }
+
         await new Promise<void>((resolve) => setImmediate(resolve));
       }
 
@@ -289,7 +310,9 @@ export class StrategySearchService implements OnApplicationBootstrap {
         await this.experiments.finish(experimentId, 'COMPLETED');
       }
     } catch (error) {
-      await this.experiments.finish(experimentId, 'FAILED');
+      if (!(await this.experiments.isCancelled(experimentId))) {
+        await this.experiments.finish(experimentId, 'FAILED');
+      }
       throw error;
     } finally {
       this.activeRuns.delete(experimentId);
@@ -316,6 +339,43 @@ export class StrategySearchService implements OnApplicationBootstrap {
     if (Math.abs(sum - 1) > 1e-4) {
       throw new BadRequestException(
         `strategyWeights must sum to 1 (got ${sum.toFixed(6)}).`,
+      );
+    }
+  }
+
+  // Guards against a weight set that does not exactly cover the enabled
+  // domains: a domain with no matching weight would leave a generated
+  // candidate member with no strategyId, and a weight for a type whose
+  // domain isn't enabled is silently useless. Either case previously
+  // produced an experiment that runs to COMPLETED with zero candidates.
+  private assertWeightsCoverEnabledDomains(
+    weights: StrategyWeight[],
+    enabledDomains: StrategyDomain[],
+  ): void {
+    const expectedTypes = new Set(
+      enabledDomains.flatMap((domain) => this.typesForDomain(domain)),
+    );
+    const givenTypes = new Set(weights.map((w) => w.type));
+
+    const missing = [...expectedTypes].filter((type) => !givenTypes.has(type));
+    const unexpected = [...givenTypes].filter(
+      (type) => !expectedTypes.has(type),
+    );
+
+    if (missing.length > 0 || unexpected.length > 0) {
+      const parts: string[] = [];
+      if (missing.length > 0) {
+        parts.push(
+          `enabled domains have no matching weight: ${missing.join(', ')}`,
+        );
+      }
+      if (unexpected.length > 0) {
+        parts.push(
+          `weights given for types whose domain is not enabled: ${unexpected.join(', ')}`,
+        );
+      }
+      throw new BadRequestException(
+        `strategyWeights must exactly cover enabledDomains (${parts.join('; ')}).`,
       );
     }
   }

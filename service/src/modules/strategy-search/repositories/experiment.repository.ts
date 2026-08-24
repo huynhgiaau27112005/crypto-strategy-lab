@@ -130,7 +130,7 @@ export class ExperimentRepository {
          COUNT(ei.id) FILTER (WHERE ei.status = 'RUNNING')::int AS running,
          MAX(ev.overall_score) AS best_score,
          -- Postgres has no MAX(uuid); ARRAY_AGG preserves the uuid type.
-         (ARRAY_AGG(c.id) FILTER (WHERE ei.status = 'RUNNING'))[1] AS current_candidate_id
+         (ARRAY_AGG(c.id) FILTER (WHERE ei.status = 'RUNNING' AND c.id IS NOT NULL))[1] AS current_candidate_id
        FROM experiments e
        LEFT JOIN experiment_iterations ei ON ei.experiment_id = e.id
        LEFT JOIN candidates c ON c.iteration_id = ei.id

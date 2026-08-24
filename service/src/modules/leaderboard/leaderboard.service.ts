@@ -8,6 +8,7 @@ export class LeaderboardService {
   async rebuildForExperiment(
     experimentId: string,
     topK: number,
+    minimumTrades: number,
   ): Promise<void> {
     await this.database.withTransaction(async (client) => {
       const leaderboard = await client.query<{ id: string }>(
@@ -31,11 +32,11 @@ export class LeaderboardService {
            JOIN candidates c ON c.iteration_id = ei.id
            JOIN backtest_runs br ON br.candidate_id = c.id AND br.status = 'COMPLETED'
            JOIN evaluations ev ON ev.backtest_run_id = br.id
-           WHERE ei.experiment_id = $2
+           WHERE ei.experiment_id = $2 AND ev.number_of_trades >= $4
            ORDER BY ev.overall_score DESC
            LIMIT $3
          ) ranked`,
-        [leaderboardId, experimentId, topK],
+        [leaderboardId, experimentId, topK, minimumTrades],
       );
     });
   }
