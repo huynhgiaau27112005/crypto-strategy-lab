@@ -166,3 +166,15 @@ export interface LeaderboardEntryEntity {
   score: string;
   created_at: Date;
 }
+
+export interface NewsEntity {
+  id: string;
+  title: string;
+  content: string | null;
+  source: string | null;
+  published_at: Date | null;
+  crawled_at: Date;
+  url: string | null;
+  sentiment: SentimentLabel | null;
+  sentiment_score: string | null;
+}

@@ -11,7 +11,9 @@
 | Auth | 4 endpoint | ✅ Hoạt động, đã smoke test thật |
 | Strategy Search | 5 endpoint + health | ✅ Hoạt động, đã smoke test full vòng |
 | Market Data | 2 endpoint | ⚠️ Hoạt động nhưng **chưa có auth**, chưa có realtime WebSocket |
-| Chart / News / Sentiment / Continuous Loop / Leaderboard / Strategy Engine / Strategy Plugin / Composite / Backtesting | chỉ có `GET /<module>/health` | ❌ Stub, chưa có API thật |
+| News | 1 endpoint + health | ✅ Hoạt động |
+| Sentiment | 1 endpoint + health | ✅ Hoạt động |
+| Chart / Continuous Loop / Leaderboard / Strategy Engine / Strategy Plugin / Composite / Backtesting | chỉ có `GET /<module>/health` | ❌ Stub, chưa có API thật |
 
 ## 1. Xác thực
 
@@ -315,15 +317,96 @@ Tải nến từ Binance và **ghi vào bảng `candles`**. Đây là cách nạ
 { "symbol": "BTCUSDT", "interval": "5m", "count": 500 }
 ```
 
-## 4. Endpoint health (chưa có logic thật)
+## 4. News & Sentiment
+
+**Cả 2 endpoint dưới đây yêu cầu `Authorization: Bearer <accessToken>`** (`JwtAuthGuard`), nhưng **không** giới hạn theo `user_id` — news là **dữ liệu dùng chung**, không thuộc sở hữu riêng của user nào, nên bất kỳ user đã đăng nhập nào cũng thấy toàn bộ news.
+
+Bảng `news` (migration `003_candidate_auth_schema.sql`) chỉ có đúng các cột: `id, title, content, source, published_at, crawled_at, url, sentiment, sentiment_score` (`sentiment` là enum `sentiment_label`: `POSITIVE` / `NEUTRAL` / `NEGATIVE`). UI cần thêm `summary`, `coin`, `model`, `confidence` — **4 trường này không phải cột DB, không thêm migration cho chúng** (đổi schema sẽ ảnh hưởng mọi nhánh khác của đồng đội đang chạy song song). Chúng được **suy ra** ở tầng service:
+
+| Trường UI cần | Suy ra từ | Vì sao không phải cột |
+|---|---|---|
+| `summary` | Cắt ngắn `content` (tối đa 240 ký tự, thêm `...`) | Bài viết gốc không có tóm tắt riêng trong DB |
+| `coin` | Hằng số `"BTC"` | Toàn bộ hệ thống chỉ giới hạn phạm vi Binance BTCUSDT — không có khái niệm coin theo từng bài viết, nên đây là hằng số hệ thống, không phải giá trị theo hàng |
+| `model` | Cấu hình (`SENTIMENT_MODEL_NAME`, mặc định `"FinBERT"` theo `artifacts/decisions.md`) | Model dùng để phân loại là **thuộc tính của pipeline hiện tại**, không lưu theo từng hàng — trả về như một fact cấu hình trong response tổng hợp, không lặp lại trên từng `NewsItem` |
+| `confidence` | Cột `sentiment_score` (đổi tên) | Không cần suy luận gì thêm, chỉ là alias tên trường theo hợp đồng UI |
+
+### `GET /news?sentiment=POSITIVE\|NEUTRAL\|NEGATIVE&page=1&pageSize=20`
+
+Danh sách bài báo đã crawl, mới nhất trước (`published_at DESC NULLS LAST, crawled_at DESC`).
+
+Tất cả tham số đều **không bắt buộc**:
+- `sentiment` — lọc theo nhãn. Nếu bỏ trống, câu SQL **không có mệnh đề `WHERE sentiment = ...`** (chứ không phải so sánh với `NULL`, việc đó sẽ âm thầm trả về 0 dòng). Giá trị không thuộc 3 nhãn hợp lệ bị từ chối `400` ngay ở tầng validate (`zod`), không truyền xuống SQL.
+- `page` — mặc định `1`. Giá trị không phải số nguyên dương (`0`, âm, hoặc không phải số) bị từ chối `400`.
+- `pageSize` — mặc định `20`, **kẹp tối đa 100** (không reject, chỉ kẹp) để client không xin một trang không giới hạn.
+
+`LIMIT`/`OFFSET` được bind như tham số (`$n`), không nối chuỗi vào SQL.
+
+**Response `200`**
+```json
+{
+  "items": [
+    {
+      "id": "d2a4...",
+      "title": "Bitcoin breaks $65k as ETF inflows accelerate",
+      "summary": "Bitcoin climbed past $65,000 on Thursday as spot ETF inflows...",
+      "source": "CoinDesk",
+      "url": "https://example.com/article",
+      "publishedAt": "2026-08-24T08:00:00.000Z",
+      "sentiment": "POSITIVE",
+      "sentimentScore": 0.874521,
+      "coin": "BTC"
+    }
+  ],
+  "total": 137
+}
+```
+
+`total` luôn đến từ một câu `COUNT(*)` riêng trên cùng điều kiện lọc, **không** phải độ dài của `items` trả về (một trang chỉ có tối đa `pageSize` phần tử, `total` là tổng thật trên toàn bộ tập lọc).
+
+**Trường hợp DB rỗng (0 bài news)** — trạng thái bình thường của lần demo đầu tiên: trả `{ "items": [], "total": 0 }`, không lỗi.
+
+**Lỗi:** `400` nếu `sentiment`/`page`/`pageSize` không hợp lệ; `401` nếu thiếu/sai token.
+
+### `GET /sentiment/summary?hours=24`
+
+Tổng hợp sentiment trong `hours` giờ gần nhất (mặc định `24`, kẹp tối đa 1 năm, giá trị không hợp lệ bị từ chối `400`).
+
+Câu SQL nhóm theo `sentiment` (`GROUP BY sentiment`), giới hạn `published_at >= now() - make_interval(hours => $1::int)`, và loại các bài **chưa được phân tích** (`sentiment IS NULL`) — bài chưa qua sentiment worker không được tính là bất kỳ nhãn nào.
+
+**Phần trăm được tính ở tầng service, không phải SQL, không phải frontend** (đúng nguyên tắc "business logic không nằm ở frontend"). Khi `analyzed = 0` (DB rỗng hoặc không có bài nào trong khung giờ) — trạng thái bình thường của lần demo đầu — trả về **0 cho mọi trường tỷ lệ**, không chia cho 0 (tránh `NaN`/`Infinity` hiển thị vỡ giao diện).
+
+**Response `200`**
+```json
+{
+  "positive": 0.75,
+  "neutral": 0.125,
+  "negative": 0.125,
+  "analyzed": 8,
+  "averageConfidence": 0.8123,
+  "model": "FinBERT"
+}
+```
+
+| Trường | Ý nghĩa |
+|---|---|
+| `positive`/`neutral`/`negative` | Tỷ lệ (0–1) trong số bài **đã phân tích** (`analyzed`), tính bằng `count / analyzed` ở service |
+| `analyzed` | Tổng số bài có `sentiment IS NOT NULL` trong khung giờ — có thể `0` |
+| `averageConfidence` | Trung bình `sentiment_score`, tính theo trọng số (weighted mean) qua các nhóm nhãn; `0` khi `analyzed = 0` |
+| `model` | Fact cấu hình (`FinBERT`), không phải trường trên từng bài — xem bảng suy ra ở trên |
+
+**DB rỗng:** `{ "positive": 0, "neutral": 0, "negative": 0, "analyzed": 0, "averageConfidence": 0, "model": "FinBERT" }`.
+
+**Lỗi:** `400` nếu `hours` không hợp lệ; `401` nếu thiếu/sai token.
+
+## 5. Endpoint health (chưa có logic thật)
 
 Các module sau hiện chỉ có `GET /<module>/health` trả `{ "status": "ok", "module": "<tên>" }`:
 
-`chart`, `strategy-engine`, `strategy-plugin`, `composite-strategy`, `backtesting`, `leaderboard`, `continuous-loop`, `news`, `sentiment`
+`chart`, `strategy-engine`, `strategy-plugin`, `composite-strategy`, `backtesting`, `leaderboard`, `continuous-loop`
 
-Lưu ý: `strategy-engine`, `composite-strategy`, `backtesting`, `leaderboard` **có logic thật** nhưng chỉ được gọi nội bộ qua DI từ `strategy-search` — chúng chưa expose API riêng ra ngoài. Còn `chart`, `continuous-loop`, `news`, `sentiment` thì rỗng hoàn toàn.
+Lưu ý: `strategy-engine`, `composite-strategy`, `backtesting`, `leaderboard` **có logic thật** nhưng chỉ được gọi nội bộ qua DI từ `strategy-search` — chúng chưa expose API riêng ra ngoài. Còn `chart`, `continuous-loop` thì rỗng hoàn toàn. `news`/`sentiment` đã có API thật, xem mục 4.
 
-## 5. Quy ước lỗi
+## 6. Quy ước lỗi
 
 Dùng định dạng lỗi mặc định của NestJS:
 
@@ -345,9 +428,10 @@ Dùng định dạng lỗi mặc định của NestJS:
 
 **Vì sao dùng `404` thay vì `403` cho tài nguyên của người khác:** trả `403` sẽ xác nhận "experiment này có tồn tại, chỉ là bạn không được xem" — rò rỉ thông tin. `404` không tiết lộ gì.
 
-## 6. Nợ kỹ thuật đã biết
+## 7. Nợ kỹ thuật đã biết
 
 1. `market-data` chưa có auth guard.
 2. Chưa có WebSocket — realtime chart và push leaderboard theo yêu cầu đề bài chưa làm; hiện frontend phải poll `GET /experiments/:id`.
 3. Một phần cấu hình search (`maxDurationSeconds`, `maxNoImprovement`, `topK`, `minimumTrades`) chỉ nằm trong bộ nhớ tiến trình; chỉ `maxCandidates` được lưu xuống DB (cột `experiment_configs.iteration_limit`). Nếu service restart giữa chừng, vòng lặp resume sẽ dùng giá trị mặc định cho các tham số còn lại.
-4. Chưa có validation pipe khai báo (dùng `class-validator`); hiện việc kiểm tra dữ liệu vào làm thủ công trong service.
+4. Chưa có validation pipe khai báo (dùng `class-validator`); hiện việc kiểm tra dữ liệu vào làm thủ công trong service (endpoint mới `news`/`sentiment` dùng `zod`, giống `auth`, thay vì `class-validator`).
+5. `SentimentModule` phụ thuộc `NewsRepository` (export từ `NewsModule`) thay vì có repository sentiment riêng — hợp lý vì cả hai đọc cùng bảng `news`, nhưng nghĩa là ranh giới module "Sentiment" hiện chỉ là ranh giới đọc/tổng hợp, không có bảng riêng của nó.
