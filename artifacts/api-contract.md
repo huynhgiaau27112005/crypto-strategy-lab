@@ -128,8 +128,10 @@ Bắt đầu một lần chạy tìm kiếm. Chạy **bất đồng bộ**: tr�
 | `topK` | ❌ | 10 | số nguyên 1–100 |
 | `minimumTrades` | ❌ | 20 | số nguyên 0–10000 |
 | `enabledDomains` | ❌ | cả 4 | `TREND` / `MOMENTUM` / `VOLATILITY` / `STRUCTURE` |
-| `strategyWeights` | ❌ | chia đều | tổng phải **= 1** (sai số ≤ 1e-4) |
+| `strategyWeights` | ❌ | chia đều | mỗi trọng số là số hữu hạn, `>= 0`; không được **tất cả bằng 0** |
 
+> **Công thức điểm tổng hợp (`CompositeStrategyService.analyze`):** `Điểm tổng hợp = Σ (trọng số × tín hiệu) / Σ trọng số` — một **weighted average**, không phải weighted sum. Vì có chia cho tổng trọng số, **`strategyWeights` không bắt buộc phải tổng bằng 1** — công thức tự chuẩn hoá, điểm luôn nằm trong `[-1, 1]` với bất kỳ bộ trọng số dương nào (vd. `0.25/0.25/0.20/0.45`, tổng 1.15, vẫn hợp lệ). Mẫu số là tổng trọng số của **toàn bộ member có trọng số** (không chỉ member ra tín hiệu BUY/SELL) — một member HOLD vẫn tính vào mẫu số, đúng nghĩa "phiếu trắng" kéo điểm về gần 0. Nếu mẫu số bằng 0 (không có trọng số nào, hoặc tất cả bằng 0), service trả về `score = 0` và `signal = HOLD` thay vì `NaN` — nhưng trường hợp này bị chặn sớm hơn, ngay ở `POST /strategy-search/experiments` (xem lỗi `400` bên dưới), không để lọt xuống tầng tính điểm.
+>
 > **Ràng buộc coverage:** `strategyWeights` phải khớp **chính xác** với tập strategy type suy ra từ `enabledDomains` (TREND→MA, MOMENTUM→RSI, VOLATILITY→BOLLINGER, STRUCTURE→SUPPORT_RESISTANCE) — theo cả hai chiều: thiếu weight cho domain đã bật, hoặc thừa weight cho domain chưa bật, đều bị từ chối với `400`.
 
 **Response `202 Accepted`**
@@ -140,7 +142,7 @@ Bắt đầu một lần chạy tìm kiếm. Chạy **bất đồng bộ**: tr�
 **Lỗi**
 | Mã | Khi nào |
 |---|---|
-| `400` | `timeframe` không hỗ trợ; khoảng thời gian không hợp lệ; số nằm ngoài khoảng; `strategyWeights` không tổng bằng 1; `strategyWeights` không khớp chính xác với các type suy ra từ `enabledDomains` (thiếu hoặc thừa type, xem ghi chú coverage phía trên); strategy type không tồn tại; thiếu ít nhất 1 domain "định hướng" (TREND/STRUCTURE) và 1 domain "xác nhận" (MOMENTUM/VOLATILITY); **dữ liệu nến không đủ** |
+| `400` | `timeframe` không hỗ trợ; khoảng thời gian không hợp lệ; số nằm ngoài khoảng; `strategyWeights` có trọng số âm hoặc không phải số hữu hạn; `strategyWeights` tất cả bằng 0; `strategyWeights` không khớp chính xác với các type suy ra từ `enabledDomains` (thiếu hoặc thừa type, xem ghi chú coverage phía trên); strategy type không tồn tại; thiếu ít nhất 1 domain "định hướng" (TREND/STRUCTURE) và 1 domain "xác nhận" (MOMENTUM/VOLATILITY); **dữ liệu nến không đủ** |
 | `401` | Thiếu/sai token |
 
 **Về lỗi "không đủ nến"** — thông báo dạng `"Dataset has 0 candles; at least 202 are required."`. Số nến tối thiểu phụ thuộc domain được bật: TREND cần 202, STRUCTURE 102, VOLATILITY 31, MOMENTUM 23 (lấy giá trị lớn nhất trong các domain đã bật). Đây **không phải bug** — nghĩa là bảng `candles` chưa có đủ dữ liệu lịch sử cho khoảng thời gian yêu cầu, cần nạp dữ liệu trước (xem `POST /market-data/import`).
@@ -280,6 +282,32 @@ Chi tiết đầy đủ của **một candidate**: metrics đánh giá, danh sá
 ### `GET /strategy-search/health`
 
 Không cần auth. Trả `{ "status": "ok", "module": "strategy-search" }`.
+
+### `GET /strategy-plugin/strategies`
+
+Yêu cầu `Authorization: Bearer <accessToken>` (`JwtAuthGuard`). Trả danh mục strategy — nguồn dữ liệu cho bảng weighted-voting ở frontend (`StrategySelectionContext`) và cho việc dựng `strategyWeights` khi gọi `POST /strategy-search/experiments`. **Đây không còn là stub chỉ có health** — `StrategyPluginService.listCatalog()` trộn 2 nguồn: metadata tĩnh từ từng `StrategyPlugin` đã đăng ký trong `StrategyRegistry` (`MA`, `RSI`, `BOLLINGER`, `SUPPORT_RESISTANCE`) với `id`/`version` thật đọc từ bảng `strategies` qua `StrategyRepository.listSystemStrategies()`.
+
+**Response `200`**
+```json
+[
+  {
+    "type": "MA",
+    "domain": "TREND",
+    "displayName": "Moving Average Crossover",
+    "description": "Fast MA cắt lên Slow MA thì BUY, cắt xuống thì SELL.",
+    "parameterSchema": [
+      { "key": "fastPeriod", "label": "Fast period", "type": "int", "min": 10, "max": 50, "step": 1, "default": 10 },
+      { "key": "slowPeriod", "label": "Slow period", "type": "int", "min": 30, "max": 200, "step": 1, "default": 30 }
+    ],
+    "strategyId": "3f2a...-....",
+    "version": 1
+  }
+]
+```
+
+`strategyId`/`version` là `null` nếu plugin đã đăng ký trong registry nhưng chưa có row tương ứng trong bảng `strategies` (lệch dữ liệu giữa code và DB) — trường hợp này không bị chặn ở tầng API, frontend cần tự chịu `null`.
+
+**Lỗi:** `401` nếu thiếu/sai token.
 
 ## 3. Market Data
 
@@ -481,9 +509,9 @@ Câu SQL nhóm theo `sentiment` (`GROUP BY sentiment`), giới hạn `published_
 
 Các module sau hiện chỉ có `GET /<module>/health` trả `{ "status": "ok", "module": "<tên>" }`:
 
-`chart`, `strategy-plugin`, `composite-strategy`, `backtesting`, `leaderboard`, `continuous-loop`
+`chart`, `composite-strategy`, `backtesting`, `leaderboard`, `continuous-loop`
 
-Lưu ý: `composite-strategy`, `backtesting`, `leaderboard` **có logic thật** nhưng chỉ được gọi nội bộ qua DI từ `strategy-search` (và, từ mục 3b, từ `RealtimeSignalService`) — chúng chưa expose API riêng ra ngoài. Còn `chart`, `continuous-loop` thì rỗng hoàn toàn. `strategy-engine` **đã có API thật** (`GET /strategy-engine/signal`, xem mục 3b) bên cạnh `health`. `news`/`sentiment` đã có API thật, xem mục 4.
+Lưu ý: `composite-strategy`, `backtesting`, `leaderboard` **có logic thật** nhưng chỉ được gọi nội bộ qua DI từ `strategy-search` (và, từ mục 3b, từ `RealtimeSignalService`) — chúng chưa expose API riêng ra ngoài. Còn `chart`, `continuous-loop` thì rỗng hoàn toàn. `strategy-engine` **đã có API thật** (`GET /strategy-engine/signal`, xem mục 3b) bên cạnh `health`. `strategy-plugin` **đã có API thật** (`GET /strategy-plugin/strategies`, xem mục 2) bên cạnh `health`. `news`/`sentiment` đã có API thật, xem mục 4.
 
 ## 6. Quy ước lỗi
 

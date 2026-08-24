@@ -223,5 +223,85 @@ describe('StrategySearchService', () => {
       expect(mocks.experiments.create).not.toHaveBeenCalled();
       expect(mocks.experimentConfigs.createWithWeights).not.toHaveBeenCalled();
     });
+
+    it('accepts strategyWeights whose sum is not 1 — the composite formula normalizes them, so they no longer need to', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.create.mockResolvedValue({
+        id: 'exp-1',
+        user_id: 'user-1',
+        name: null,
+        status: 'PENDING',
+        started_at: null,
+        completed_at: null,
+        created_at: new Date(),
+      });
+      // start() fires the run loop in the background via setImmediate; give
+      // it just enough to resolve findByIdOrThrow so it exits cleanly on
+      // CANCELLED instead of logging an unrelated background error.
+      mocks.experiments.findByIdOrThrow.mockResolvedValue({
+        id: 'exp-1',
+        user_id: 'user-1',
+        name: null,
+        status: 'CANCELLED',
+        started_at: null,
+        completed_at: null,
+        created_at: new Date(),
+      });
+      const request: StartSearchRequest = {
+        ...baseRequest,
+        enabledDomains: ['TREND', 'MOMENTUM', 'VOLATILITY', 'STRUCTURE'],
+        // Sum = 1.15 — the exact case the owner reported being wrongly
+        // rejected.
+        strategyWeights: [
+          { type: 'MA', weight: 0.25 },
+          { type: 'RSI', weight: 0.25 },
+          { type: 'BOLLINGER', weight: 0.2 },
+          { type: 'SUPPORT_RESISTANCE', weight: 0.45 },
+        ],
+      };
+
+      await service.start('user-1', request);
+
+      expect(mocks.experiments.create).toHaveBeenCalled();
+      expect(mocks.experimentConfigs.createWithWeights).toHaveBeenCalled();
+    });
+
+    it('rejects a negative strategyWeight', async () => {
+      const { service, mocks } = buildService();
+      const request: StartSearchRequest = {
+        ...baseRequest,
+        enabledDomains: ['TREND', 'MOMENTUM', 'VOLATILITY', 'STRUCTURE'],
+        strategyWeights: [
+          { type: 'MA', weight: -0.5 },
+          { type: 'RSI', weight: 0.3 },
+          { type: 'BOLLINGER', weight: 0.4 },
+          { type: 'SUPPORT_RESISTANCE', weight: 0.4 },
+        ],
+      };
+
+      await expect(service.start('user-1', request)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mocks.experiments.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects strategyWeights that are all zero', async () => {
+      const { service, mocks } = buildService();
+      const request: StartSearchRequest = {
+        ...baseRequest,
+        enabledDomains: ['TREND', 'MOMENTUM', 'VOLATILITY', 'STRUCTURE'],
+        strategyWeights: [
+          { type: 'MA', weight: 0 },
+          { type: 'RSI', weight: 0 },
+          { type: 'BOLLINGER', weight: 0 },
+          { type: 'SUPPORT_RESISTANCE', weight: 0 },
+        ],
+      };
+
+      await expect(service.start('user-1', request)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mocks.experiments.create).not.toHaveBeenCalled();
+    });
   });
 });

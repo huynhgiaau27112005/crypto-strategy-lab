@@ -21,7 +21,6 @@ import type { SearchStrategyType, StrategyCatalogItem, StrategyWeight } from '..
  */
 const DIRECTIONAL_DOMAINS = new Set(['TREND', 'STRUCTURE'])
 const CONFIRMATION_DOMAINS = new Set(['MOMENTUM', 'VOLATILITY'])
-const WEIGHT_SUM_TOLERANCE = 1e-4
 
 export interface StrategyWeightValidation {
   valid: boolean
@@ -66,9 +65,23 @@ function computeValidation(
     return { valid: false, reasons: ['Chưa chọn strategy nào để đưa vào Search.'] }
   }
 
+  // Điểm tổng hợp = Σ (trọng số × tín hiệu) / Σ trọng số — backend chia cho
+  // tổng trọng số nên trọng số KHÔNG cần tổng bằng 1 (công thức tự chuẩn
+  // hoá). Ràng buộc còn thực sự cần: mỗi trọng số là số hữu hạn, không âm
+  // (âm sẽ đảo ngược tín hiệu của strategy đó — khái niệm không được hỗ
+  // trợ), và không được tất cả bằng 0 (mẫu số của công thức sẽ bằng 0).
+  const invalidWeights = strategyWeights.filter(
+    (w) => !Number.isFinite(w.weight) || w.weight < 0,
+  )
+  if (invalidWeights.length > 0) {
+    reasons.push(
+      `Trọng số phải là số không âm (không hợp lệ: ${invalidWeights.map((w) => w.type).join(', ')}).`,
+    )
+  }
+
   const sum = strategyWeights.reduce((total, w) => total + w.weight, 0)
-  if (Math.abs(sum - 1) > WEIGHT_SUM_TOLERANCE) {
-    reasons.push(`Tổng trọng số phải bằng 1 (hiện tại ${sum.toFixed(2)}).`)
+  if (sum === 0) {
+    reasons.push('Tổng trọng số không được bằng 0.')
   }
 
   const byType = new Map(strategies.map((s) => [s.type, s]))

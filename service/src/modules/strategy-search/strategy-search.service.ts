@@ -85,7 +85,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
       defaultEqualWeights(
         config.enabledDomains.flatMap((domain) => this.typesForDomain(domain)),
       );
-    this.assertWeightsSumToOne(weights);
+    this.assertWeightsValid(weights);
     this.assertWeightsCoverEnabledDomains(weights, config.enabledDomains);
     const strategyWeights = weights.map((w) => {
       const strategy = byName.get(w.type);
@@ -395,11 +395,30 @@ export class StrategySearchService implements OnApplicationBootstrap {
     return map[domain];
   }
 
-  private assertWeightsSumToOne(weights: StrategyWeight[]): void {
-    const sum = weights.reduce((total, item) => total + item.weight, 0);
-    if (Math.abs(sum - 1) > 1e-4) {
+  // CompositeStrategyService.analyze() divides the weighted sum by the sum
+  // of the weights (Điểm tổng hợp = Σ (trọng số × tín hiệu) / Σ trọng số),
+  // so the weights do NOT need to sum to 1 — the formula normalizes them
+  // itself. What must still hold, so the normalization stays well-defined:
+  // every weight is a finite number >= 0 (negative would invert a
+  // strategy's vote, which isn't a supported concept), and the weights
+  // aren't all zero (that makes the denominator 0 — reject it here with a
+  // clear message rather than let the composite service silently score 0).
+  private assertWeightsValid(weights: StrategyWeight[]): void {
+    const invalid = weights.filter(
+      (item) => !Number.isFinite(item.weight) || item.weight < 0,
+    );
+    if (invalid.length > 0) {
       throw new BadRequestException(
-        `strategyWeights must sum to 1 (got ${sum.toFixed(6)}).`,
+        `strategyWeights must be finite numbers >= 0 (invalid: ${invalid
+          .map((item) => `${item.type}=${item.weight}`)
+          .join(', ')}).`,
+      );
+    }
+
+    const sum = weights.reduce((total, item) => total + item.weight, 0);
+    if (sum === 0) {
+      throw new BadRequestException(
+        'strategyWeights must not all be zero (the composite score would have no denominator).',
       );
     }
   }

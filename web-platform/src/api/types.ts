@@ -159,11 +159,131 @@ export interface StrategyCatalogItem {
 
 /**
  * One entry of `POST /strategy-search/experiments`'s `strategyWeights`
- * field — artifacts/api-contract.md §2. The backend rejects a set whose
- * weights don't sum to 1 (tolerance 1e-4) or whose types don't exactly
- * cover the strategy types implied by the enabled domains.
+ * field — artifacts/api-contract.md §2. Weights do NOT need to sum to 1 —
+ * the composite score is a weighted average (divided by Σ weights), so any
+ * positive weight set is normalized automatically. The backend rejects a
+ * set with a negative or non-finite weight, all-zero weights, or whose
+ * types don't exactly cover the strategy types implied by the enabled
+ * domains.
  */
 export interface StrategyWeight {
   type: SearchStrategyType
   weight: number
+}
+
+/**
+ * The five states `experiments.status` can hold — artifacts/api-contract.md
+ * §2 (`GET /strategy-search/experiments/:id`). `useExperiment` polls while
+ * PENDING/RUNNING and stops on any of the other three.
+ */
+export type ExperimentStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+
+/**
+ * Body of `POST /strategy-search/experiments` — only the fields the
+ * approved Backtest config form actually collects (Coin is fixed
+ * BTCUSDT and not part of the request). `maxCandidates`,
+ * `maxDurationSeconds`, `maxNoImprovement`, `minimumTrades` have no field
+ * in the form, so they are always omitted and the backend's own defaults
+ * apply (artifacts/api-contract.md §2).
+ */
+export interface StartSearchRequest {
+  timeframe: MarketInterval
+  startTime: string
+  endTime: string
+  topK?: number
+  enabledDomains?: StrategyDomain[]
+  strategyWeights?: StrategyWeight[]
+}
+
+/** Response `202` of `POST /strategy-search/experiments`. */
+export interface StartSearchResponse {
+  experimentId: string
+  status: ExperimentStatus
+}
+
+/**
+ * `GET /strategy-search/experiments/:id` response — polled by
+ * `useExperiment`. Numeric-looking fields (`best_score`) arrive as strings
+ * (Postgres `numeric`), same convention as the rest of this module.
+ */
+export interface ExperimentStatusDto {
+  id: string
+  user_id: string
+  name: string | null
+  status: ExperimentStatus
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+  generated: number
+  completed: number
+  failed: number
+  running: number
+  best_score: string | null
+  current_candidate_id: string | null
+}
+
+/** One row of `GET /strategy-search/experiments/:id/top` — artifacts/api-contract.md §2. */
+export interface TopCandidateRow {
+  rank: number
+  candidate_id: string
+  total_return: string
+  profit_loss: string
+  win_rate: string
+  max_drawdown: string
+  number_of_trades: number
+  profit_factor: string | null
+  sharpe_ratio: string | null
+  overall_score: string
+}
+
+/** One member of `GET /strategy-search/candidates/:id`'s `members` array. */
+export interface CandidateMemberDto {
+  type: SearchStrategyType
+  parameters: Record<string, number>
+  weight: number
+}
+
+/** `GET /strategy-search/candidates/:id`'s `evaluation` — null until the candidate's backtest completes. */
+export interface CandidateEvaluationDto {
+  totalReturn: number
+  profitLoss: number
+  winRate: number
+  maxDrawdown: number
+  numberOfTrades: number
+  profitFactor: number
+  sharpeRatio: number
+  overallScore: number
+}
+
+export type TradeSide = 'LONG' | 'SHORT'
+export type TradeExitReason = 'SIGNAL' | 'STOP_LOSS' | 'TAKE_PROFIT' | 'END_OF_BACKTEST'
+
+/** One element of `GET /strategy-search/candidates/:id`'s paginated `trades` array. */
+export interface TradeDto {
+  id: string
+  side: TradeSide
+  entryTime: string
+  entryPrice: number
+  quantity: number
+  stopLoss: number | null
+  takeProfit: number | null
+  exitTime: string | null
+  exitPrice: number | null
+  profitLoss: number | null
+  returnPct: number | null
+  exitReason: TradeExitReason | null
+}
+
+/**
+ * `GET /strategy-search/candidates/:id?tradePage=&tradePageSize=` response —
+ * the data source for the Backtest tab's "02" candidate detail section.
+ */
+export interface CandidateDetailDto {
+  candidateId: string
+  experimentId: string
+  iterationNumber: number
+  members: CandidateMemberDto[]
+  evaluation: CandidateEvaluationDto | null
+  trades: TradeDto[]
+  tradeTotal: number
 }
