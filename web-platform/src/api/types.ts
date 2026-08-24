@@ -90,3 +90,28 @@ export interface MarketStatusEvent {
 export interface MarketErrorEvent {
   message: string
 }
+
+/** Normalized Strategy Engine output — see artifacts/api-contract.md §3 (GET /strategy-engine/signal). */
+export type StrategySignal = 'BUY' | 'SELL' | 'HOLD'
+
+/** One registered plugin's individual signal, part of GET /strategy-engine/signal's response. */
+export interface PerStrategySignal {
+  type: string
+  signal: StrategySignal
+}
+
+/**
+ * GET /strategy-engine/signal?interval=... response — the registered
+ * plugins run at their default parameters over the latest candle and
+ * combined via CompositeStrategyService. The only source of BUY/SELL/HOLD
+ * this app is allowed to render; never derive it from price direction
+ * client-side.
+ */
+export interface RealtimeSignalDto {
+  interval: string
+  signal: StrategySignal
+  perStrategy: PerStrategySignal[]
+  ma20: number | null
+  lastClose: number
+  changePct: number | null
+}

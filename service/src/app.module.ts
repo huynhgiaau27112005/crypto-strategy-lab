@@ -3,7 +3,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { MarketDataModule } from './modules/market-data';
 import { ChartModule } from './modules/chart';
-import { StrategyEngineModule } from './modules/strategy-engine';
+import { StrategyEngineModule, RealtimeSignalModule } from './modules/strategy-engine';
 import { StrategyPluginModule } from './modules/strategy-plugin';
 import { CompositeStrategyModule } from './modules/composite-strategy';
 import { StrategySearchModule } from './modules/strategy-search';
@@ -20,6 +20,7 @@ import { AuthModule } from './modules/auth/auth.module';
     MarketDataModule,
     ChartModule,
     StrategyEngineModule,
+    RealtimeSignalModule,
     StrategyPluginModule,
     CompositeStrategyModule,
     StrategySearchModule,

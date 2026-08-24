@@ -13,7 +13,8 @@
 | Market Data | 2 endpoint + WebSocket `/market` | ⚠️ Hoạt động nhưng **chưa có auth** trên REST; WebSocket đã push realtime |
 | News | 1 endpoint + health | ✅ Hoạt động |
 | Sentiment | 1 endpoint + health | ✅ Hoạt động |
-| Chart / Continuous Loop / Leaderboard / Strategy Engine / Strategy Plugin / Composite / Backtesting | chỉ có `GET /<module>/health` | ❌ Stub, chưa có API thật |
+| Strategy Engine | `GET /strategy-engine/signal` + health | ✅ Hoạt động — realtime signal, có auth |
+| Chart / Continuous Loop / Leaderboard / Strategy Plugin / Composite / Backtesting | chỉ có `GET /<module>/health` | ❌ Stub, chưa có API thật |
 
 ## 1. Xác thực
 
@@ -352,6 +353,47 @@ Phạm vi cố định: chỉ **Binance / BTCUSDT**; `interval` chỉ nhận đ�
 
 **Ghi DB:** chỉ nến đã đóng mới được ghi qua `CandleRepository.insertCandles` (upsert theo khoá `(timeframe, timestamp)`) — nến đang hình thành (chưa đóng) không được ghi, tránh làm hỏng chuỗi lịch sử mà backtest đọc.
 
+## 3b. Strategy Engine — Realtime Signal
+
+Fix cho anti-pattern "business logic ở frontend": trước đây `RealtimePage.tsx` tự suy ra badge `BUY`/`SELL` từ chiều tăng/giảm giá và tự tính MA(20) ngay trong component React — không đi qua Strategy Engine, không có strategy nào thực sự sinh ra tín hiệu đó. Endpoint dưới đây thay thế hoàn toàn logic đó bằng tín hiệu thật từ registry plugin.
+
+### `GET /strategy-engine/signal?interval=5m`
+
+Yêu cầu `Authorization: Bearer <accessToken>` (`JwtAuthGuard`).
+
+`interval` bắt buộc, validate qua **đúng một** allow-list dùng chung với market-data (`assertAllowedInterval`, `market-data/config.ts`) — không có allow-list thứ hai. Giá trị ngoài `1m`/`5m`/`15m`/`1h`/`4h` → `400 Bad Request`.
+
+**Cách tính (`RealtimeSignalService`, `service/src/modules/strategy-engine/realtime-signal.service.ts`):**
+1. Lấy tối đa 300 nến gần nhất (BTCUSDT, đã đóng) qua `MarketDataService.getCandles` — cùng đường REST candles đã dùng, không đọc DB riêng.
+2. Dựng 1 `CandidateDefinition` gồm **cả 4 plugin đang đăng ký** trong `StrategyRegistry` (`MA`, `RSI`, `BOLLINGER`, `SUPPORT_RESISTANCE`), mỗi plugin chạy ở **tham số mặc định** khai báo trong `parameterSchema` của chính nó — không có `if MA && RSI...` viết tay ở controller.
+3. Gọi `CompositeStrategyService.analyze(...)` (module `composite-strategy`, cùng service dùng cho search/backtest) với `combination.method = 'WEIGHTED_VOTE'`, `buyThreshold = 0.3`, `sellThreshold = -0.3` (cùng ngưỡng mặc định `DomainGuidedRandomGenerator` dùng khi sinh candidate cho Search — một định nghĩa duy nhất, không phát minh ngưỡng thứ hai) và trọng số chia đều 4 plugin (`defaultEqualWeights`).
+4. `ma20` tính server-side (SMA đóng trên nến gần nhất), `changePct` tính trên cùng cửa sổ 300 nến vừa lấy (`(lastClose − firstOpen) / firstOpen`).
+
+**Response `200`**
+```json
+{
+  "interval": "5m",
+  "signal": "HOLD",
+  "perStrategy": [
+    { "type": "MA", "signal": "HOLD" },
+    { "type": "RSI", "signal": "HOLD" },
+    { "type": "BOLLINGER", "signal": "HOLD" },
+    { "type": "SUPPORT_RESISTANCE", "signal": "SELL" }
+  ],
+  "ma20": 78878.823,
+  "lastClose": 79151.65,
+  "changePct": 1.946985838873539
+}
+```
+
+`signal` là kết quả `WEIGHTED_VOTE` cuối cùng (giống trường `perStrategy[].signal` của mỗi plugin) — **luôn là output thật của Strategy Engine**, không có đường nào trong service này suy ra `BUY`/`SELL` từ chiều giá. Bằng chứng bằng test: `realtime-signal.service.spec.ts` dựng một chuỗi nến giảm giá liên tục nhưng ép các plugin trả `BUY`, và assert `signal` trả về vẫn là `BUY` — chứng minh kết quả đến từ plugin, không phải từ xu hướng giá.
+
+Chưa có candle nào (thị trường/interval quá mới) → trả về placeholder trung lập, không đoán: `{ interval, signal: "HOLD", perStrategy: [], ma20: null, lastClose: 0, changePct: null }`.
+
+**Lỗi:** `400` nếu `interval` không hợp lệ; `401` nếu thiếu/sai token.
+
+**Frontend:** `web-platform/src/hooks/useStrategySignal.ts` — một instance/pane, fetch keyed theo `interval` riêng của pane đó (cùng kiểu isolation với `useMarketSocket`), abort request khi đổi interval/unmount. Badge hiển thị placeholder trung lập (`···` lúc đang tải, `—` khi lỗi) — không bao giờ mặc định `BUY`.
+
 ## 4. News & Sentiment
 
 **Cả 2 endpoint dưới đây yêu cầu `Authorization: Bearer <accessToken>`** (`JwtAuthGuard`), nhưng **không** giới hạn theo `user_id` — news là **dữ liệu dùng chung**, không thuộc sở hữu riêng của user nào, nên bất kỳ user đã đăng nhập nào cũng thấy toàn bộ news.
@@ -439,9 +481,9 @@ Câu SQL nhóm theo `sentiment` (`GROUP BY sentiment`), giới hạn `published_
 
 Các module sau hiện chỉ có `GET /<module>/health` trả `{ "status": "ok", "module": "<tên>" }`:
 
-`chart`, `strategy-engine`, `strategy-plugin`, `composite-strategy`, `backtesting`, `leaderboard`, `continuous-loop`
+`chart`, `strategy-plugin`, `composite-strategy`, `backtesting`, `leaderboard`, `continuous-loop`
 
-Lưu ý: `strategy-engine`, `composite-strategy`, `backtesting`, `leaderboard` **có logic thật** nhưng chỉ được gọi nội bộ qua DI từ `strategy-search` — chúng chưa expose API riêng ra ngoài. Còn `chart`, `continuous-loop` thì rỗng hoàn toàn. `news`/`sentiment` đã có API thật, xem mục 4.
+Lưu ý: `composite-strategy`, `backtesting`, `leaderboard` **có logic thật** nhưng chỉ được gọi nội bộ qua DI từ `strategy-search` (và, từ mục 3b, từ `RealtimeSignalService`) — chúng chưa expose API riêng ra ngoài. Còn `chart`, `continuous-loop` thì rỗng hoàn toàn. `strategy-engine` **đã có API thật** (`GET /strategy-engine/signal`, xem mục 3b) bên cạnh `health`. `news`/`sentiment` đã có API thật, xem mục 4.
 
 ## 6. Quy ước lỗi
 

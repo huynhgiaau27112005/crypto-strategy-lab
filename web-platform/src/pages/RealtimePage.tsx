@@ -2,11 +2,12 @@ import { useMemo, useState } from 'react'
 import BlueprintCorners from '../components/BlueprintCorners'
 import Chip from '../components/Chip'
 import Panel from '../components/Panel'
-import SignalBadge from '../components/SignalBadge'
+import SignalBadge, { type SignalKind } from '../components/SignalBadge'
 import DataTable, { type DataTableColumn } from '../components/DataTable'
 import CandleChart from '../components/CandleChart'
 import { useMarketSocket, type Candle } from '../hooks/useMarketSocket'
-import type { MarketInterval } from '../api/types'
+import { useStrategySignal } from '../hooks/useStrategySignal'
+import type { MarketInterval, StrategySignal } from '../api/types'
 
 const TF_ALL: MarketInterval[] = ['1m', '5m', '15m', '1h', '4h']
 const MAX_PANES = 4
@@ -22,11 +23,12 @@ function fmtQty(v: string | number, digits = 3): string {
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-GB', { hour12: false })
 }
-function computeLastSma(candles: Candle[], period: number): number | null {
-  if (candles.length < period) return null
-  const slice = candles.slice(candles.length - period)
-  const sum = slice.reduce((acc, c) => acc + Number(c.close), 0)
-  return sum / period
+
+/** BUY/SELL/HOLD -> badge color. Neutral (no color claim) while the signal hasn't loaded yet. */
+function signalKind(signal: StrategySignal | null): SignalKind {
+  if (signal === 'BUY') return 'up'
+  if (signal === 'SELL') return 'down'
+  return 'neutral'
 }
 
 interface Tick {
@@ -38,26 +40,29 @@ interface Tick {
 }
 
 /**
- * One chart pane, one hook instance. This is the isolation boundary
- * required flow #3 depends on: `useMarketSocket(interval)` owns its own
- * fetch + socket subscription keyed only by its own `interval` prop, so
- * swapping a *different* pane's timeframe never touches this instance —
- * no remount, no refetch, no shared array in the parent.
+ * One chart pane, two hook instances (candles + strategy signal), each
+ * keyed only by this pane's own `interval` prop. This is the isolation
+ * boundary required flow #3 depends on: swapping a *different* pane's
+ * timeframe never touches either hook instance here — no remount, no
+ * refetch, no shared array/state in the parent.
  */
 function ChartPane({ interval, paneCount }: { interval: MarketInterval; paneCount: number }) {
   const { candles, loading, error } = useMarketSocket(interval)
+  const { data: signal, loading: signalLoading, error: signalError } = useStrategySignal(interval)
 
   const last = candles[candles.length - 1]
-  const first = candles[0]
   const price = last ? fmtPrice(last.close) : '—'
-  const changePct =
-    last && first && Number(first.open) !== 0
-      ? ((Number(last.close) - Number(first.open)) / Number(first.open)) * 100
-      : null
+  // The endpoint's own changePct, computed server-side over the same
+  // window it ran the plugins on — never re-derived here.
+  const changePct = signal?.changePct ?? null
   const changeLabel = changePct == null ? '—' : `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`
-  const up = changePct == null ? true : changePct >= 0
-  const ma20 = computeLastSma(candles, 20)
+  const changeUp = changePct == null ? null : changePct >= 0
+  const ma20 = signal?.ma20 ?? null
   const volume = last ? fmtQty(last.volume, 0) : '—'
+
+  // Never default to BUY (or any signal) while loading/unavailable — a
+  // guessed fallback is the same bug in a quieter form.
+  const badgeLabel = signal ? signal.signal : signalLoading ? '···' : signalError ? '—' : '—'
 
   return (
     <div className="pane blueprint" data-hov="card">
@@ -66,8 +71,12 @@ function ChartPane({ interval, paneCount }: { interval: MarketInterval; paneCoun
         <div className="pane-title">BTCUSDT · {interval}</div>
         <div className="pane-flex" />
         <div className="pane-price mono">{price}</div>
-        <span className={`pane-change mono ${up ? 'text-up' : 'text-down'}`}>{changeLabel}</span>
-        <SignalBadge label={up ? 'BUY' : 'SELL'} kind={up ? 'up' : 'down'} />
+        <span
+          className={`pane-change mono ${changeUp == null ? '' : changeUp ? 'text-up' : 'text-down'}`}
+        >
+          {changeLabel}
+        </span>
+        <SignalBadge label={badgeLabel} kind={signalKind(signal?.signal ?? null)} />
       </div>
       <div className="pane-meta text-muted mono">
         MA(20) {ma20 == null ? '—' : fmtPrice(ma20)} · Volume {volume}
