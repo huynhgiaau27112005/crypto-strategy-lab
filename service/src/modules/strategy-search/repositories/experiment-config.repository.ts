@@ -49,6 +49,23 @@ export class ExperimentConfigRepository {
     return result.rows[0] ?? null;
   }
 
+  // Raises the persisted candidate cap so a resumed `run()` loop (see
+  // StrategySearchService.extend) has a new, higher target to run up to —
+  // persisted (not just the in-memory config cache) so the extra
+  // iterations survive a process restart mid-run, same as the original
+  // iteration_limit set at experiment creation.
+  async increaseIterationLimit(
+    experimentId: string,
+    additional: number,
+  ): Promise<number> {
+    const result = await this.database.query<{ iteration_limit: number }>(
+      `UPDATE experiment_configs SET iteration_limit = iteration_limit + $2
+       WHERE experiment_id = $1 RETURNING iteration_limit`,
+      [experimentId, additional],
+    );
+    return result.rows[0].iteration_limit;
+  }
+
   async weightsByExperimentId(
     experimentId: string,
   ): Promise<Array<{ strategy_id: string; name: string; weight: string }>> {

@@ -103,6 +103,26 @@ export class ExperimentRepository {
     return (result.rowCount ?? 0) > 0;
   }
 
+  // Reopens a finished experiment so `run()` can be scheduled again to
+  // append more iterations ("Chạy thêm N iteration"). The WHERE clause does
+  // double duty: `user_id = $2` keeps this ownership-scoped (a caller can't
+  // reopen another user's experiment), and `status = 'COMPLETED'` makes the
+  // transition atomic — two concurrent calls race on this single UPDATE, at
+  // most one can flip COMPLETED -> PENDING, so only one caller ever
+  // observes rowCount > 0 and gets to schedule a run. The other observes 0
+  // rows updated and must reject instead of scheduling a second loop.
+  // Only COMPLETED is reopenable on purpose: RUNNING/PENDING would race the
+  // in-flight run, and FAILED/CANCELLED ended abnormally and should be
+  // re-configured via "Đổi config & tạo lại" rather than silently resumed.
+  async reopen(experimentId: string, userId: string): Promise<boolean> {
+    const result = await this.database.query(
+      `UPDATE experiments SET status = 'PENDING', completed_at = NULL
+       WHERE id = $1 AND user_id = $2 AND status = 'COMPLETED'`,
+      [experimentId, userId],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   async candles(
     timeframe: string,
     startTime: Date,

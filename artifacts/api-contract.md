@@ -90,7 +90,7 @@ Mô hình: **JWT access token ngắn hạn + refresh token dài hạn**.
 
 ## 2. Strategy Search
 
-**Toàn bộ 5 endpoint dưới đây yêu cầu `Authorization: Bearer <accessToken>`.** Thiếu hoặc sai token → `401`.
+**Toàn bộ 6 endpoint dưới đây yêu cầu `Authorization: Bearer <accessToken>`.** Thiếu hoặc sai token → `401`.
 
 Mọi truy vấn đều **giới hạn theo chủ sở hữu**: user chỉ thấy được experiment của chính mình. Truy cập experiment của người khác trả `404` (không phải `403`) — cố ý không tiết lộ rằng experiment đó có tồn tại.
 
@@ -224,6 +224,40 @@ Dừng vòng lặp đang chạy.
 `cancelled: false` nghĩa là experiment đã ở trạng thái kết thúc (không còn gì để huỷ).
 
 **Lỗi:** `404` / `401` như trên.
+
+### `POST /strategy-search/experiments/:id/extend`
+
+"Chạy thêm N iteration" — nút **Chạy thêm 10 iteration** ở tab Leaderboard. Tiếp tục vòng lặp search của một experiment **đã `COMPLETED`**, tái sử dụng nguyên config đã lưu (`experiment_configs` + `experiment_config_strategies`: timeframe, khoảng ngày, weights, domains) — **không** tạo experiment mới, **không** dựng lại config, **không** xoá leaderboard hiện có. Đây là điểm khác biệt duy nhất với "Đổi config & tạo lại" (`POST /strategy-search/experiments`), vốn luôn tạo một experiment mới từ đầu.
+
+Chạy **bất đồng bộ** giống `POST /strategy-search/experiments`: trả về ngay `202`, vòng lặp search tiếp tục chạy nền bằng đúng `run()` đã dùng cho lần chạy gốc (không có vòng lặp thứ hai).
+
+**Request**
+```json
+{ "iterations": 10 }
+```
+
+| Trường | Bắt buộc | Mặc định | Ràng buộc |
+|---|---|---|---|
+| `iterations` | ❌ | 10 | số nguyên 1–50 |
+
+**Response `202 Accepted`**
+```json
+{ "id": "3f2a...", "status": "PENDING" }
+```
+
+**Cơ chế:**
+- **Trạng thái:** `COMPLETED` → `PENDING` (giống hệt trạng thái khởi tạo của `POST /strategy-search/experiments`) — `useExperiment` ở frontend không cần biết trạng thái mới nào cả, `PENDING`/`RUNNING` vẫn poll, và khi vòng lặp lại dừng, `run()` tự đưa về `COMPLETED`/`FAILED` như bình thường.
+- **Đánh số iteration:** tiếp tục đúng dãy hiện có (`MAX(iteration_number) + 1`) — không reset về 1, không đổi gì ở `ExperimentIterationRepository`.
+- **Đồng thời:** việc chuyển `COMPLETED → PENDING` là một `UPDATE ... WHERE status = 'COMPLETED'` nguyên tử, ràng buộc luôn cả `user_id`. Hai lần bấm liên tiếp: chỉ một request thắng race và lên lịch chạy, request còn lại nhận `409` — không có 2 vòng lặp cùng chạy trên 1 experiment.
+- **Leaderboard:** rebuild lại trên **toàn bộ** candidate của experiment (cũ + mới), không chỉ các candidate vừa sinh thêm.
+
+**Lỗi**
+| Mã | Khi nào |
+|---|---|
+| `400` | `iterations` không phải số nguyên trong khoảng 1–50 |
+| `404` | experiment không tồn tại hoặc không thuộc user hiện tại |
+| `409` | experiment chưa `COMPLETED` (đang `PENDING`/`RUNNING`, hoặc đã `FAILED`/`CANCELLED` — hai trạng thái sau không cho extend, phải chạy lại từ đầu qua "Đổi config & tạo lại") |
+| `401` | Thiếu/sai token |
 
 ### `GET /strategy-search/candidates/:id?tradePage=1&tradePageSize=20`
 

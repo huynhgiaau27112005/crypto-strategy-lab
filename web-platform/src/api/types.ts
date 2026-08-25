@@ -222,6 +222,23 @@ export interface ExperimentStatusDto {
   current_candidate_id: string | null
 }
 
+/**
+ * Body of `POST /strategy-search/experiments/:id/extend` — "Chạy thêm N
+ * iteration" on an existing COMPLETED experiment, reusing its persisted
+ * config. `iterations` defaults to 10 server-side (the Leaderboard tab's
+ * fixed "Chạy thêm 10 iteration" button never sends anything else),
+ * clamped 1-50 — artifacts/api-contract.md §2.
+ */
+export interface ExtendSearchRequest {
+  iterations?: number
+}
+
+/** Response `202` of `POST /strategy-search/experiments/:id/extend` — same shape as `StartSearchResponse`, status is always `PENDING`. */
+export interface ExtendSearchResponse {
+  id: string
+  status: ExperimentStatus
+}
+
 /** One row of `GET /strategy-search/experiments/:id/top` — artifacts/api-contract.md §2. */
 export interface TopCandidateRow {
   rank: number

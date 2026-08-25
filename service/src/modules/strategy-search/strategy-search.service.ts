@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -111,6 +112,56 @@ export class StrategySearchService implements OnApplicationBootstrap {
     this.configCache.set(experiment.id, config);
     this.schedule(experiment.id);
     return experiment;
+  }
+
+  // "Chạy thêm N iteration" (artifacts/api-contract.md §2). Deliberately
+  // reuses run()/loadConfig() end-to-end instead of a second search loop:
+  // - Ownership: `reopen()`'s WHERE binds both experimentId AND userId, so
+  //   a caller can never flip another user's experiment back to PENDING.
+  // - Concurrency: `reopen()` is a single atomic UPDATE guarded by
+  //   `status = 'COMPLETED'`. Two racing calls both run this UPDATE; at
+  //   most one affects a row (the other sees the row already flipped to
+  //   PENDING and updates 0 rows), so at most one caller ever gets to
+  //   schedule() a run — the second gets a 409 instead of a second loop
+  //   racing the first over the same iteration sequence.
+  // - Status: COMPLETED -> PENDING is the same state `start()` creates a
+  //   fresh experiment in, so the existing polling contract holds exactly
+  //   as-is (useExperiment keeps polling through PENDING/RUNNING, stops on
+  //   COMPLETED/FAILED/CANCELLED) with no new status value to teach the UI.
+  // - Iteration numbering: unchanged — ExperimentIterationRepository.createNext()
+  //   already continues MAX(iteration_number)+1 for the experiment, so
+  //   nothing here needs to compute or pass a starting offset.
+  // - Config reuse: only experiment_configs.iteration_limit is raised;
+  //   timeframe/window/weights/domains are read back by the existing
+  //   loadConfig()/findByExperimentId() path inside run(), never rebuilt.
+  async extend(experimentId: string, userId: string, iterations?: number) {
+    const boundedIterations = this.integerInRange(
+      iterations,
+      1,
+      50,
+      10,
+      'iterations',
+    );
+    const experiment = await this.experiments.findOwned(experimentId, userId);
+    if (!experiment) throw new NotFoundException('Experiment not found.');
+
+    const reopened = await this.experiments.reopen(experimentId, userId);
+    if (!reopened) {
+      throw new ConflictException(
+        'Experiment must be COMPLETED to extend it (it may already be running, or ended abnormally).',
+      );
+    }
+
+    await this.experimentConfigs.increaseIterationLimit(
+      experimentId,
+      boundedIterations,
+    );
+    // Force loadConfig() to re-read maxCandidates from the DB on the next
+    // run() invocation instead of serving a stale cached value.
+    this.configCache.delete(experimentId);
+
+    this.schedule(experimentId);
+    return { id: experimentId, status: 'PENDING' as const };
   }
 
   async getStatus(experimentId: string, userId: string) {
@@ -262,9 +313,13 @@ export class StrategySearchService implements OnApplicationBootstrap {
       let noImprovement = 0;
       let attempts = 0;
       const maximumAttempts = Math.max(config.maxCandidates * 100, 1000);
-      const deadline =
-        new Date(experiment.created_at).getTime() +
-        config.maxDurationSeconds * 1000;
+      // Deliberately relative to "now" (when this run() invocation starts),
+      // not experiment.created_at: for a fresh experiment the two are
+      // effectively the same instant, but for a resumed/extended run
+      // (see extend()) created_at is from the ORIGINAL experiment creation
+      // — potentially long past — which would make this deadline already
+      // expired and silently produce zero new iterations.
+      const deadline = Date.now() + config.maxDurationSeconds * 1000;
       let stopReason = 'MAX_CANDIDATES';
 
       while (generated < config.maxCandidates) {

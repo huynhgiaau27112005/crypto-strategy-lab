@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { apiFetch, ApiError } from '../api/client'
 import BlueprintCorners from '../components/BlueprintCorners'
 import SignalBadge, { type SignalKind } from '../components/SignalBadge'
 import { useExperiment } from '../hooks/useExperiment'
@@ -7,7 +8,10 @@ import { useStrategySignal } from '../hooks/useStrategySignal'
 import { useTopCandidates } from '../hooks/useTopCandidates'
 import { useExperimentContext } from '../state/ExperimentContext'
 import { useStrategySelection } from '../state/StrategySelectionContext'
-import type { StrategySignal } from '../api/types'
+import type { ExtendSearchResponse, StrategySignal } from '../api/types'
+
+/** Fixed count the "Chạy thêm 10 iteration" button always requests — matches the approved UI's fixed label. */
+const EXTEND_ITERATIONS = 10
 
 function fmtUsd(n: number): string {
   const sign = n >= 0 ? '+' : ''
@@ -37,11 +41,48 @@ function signalKind(signal: StrategySignal | null): SignalKind {
 export default function LeaderboardPage() {
   const navigate = useNavigate()
   const { strategies } = useStrategySelection()
-  const { experimentId, setBacktestCandidateId, lastConfig } = useExperimentContext()
+  const { experimentId, setBacktestCandidateId, lastConfig, setLastConfig } = useExperimentContext()
 
-  const { data: expStatus } = useExperiment(experimentId)
+  // Bumped after a successful POST .../extend to restart useExperiment's
+  // polling in place (see the hook's `resumeToken` doc) — the experiment
+  // flips COMPLETED -> PENDING without experimentId itself changing.
+  const [extendResumeToken, setExtendResumeToken] = useState(0)
+  const { data: expStatus } = useExperiment(experimentId, extendResumeToken)
   const topLimit = lastConfig?.topK ?? 10
   const { rows, details } = useTopCandidates(experimentId, topLimit, expStatus?.completed ?? 0)
+
+  const [extending, setExtending] = useState(false)
+  const [extendError, setExtendError] = useState<string | null>(null)
+  // True from the click through to the extended run reaching a terminal
+  // status again — covers both the in-flight POST and the background
+  // search loop it kicks off, so a second click can't fire a second
+  // request while the first extension is still running.
+  const isRunning = expStatus?.status === 'PENDING' || expStatus?.status === 'RUNNING'
+  const extendDisabled = !experimentId || extending || isRunning
+
+  async function handleExtend() {
+    if (!experimentId || extending || isRunning) return
+    setExtending(true)
+    setExtendError(null)
+    try {
+      await apiFetch<ExtendSearchResponse>(
+        `/strategy-search/experiments/${experimentId}/extend`,
+        { method: 'POST', body: JSON.stringify({ iterations: EXTEND_ITERATIONS }) },
+      )
+      setExtendResumeToken((n) => n + 1)
+      // Keep the "/ N iteration" progress display's denominator in sync
+      // with the backend's raised experiment_configs.iteration_limit —
+      // otherwise the progress bar clips at 100% and the counter reads
+      // e.g. "105 / 100" once the extension starts producing candidates.
+      if (lastConfig) {
+        setLastConfig({ ...lastConfig, maxCandidates: lastConfig.maxCandidates + EXTEND_ITERATIONS })
+      }
+    } catch (err) {
+      setExtendError(err instanceof ApiError ? err.message : 'Không chạy thêm được iteration.')
+    } finally {
+      setExtending(false)
+    }
+  }
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   useEffect(() => {
@@ -298,16 +339,30 @@ export default function LeaderboardPage() {
             type="button"
             className="btn btn-primary btn-block blueprint"
             style={{ height: 36, marginTop: 12 }}
-            disabled
-            title="Chạy thêm iteration cho một experiment đã có chưa có endpoint — nút này chưa hoạt động."
+            disabled={extendDisabled}
+            onClick={handleExtend}
+            title={
+              !experimentId
+                ? 'Chưa có experiment nào để chạy thêm iteration.'
+                : isRunning
+                  ? 'Đang chạy iteration, vui lòng đợi.'
+                  : `Chạy thêm ${EXTEND_ITERATIONS} iteration cho experiment hiện tại, dùng lại config đã lưu.`
+            }
           >
             <BlueprintCorners />
-            Chạy thêm 10 iteration
+            {extending || isRunning ? 'Đang chạy thêm iteration…' : `Chạy thêm ${EXTEND_ITERATIONS} iteration`}
           </button>
-          <p className="text-muted" style={{ fontSize: 11, margin: '8px 0 0', lineHeight: 1.5 }}>
-            Chạy thêm iteration cho một experiment đã có chưa có API trong phạm vi hiện tại — tạo một
-            lần chạy mới ở tab Backtest để search lại từ đầu.
-          </p>
+          {extendError ? (
+            <p className="text-down" style={{ fontSize: 11, margin: '8px 0 0', lineHeight: 1.5 }}>
+              {extendError}
+            </p>
+          ) : (
+            <p className="text-muted" style={{ fontSize: 11, margin: '8px 0 0', lineHeight: 1.5 }}>
+              Tiếp tục search trên experiment hiện tại, dùng lại đúng config đã lưu (timeframe, khoảng
+              ngày, trọng số) — candidate mới được cộng vào leaderboard hiện có, không tạo experiment
+              mới.
+            </p>
+          )}
         </div>
 
         <div className="config-panel blueprint">

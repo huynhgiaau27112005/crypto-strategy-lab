@@ -43,9 +43,11 @@ describe('StrategySearchService', () => {
       candles: jest.fn().mockResolvedValue(makeCandles(300)),
       status: jest.fn(),
       top: jest.fn(),
+      reopen: jest.fn().mockResolvedValue(true),
     };
     const experimentConfigs = {
       createWithWeights: jest.fn(),
+      increaseIterationLimit: jest.fn().mockResolvedValue(110),
       findByExperimentId: jest.fn().mockResolvedValue({
         id: 'config-1',
         experiment_id: 'exp-1',
@@ -302,6 +304,93 @@ describe('StrategySearchService', () => {
         BadRequestException,
       );
       expect(mocks.experiments.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('extend()', () => {
+    const ownedExperiment = {
+      id: 'exp-1',
+      user_id: 'user-1',
+      name: null,
+      status: 'COMPLETED',
+      started_at: new Date(),
+      completed_at: new Date(),
+      created_at: new Date(),
+    } as ExperimentEntity;
+
+    it('rejects extending an experiment that does not belong to the caller with 404, and never reopens it', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findOwned.mockResolvedValue(null);
+
+      await expect(
+        service.extend('exp-1', 'attacker', 10),
+      ).rejects.toMatchObject({ status: 404 });
+
+      // The scope-defeat regression this guards against: without the
+      // ownership check (or if reopen() dropped its userId binding), an
+      // attacker could extend and observe another user's experiment.
+      expect(mocks.experiments.reopen).not.toHaveBeenCalled();
+      expect(mocks.experimentConfigs.increaseIterationLimit).not.toHaveBeenCalled();
+    });
+
+    it('rejects with 409 and does not touch config when the experiment is not COMPLETED (reopen() loses the race or the experiment is still running)', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findOwned.mockResolvedValue(ownedExperiment);
+      mocks.experiments.reopen.mockResolvedValue(false);
+
+      await expect(
+        service.extend('exp-1', 'user-1', 10),
+      ).rejects.toMatchObject({ status: 409 });
+
+      expect(mocks.experimentConfigs.increaseIterationLimit).not.toHaveBeenCalled();
+    });
+
+    it('rejects an iterations count above the bound without reopening the experiment', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findOwned.mockResolvedValue(ownedExperiment);
+
+      await expect(
+        service.extend('exp-1', 'user-1', 51),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(mocks.experiments.reopen).not.toHaveBeenCalled();
+    });
+
+    it('reopens the experiment, raises iteration_limit by the requested count, and (re)schedules the run', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findOwned.mockResolvedValue(ownedExperiment);
+      mocks.experiments.reopen.mockResolvedValue(true);
+      // Let the background run() exit quickly via CANCELLED so the test
+      // doesn't wait on a real search loop.
+      mocks.experiments.findByIdOrThrow.mockResolvedValue({
+        ...ownedExperiment,
+        status: 'CANCELLED',
+      });
+
+      const result = await service.extend('exp-1', 'user-1', 10);
+
+      expect(result).toEqual({ id: 'exp-1', status: 'PENDING' });
+      expect(mocks.experiments.reopen).toHaveBeenCalledWith('exp-1', 'user-1');
+      expect(mocks.experimentConfigs.increaseIterationLimit).toHaveBeenCalledWith(
+        'exp-1',
+        10,
+      );
+    });
+
+    it('defaults to 10 iterations when the caller omits the count', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findOwned.mockResolvedValue(ownedExperiment);
+      mocks.experiments.findByIdOrThrow.mockResolvedValue({
+        ...ownedExperiment,
+        status: 'CANCELLED',
+      });
+
+      await service.extend('exp-1', 'user-1', undefined);
+
+      expect(mocks.experimentConfigs.increaseIterationLimit).toHaveBeenCalledWith(
+        'exp-1',
+        10,
+      );
     });
   });
 });

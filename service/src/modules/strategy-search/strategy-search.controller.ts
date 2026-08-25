@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -13,6 +14,7 @@ import {
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { extendSearchSchema } from './dto/extend-search.dto';
 import { StrategySearchService } from './strategy-search.service';
 import type { StartSearchRequest } from './domain/search.types';
 
@@ -61,6 +63,29 @@ export class StrategySearchController {
   @Post('experiments/:id/cancel')
   cancel(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.strategySearchService.cancel(id, user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('experiments/:id/extend')
+  @HttpCode(HttpStatus.ACCEPTED)
+  extend(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    const result = extendSearchSchema.safeParse(body ?? {});
+    if (!result.success) {
+      throw new BadRequestException(
+        result.error.issues
+          .map((issue) => `${issue.path.join('.') || '(body)'}: ${issue.message}`)
+          .join('; '),
+      );
+    }
+    return this.strategySearchService.extend(
+      id,
+      user.id,
+      result.data.iterations,
+    );
   }
 
   @UseGuards(JwtAuthGuard)

@@ -31,8 +31,20 @@ const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED'])
  *
  * Unmounting (or `experimentId` changing/going null) cancels the in-flight
  * request and the pending timer — no poll survives its component.
+ *
+ * `resumeToken` is an opaque value the caller bumps to restart polling
+ * without changing `experimentId` — needed after `POST
+ * .../experiments/:id/extend` ("Chạy thêm N iteration"), which flips an
+ * already-COMPLETED experiment back to PENDING in place. Without this the
+ * hook would stay parked in its earlier `terminal` state forever, since its
+ * effect only re-runs when `experimentId` itself changes. Bumping it is
+ * still bounded by the same fixed interval / `MAX_POLL_ATTEMPTS` — this is
+ * not a second, unbounded polling path.
  */
-export function useExperiment(experimentId: string | null): UseExperimentResult {
+export function useExperiment(
+  experimentId: string | null,
+  resumeToken: number | string = 0,
+): UseExperimentResult {
   const [data, setData] = useState<ExperimentStatusDto | null>(null)
   const [state, setState] = useState<ExperimentPollState>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -88,7 +100,7 @@ export function useExperiment(experimentId: string | null): UseExperimentResult 
       controller.abort()
       if (timer) clearTimeout(timer)
     }
-  }, [experimentId])
+  }, [experimentId, resumeToken])
 
   return { data, state, error }
 }
