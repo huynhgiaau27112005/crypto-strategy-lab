@@ -48,8 +48,12 @@ export default function LeaderboardPage() {
   // flips COMPLETED -> PENDING without experimentId itself changing.
   const [extendResumeToken, setExtendResumeToken] = useState(0)
   const { data: expStatus } = useExperiment(experimentId, extendResumeToken)
-  const topLimit = lastConfig?.topK ?? 10
-  const { rows, details } = useTopCandidates(experimentId, topLimit, expStatus?.completed ?? 0)
+  // No explicit row-count control in this UI — let the server decide by
+  // omitting `limit` entirely, so it defaults to the experiment's own
+  // persisted `topK` (matches leaderboards.top_k / leaderboard_entries)
+  // instead of a client-side guess that goes stale across sessions/reloads
+  // (lastConfig is in-memory React state, not persisted).
+  const { rows, details } = useTopCandidates(experimentId, undefined, expStatus?.completed ?? 0)
 
   const [extending, setExtending] = useState(false)
   const [extendError, setExtendError] = useState<string | null>(null)

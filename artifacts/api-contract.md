@@ -195,7 +195,12 @@ Các trường này phục vụ đúng yêu cầu **observability** của đề 
 
 Bảng xếp hạng Top-K của lần chạy đó.
 
-`limit` không bắt buộc, mặc định 10, tự kẹp vào khoảng 1–100.
+`limit` không bắt buộc. Nếu **không** truyền, mặc định là `topK` đã lưu của chính experiment đó
+(`experiments.search_config.topK` — cùng giá trị worker dùng để rebuild `leaderboards.top_k` /
+`leaderboard_entries`), **không phải** một con số cố định — nhờ vậy response luôn khớp với
+leaderboard đã persist, kể cả khi gọi lại sau khi reload trang hoặc từ một phiên browser khác.
+Nếu có truyền `limit`, giá trị đó ghi đè lên (dùng cho phân trang thật) và vẫn tự kẹp vào
+khoảng 1–100.
 
 **Response `200`**
 ```json

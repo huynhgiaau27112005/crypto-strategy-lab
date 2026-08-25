@@ -246,11 +246,22 @@ export class StrategySearchService implements OnApplicationBootstrap {
   // `leaderboardVersionKey(experimentId)` after every rebuild, and reading
   // an unbumped (or Redis-down, defaulting to 0) version here just means a
   // cache miss, never stale data served past LEADERBOARD_TOP_CACHE_TTL_SECONDS.
-  async getTop(experimentId: string, userId: string, limit: number) {
+  //
+  // `limit` is genuinely optional (undefined, not the controller defaulting
+  // it) so this can tell "caller omitted it" from "caller asked for N" —
+  // when omitted, the experiment's own persisted `topK` (same value
+  // leaderboards.top_k / leaderboard_entries was rebuilt with — see
+  // config.topK in run()'s `this.leaderboard.rebuildForExperiment` call)
+  // is the default, so a fresh page load with no explicit choice sees
+  // exactly the persisted leaderboard, not a hard-coded row count that can
+  // disagree with it. An explicit `limit` still overrides (legitimate
+  // pagination) and is still clamped to [1, 100].
+  async getTop(experimentId: string, userId: string, limit?: number) {
     const experiment = await this.experiments.findOwned(experimentId, userId);
     if (!experiment) throw new NotFoundException('Experiment not found.');
     const config = await this.loadConfig(experimentId);
-    const clampedLimit = Math.min(100, Math.max(1, limit));
+    const effectiveLimit = limit ?? config.topK;
+    const clampedLimit = Math.min(100, Math.max(1, effectiveLimit));
 
     const version =
       (await this.cache.get<number>(leaderboardVersionKey(experimentId))) ?? 0;

@@ -21,13 +21,20 @@ export interface UseTopCandidatesResult {
  * the backend (artifacts/api-contract.md §2), so this fans out at most 100
  * requests, never more.
  *
+ * `limit` is optional — omit it to let the server decide (it defaults to
+ * the experiment's own persisted `topK`, the same value the leaderboard
+ * was rebuilt with, so what renders always matches `leaderboard_entries`
+ * for that experiment). Pass a number only when the caller has a genuine
+ * explicit choice of its own to make (real pagination), not as a guessed
+ * fallback.
+ *
  * `refreshToken` is an opaque value the caller bumps (e.g. the experiment's
  * `completed` iteration count) to intentionally refetch as a running search
  * produces more candidates — it is not otherwise used.
  */
 export function useTopCandidates(
   experimentId: string | null,
-  limit: number,
+  limit?: number,
   refreshToken: number | string = 0,
 ): UseTopCandidatesResult {
   const [rows, setRows] = useState<TopCandidateRow[]>([])
@@ -49,8 +56,9 @@ export function useTopCandidates(
     setLoading(true)
     setError(null)
 
+    const query = limit === undefined ? '' : `?limit=${limit}`
     apiFetch<TopCandidateRow[]>(
-      `/strategy-search/experiments/${experimentId}/top?limit=${limit}`,
+      `/strategy-search/experiments/${experimentId}/top${query}`,
       { signal: controller.signal },
     )
       .then(async (topRows) => {

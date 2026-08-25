@@ -567,5 +567,40 @@ describe('StrategySearchService', () => {
 
       expect(mocks.cache.get).toHaveBeenCalledWith('strategy-search:top:exp-1:user-1:v3');
     });
+
+    // Regression test for the API/worker leaderboard-size divergence: the
+    // worker persists leaderboards.top_k / leaderboard_entries using the
+    // experiment's own search_config.topK (see run()'s
+    // `this.leaderboard.rebuildForExperiment(experimentId, config.topK, ...)`
+    // call). getTop() must default to that SAME value when the caller omits
+    // `limit`, not a hard-coded row count — otherwise a fresh page load (no
+    // client-side lastConfig) disagrees with what was actually persisted.
+    it('defaults to the experiment persisted topK when limit is omitted, not a hard-coded default', async () => {
+      const { service, mocks } = buildService();
+      const experiment = {
+        id: 'exp-1',
+        user_id: 'user-1',
+        name: null,
+        status: 'COMPLETED',
+        started_at: new Date(),
+        completed_at: new Date(),
+        created_at: new Date(),
+        search_config: { maxDurationSeconds: 60, maxNoImprovement: 5, topK: 4, minimumTrades: 0 },
+      } satisfies ExperimentEntity;
+      mocks.experiments.findOwned.mockResolvedValue(experiment);
+      mocks.experiments.findByIdOrThrow.mockResolvedValue(experiment);
+      const fullList = Array.from({ length: 20 }, (_, i) => ({ rank: i + 1, candidate_id: `c${i}` }));
+      mocks.experiments.top.mockResolvedValue(fullList);
+      mocks.cache.get.mockResolvedValue(null); // both version and data lookups miss
+
+      const result = await service.getTop('exp-1', 'user-1', undefined);
+
+      // Cached fetch always pulls the full LEADERBOARD_TOP_CACHE_MAX_ENTRIES
+      // superset (see leaderboard-cache-keys.ts) — the assertion that
+      // matters is the RETURNED slice, which must be exactly topK=4 long,
+      // not the old hard-coded 10.
+      expect(result).toEqual(fullList.slice(0, 4));
+      expect(result).toHaveLength(4);
+    });
   });
 });

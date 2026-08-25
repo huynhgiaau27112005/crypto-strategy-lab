@@ -51,11 +51,19 @@ export class StrategySearchController {
     @Query('limit') limit: string | undefined,
     @CurrentUser() user: CurrentUserPayload,
   ) {
-    const parsedLimit = Number(limit ?? 10);
+    // Genuinely optional — do NOT default `limit` here. An omitted query
+    // param must reach the service as `undefined` so getTop() can tell
+    // "caller didn't ask" (-> default to the experiment's persisted topK)
+    // apart from "caller asked for a specific number" (explicit override).
+    // Defaulting it to 10 here (as before) is exactly the bug: it makes
+    // every unspecified request disagree with leaderboards.top_k.
+    const parsedLimit = limit === undefined ? undefined : Number(limit);
     return this.strategySearchService.getTop(
       id,
       user.id,
-      Number.isFinite(parsedLimit) ? parsedLimit : 10,
+      parsedLimit !== undefined && Number.isFinite(parsedLimit)
+        ? parsedLimit
+        : undefined,
     );
   }
 
