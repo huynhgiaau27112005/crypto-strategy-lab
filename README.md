@@ -6,9 +6,10 @@ Kiến trúc: **modular monolith** (NestJS) + **worker tách tiến trình** (Bu
 
 ---
 
-## ⚡ Chạy nhanh — 5 tiến trình
+## ⚡ Chạy nhanh
 
-Hệ thống cần **5 thứ chạy song song**. Thiếu worker thì search sẽ nằm `PENDING` mãi không chạy.
+Sau khi setup xong, hệ thống cần **4 tiến trình chạy song song**: Postgres, Redis, API, worker
+(+ dev server frontend). Thiếu worker thì search sẽ nằm `PENDING` mãi không chạy.
 
 ```bash
 # 1. Hạ tầng: Postgres (TimescaleDB) + Redis
@@ -16,9 +17,13 @@ docker compose up -d timescaledb redis
 ```
 
 ```bash
-# 2. Tạo file cấu hình (chỉ làm 1 lần)
+# 2. Tạo file cấu hình — CẢ HAI file, chỉ làm 1 lần
 cp service/.env.example service/.env
+cp database/.env.example database/.env
 ```
+
+> `database/` chạy migration bằng script riêng và đọc `.env` của chính nó — thiếu file này thì
+> `npm run db:migrate` báo lỗi kết nối.
 
 ```bash
 # 3. Migrate + seed 4 strategy hệ thống (chỉ làm 1 lần)
@@ -45,7 +50,9 @@ cd service && npm run start:worker:dev
 cd web-platform && npm install && npm run dev
 ```
 
-Mở URL Vite in ra terminal (thường `http://localhost:5173`).
+Mở URL Vite in ra terminal. Nếu cổng 5173 đã bị chiếm, Vite tự nhảy sang 5174 — **vẫn dùng bình
+thường**, vì frontend gọi backend qua proxy `/api` của Vite chứ không gọi chéo cổng, nên không
+vướng CORS.
 
 ### Kiểm tra mọi thứ đã lên
 
