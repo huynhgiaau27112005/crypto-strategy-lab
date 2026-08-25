@@ -343,6 +343,46 @@ Yêu cầu `Authorization: Bearer <accessToken>` (`JwtAuthGuard`). Trả danh m�
 
 **Lỗi:** `401` nếu thiếu/sai token.
 
+### `GET /strategy-plugin/strategies/:name/versions`
+
+Yêu cầu `Authorization: Bearer <accessToken>`. Trả **mọi version** của strategy `:name` (vd. `MA`) mà user hiện tại được phép xem: dòng SYSTEM dùng chung cho mọi user, cộng với các dòng USER do chính user này lưu — **không bao giờ trả về dòng USER của user khác** (`StrategyRepository.listVersions` lọc bằng `owner_user_id = $2` ngay trong WHERE, không lọc lại ở tầng service). Sắp theo `version ASC`.
+
+**Response `200`**
+```json
+[
+  { "strategyId": "0d14...", "name": "MA", "version": 1, "type": "SYSTEM", "parameters": {}, "isMine": false, "createdAt": "2026-08-23T17:06:44.145Z" },
+  { "strategyId": "e314...", "name": "MA", "version": 2, "type": "USER", "parameters": { "fastPeriod": 15, "slowPeriod": 40 }, "isMine": true, "createdAt": "2026-08-25T02:53:43.711Z" }
+]
+```
+
+**Lỗi:** `404` nếu `:name` không khớp plugin nào đã đăng ký trong `StrategyRegistry`; `401` nếu thiếu/sai token.
+
+### `POST /strategy-plugin/strategies/:name/versions`
+
+Yêu cầu `Authorization: Bearer <accessToken>`. **Lưu một version tham số mới cho strategy `:name` — luôn INSERT một row mới, không bao giờ UPDATE row đã tồn tại.** Đây là bất biến quan trọng nhất của endpoint này: một Experiment đã tham chiếu version cũ (qua `candidate_strategies.strategy_id`/`experiment_config_strategies.strategy_id`) tiếp tục tham chiếu đúng row cũ, kết quả đã backtest không bị thay đổi retroactively.
+
+Kể cả khi `:name` đang là strategy `SYSTEM`, row mới lưu ra luôn có `type = 'USER'` và `owner_user_id` = user hiện tại — danh mục SYSTEM dùng chung cho mọi user **không bao giờ bị sửa** bởi thao tác lưu version của một user.
+
+**Request**
+```json
+{ "parameters": { "fastPeriod": 15, "slowPeriod": 40 } }
+```
+
+Validate 2 lớp:
+- `zod` ở tầng controller: `parameters` phải là object, mọi value phải là số hữu hạn.
+- **`StrategyPluginService.validateParameters` (tầng service, authoritative — không tin client):** so khớp với `parameterSchema` thật của plugin đọc từ `StrategyRegistry` — từ chối key lạ (`unknown`), thiếu key (`missing`), sai kiểu (`int` mà không phải số nguyên), ngoài khoảng `[min, max]`, hoặc không phải bội số của `step` tính từ `min`.
+
+**Response `201`** — row vừa tạo, cùng shape với 1 phần tử của `GET .../versions`:
+```json
+{ "strategyId": "c2c2...", "name": "MA", "version": 3, "type": "USER", "parameters": { "fastPeriod": 10, "slowPeriod": 30 }, "isMine": true, "createdAt": "2026-08-25T02:55:10.000Z" }
+```
+
+**Concurrency:** version tiếp theo được tính bằng `MAX(version) + 1` tại thời điểm insert, trong 1 transaction. Nếu 2 request lưu đồng thời cùng tính ra cùng 1 số version, unique index `uk_strategies_name_version` sẽ chặn request thua ở lỗi Postgres `23505`; `StrategyRepository.createVersion` bắt lỗi này và **tự động retry** (tính lại `MAX(version)+1`, insert lại), tối đa 5 lần, thay vì để request thua thất bại.
+
+**Không nằm trong phạm vi endpoint này:** prototype UI mô tả "mỗi lần lưu tạo version mới, hệ thống sinh lại mọi tổ hợp có chứa strategy này thành version tổ hợp mới trong Leaderboard" — hành vi sinh lại tổ hợp Leaderboard **chưa được implement**. Lưu version tham số ở đây chỉ ảnh hưởng tới bảng `strategies`, không đụng tới `experiments`/`leaderboards` đã có.
+
+**Lỗi:** `400` nếu tham số sai kiểu/ngoài khoảng/thiếu/thừa key (theo `parameterSchema`); `404` nếu `:name` không khớp plugin nào đã đăng ký; `401` nếu thiếu/sai token.
+
 ## 3. Market Data
 
 > ⚠️ **Chưa có auth** — đây là nợ kỹ thuật đã biết, cần bổ sung `JwtAuthGuard` cho nhất quán với phần còn lại.

@@ -158,6 +158,30 @@ export interface StrategyCatalogItem {
 }
 
 /**
+ * One row of `GET /strategy-plugin/strategies/:name/versions` /
+ * `POST /strategy-plugin/strategies/:name/versions` — artifacts/api-contract.md
+ * §2. `isMine` is `false` only for the shared SYSTEM row(s); every USER row
+ * returned belongs to the caller (the backend never returns another user's
+ * USER-owned version). Saving always produces a `type: 'USER'` row, even
+ * when editing a SYSTEM strategy's parameters — the shared SYSTEM catalog
+ * is never mutated.
+ */
+export interface StrategyVersionSummary {
+  strategyId: string
+  name: string
+  version: number
+  type: 'SYSTEM' | 'USER' | 'AI_GENERATED'
+  parameters: Record<string, number>
+  isMine: boolean
+  createdAt: string
+}
+
+/** Body of `POST /strategy-plugin/strategies/:name/versions`. */
+export interface SaveStrategyVersionRequest {
+  parameters: Record<string, number>
+}
+
+/**
  * One entry of `POST /strategy-search/experiments`'s `strategyWeights`
  * field — artifacts/api-contract.md §2. Weights do NOT need to sum to 1 —
  * the composite score is a weighted average (divided by Σ weights), so any

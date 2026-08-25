@@ -1,21 +1,116 @@
+import { useEffect, useMemo, useState } from 'react'
 import BlueprintCorners from './BlueprintCorners'
 import Panel from './Panel'
-import type { StrategyCatalogItem } from '../api/types'
+import { useStrategyVersions } from '../hooks/useStrategyVersions'
+import type { ParameterSpec, StrategyCatalogItem, StrategyVersionSummary } from '../api/types'
 
-/**
- * Renders one plugin's `parameterSchema` (from `GET
- * /strategy-plugin/strategies`) as read-only fields — the schema's own
- * min/max/step/default, nothing computed here.
- *
- * The prototype's version controls (`Lưu tham số → tạo version mới`,
- * `Đang xem version cũ (chỉ đọc)`, `Dùng lại tham số version này`) have no
- * backing endpoint in this plan's scope: there is no version-history API,
- * only a single current `version` number per plugin. Wiring an editable
- * form with a save button that silently does nothing would be worse than
- * showing the defaults as inert — so every field and the save button are
- * rendered disabled, with an inline note explaining why.
- */
+function defaultValues(schema: ParameterSpec[]): Record<string, number> {
+  const values: Record<string, number> = {}
+  for (const p of schema) values[p.key] = p.default
+  return values
+}
+
+/** Client-side mirror of the backend's authoritative check (StrategyPluginService.validateParameters) — UX only, never trusted on its own. */
+function validate(schema: ParameterSpec[], values: Record<string, number>): Record<string, string> {
+  const errors: Record<string, string> = {}
+  for (const spec of schema) {
+    const value = values[spec.key]
+    if (value === undefined || Number.isNaN(value)) {
+      errors[spec.key] = 'Bắt buộc.'
+      continue
+    }
+    if (spec.type === 'int' && !Number.isInteger(value)) {
+      errors[spec.key] = 'Phải là số nguyên.'
+      continue
+    }
+    if (value < spec.min || value > spec.max) {
+      errors[spec.key] = `Phải trong khoảng ${spec.min}–${spec.max}.`
+      continue
+    }
+    if (spec.step > 0) {
+      const steps = (value - spec.min) / spec.step
+      if (Math.abs(steps - Math.round(steps)) > 1e-9) {
+        errors[spec.key] = `Phải là bội số của bước ${spec.step} tính từ ${spec.min}.`
+      }
+    }
+  }
+  return errors
+}
+
 export default function ParameterPanel({ strategy }: { strategy: StrategyCatalogItem | null }) {
+  const { versions, loading, error, saving, saveError, saveVersion } = useStrategyVersions(strategy?.type ?? null)
+
+  // The version currently shown in the picker — defaults to the latest
+  // (highest-version) row once versions load. `null` = nothing loaded yet /
+  // no persisted version, in which case the form falls back to plugin defaults.
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null)
+  const [formValues, setFormValues] = useState<Record<string, number>>({})
+  const [savedNotice, setSavedNotice] = useState<string | null>(null)
+
+  const latest = versions.length > 0 ? versions[versions.length - 1] : null
+  const selectedVersion = versions.find((v) => v.strategyId === selectedVersionId) ?? latest
+
+  // When the focused strategy changes (or its versions finish loading),
+  // reset to viewing+editing the latest version.
+  useEffect(() => {
+    setSavedNotice(null)
+    if (!strategy) {
+      setSelectedVersionId(null)
+      setFormValues({})
+      return
+    }
+    if (latest) {
+      setSelectedVersionId(latest.strategyId)
+      setFormValues(
+        Object.keys(latest.parameters).length > 0
+          ? { ...defaultValues(strategy.parameterSchema), ...latest.parameters }
+          : defaultValues(strategy.parameterSchema),
+      )
+    } else if (!loading) {
+      setSelectedVersionId(null)
+      setFormValues(defaultValues(strategy.parameterSchema))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategy?.type, latest?.strategyId, loading])
+
+  const isViewingOld = !!selectedVersion && selectedVersion.strategyId !== latest?.strategyId
+  const fieldErrors = useMemo(
+    () => (strategy ? validate(strategy.parameterSchema, formValues) : {}),
+    [strategy, formValues],
+  )
+  const hasErrors = Object.keys(fieldErrors).length > 0
+
+  function selectVersion(id: string) {
+    const v = versions.find((x) => x.strategyId === id)
+    if (!v || !strategy) return
+    setSelectedVersionId(id)
+    setSavedNotice(null)
+    if (v.strategyId === latest?.strategyId) {
+      // Selecting the latest version re-enters edit mode without discarding
+      // in-progress edits already sitting in the form.
+      return
+    }
+  }
+
+  function reuseVersion(v: StrategyVersionSummary) {
+    if (!strategy) return
+    setFormValues({ ...defaultValues(strategy.parameterSchema), ...v.parameters })
+    setSelectedVersionId(latest?.strategyId ?? null)
+    setSavedNotice(null)
+  }
+
+  async function handleSave() {
+    if (!strategy || hasErrors) return
+    setSavedNotice(null)
+    try {
+      const created = await saveVersion(formValues)
+      setSelectedVersionId(created.strategyId)
+      setSavedNotice(`Đã lưu version ${created.version}.`)
+    } catch {
+      // saveError from the hook already carries the message; nothing more to do here.
+    }
+  }
+
   if (!strategy) {
     return (
       <Panel className="parameter-panel">
@@ -27,22 +122,42 @@ export default function ParameterPanel({ strategy }: { strategy: StrategyCatalog
     )
   }
 
-  const versionLabel = strategy.version != null ? `Version ${strategy.version}` : 'Chưa có version lưu'
+  const displayValues = isViewingOld && selectedVersion ? selectedVersion.parameters : formValues
 
   return (
     <Panel className="parameter-panel">
       <div className="kicker">Tham số plugin</div>
       <h4 className="parameter-panel-title">{strategy.displayName}</h4>
       <div className="text-muted mono parameter-panel-meta">
-        {strategy.type} · {strategy.domain} · {versionLabel}
+        {strategy.type} · {strategy.domain}
+        {selectedVersion ? ` · v${selectedVersion.version}${selectedVersion.isMine ? '' : ' (hệ thống)'}` : ' · chưa có version'}
       </div>
 
       <div className="field" style={{ marginBottom: 12 }}>
         <label>Version tham số</label>
-        <select className="input" value={versionLabel} disabled title="Version tham số chưa có lịch sử — chỉ có giá trị mặc định hiện tại.">
-          <option>{versionLabel}</option>
+        <select
+          className="input"
+          value={selectedVersionId ?? ''}
+          disabled={loading || versions.length === 0}
+          onChange={(e) => selectVersion(e.target.value)}
+        >
+          {versions.length === 0 && <option value="">Chưa có version</option>}
+          {versions.map((v) => (
+            <option key={v.strategyId} value={v.strategyId}>
+              v{v.version}
+              {v.strategyId === latest?.strategyId ? ' (mới nhất)' : ''}
+              {v.type === 'SYSTEM' ? ' · hệ thống' : ''}
+            </option>
+          ))}
         </select>
+        {error && <span className="text-muted parameter-range">Lỗi tải version: {error}</span>}
       </div>
+
+      {isViewingOld && (
+        <p className="text-muted parameter-note" style={{ marginBottom: 8 }}>
+          Đang xem version cũ (chỉ đọc).
+        </p>
+      )}
 
       <div className="parameter-fields">
         {strategy.parameterSchema.map((p) => (
@@ -51,33 +166,51 @@ export default function ParameterPanel({ strategy }: { strategy: StrategyCatalog
             <input
               className="input"
               type="number"
-              value={p.default}
+              value={displayValues[p.key] ?? p.default}
               min={p.min}
               max={p.max}
               step={p.step}
-              disabled
-              readOnly
+              disabled={isViewingOld}
+              readOnly={isViewingOld}
+              onChange={(e) =>
+                setFormValues((prev) => ({ ...prev, [p.key]: e.target.value === '' ? NaN : Number(e.target.value) }))
+              }
             />
             <span className="text-muted parameter-range">
-              {p.min}–{p.max}, bước {p.step} (mặc định plugin)
+              {p.min}–{p.max}, bước {p.step}
+              {!isViewingOld && fieldErrors[p.key] ? ` — ${fieldErrors[p.key]}` : ''}
             </span>
           </div>
         ))}
       </div>
 
-      <button
-        type="button"
-        className="btn btn-primary btn-block blueprint"
-        style={{ height: 38, marginTop: 12 }}
-        disabled
-        title="Quản lý version tham số chưa được nối API — nút này chưa hoạt động."
-      >
-        <BlueprintCorners />
-        Lưu tham số → tạo version mới
-      </button>
+      {isViewingOld && selectedVersion ? (
+        <button
+          type="button"
+          className="btn btn-secondary btn-block"
+          style={{ height: 38, marginTop: 12 }}
+          onClick={() => reuseVersion(selectedVersion)}
+        >
+          Dùng lại tham số version này
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="btn btn-primary btn-block blueprint"
+          style={{ height: 38, marginTop: 12 }}
+          disabled={hasErrors || saving}
+          onClick={handleSave}
+        >
+          <BlueprintCorners />
+          {saving ? 'Đang lưu…' : 'Lưu tham số → tạo version mới'}
+        </button>
+      )}
+
+      {savedNotice && <p className="text-muted parameter-note">{savedNotice}</p>}
+      {saveError && <p className="text-muted parameter-note">Lỗi: {saveError}</p>}
       <p className="text-muted parameter-note">
-        Phiên bản tham số (lưu / xem lại theo version) chưa có API trong phạm vi hiện tại — các giá
-        trị trên đây luôn là mặc định của plugin, chưa thể chỉnh sửa.
+        Lưu tạo một version mới (không ghi đè version cũ) — chỉ áp dụng cho strategy đơn này; không
+        tự sinh lại các tổ hợp trong Leaderboard đang tham chiếu strategy này.
       </p>
     </Panel>
   )

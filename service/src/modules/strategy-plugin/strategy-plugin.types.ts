@@ -33,3 +33,13 @@ export interface StrategyCatalogItem {
   strategyId: string | null;
   version: number | null;
 }
+
+export interface StrategyVersionSummary {
+  strategyId: string;
+  name: string;
+  version: number;
+  type: 'SYSTEM' | 'USER' | 'AI_GENERATED';
+  parameters: Record<string, unknown>;
+  isMine: boolean;
+  createdAt: Date;
+}
