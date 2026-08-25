@@ -5,6 +5,7 @@ sources:
 
     mapping:
       id: id
+      url: link
       title: title
       content: summary
       publishedAt: published
@@ -15,6 +16,7 @@ sources:
 
     mapping:
       id: id
+      url: link
       title: title
       content: summary
       publishedAt: published

@@ -14,8 +14,17 @@ export interface UseNewsResult {
  * `sentiment` of `null`/`undefined` omits the query param entirely (server
  * default: no WHERE clause, matching every row), never sends the literal
  * string "null".
+ *
+ * `refreshToken` is an opaque value the caller bumps to force a refetch
+ * without changing any other argument — used after a crawl completes
+ * (`useNewsCrawl`) to pull in newly-crawled articles.
  */
-export function useNews(sentiment: SentimentLabel | null, page: number, pageSize: number): UseNewsResult {
+export function useNews(
+  sentiment: SentimentLabel | null,
+  page: number,
+  pageSize: number,
+  refreshToken: number | string = 0,
+): UseNewsResult {
   const [items, setItems] = useState<NewsListResponse['items']>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -50,7 +59,7 @@ export function useNews(sentiment: SentimentLabel | null, page: number, pageSize
       cancelled = true
       controller.abort()
     }
-  }, [sentiment, page, pageSize])
+  }, [sentiment, page, pageSize, refreshToken])
 
   return { items, total, loading, error }
 }

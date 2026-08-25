@@ -11,7 +11,7 @@
 | Auth | 4 endpoint | ✅ Hoạt động, đã smoke test thật |
 | Strategy Search | 5 endpoint + health | ✅ Hoạt động, đã smoke test full vòng |
 | Market Data | 2 endpoint + WebSocket `/market` | ⚠️ Hoạt động nhưng **chưa có auth** trên REST; WebSocket đã push realtime |
-| News | 1 endpoint + health | ✅ Hoạt động |
+| News | 3 endpoint + health (`GET /news`, `POST /news/crawl`, `GET /news/crawl/status`) | ✅ Hoạt động — crawl thật, chạy như tiến trình Python riêng (ADR-005) |
 | Sentiment | 1 endpoint + health | ✅ Hoạt động |
 | Strategy Engine | `GET /strategy-engine/signal` + health | ✅ Hoạt động — realtime signal, có auth |
 | Chart / Continuous Loop / Leaderboard / Strategy Plugin / Composite / Backtesting | chỉ có `GET /<module>/health` | ❌ Stub, chưa có API thật |
@@ -510,6 +510,44 @@ Bảng `news` (migration `003_candidate_auth_schema.sql`) chỉ có đúng các 
 | `confidence` | Cột `sentiment_score` (đổi tên) | Không cần suy luận gì thêm, chỉ là alias tên trường theo hợp đồng UI |
 
 > **Đính chính:** bản trước của tài liệu này ghi rằng `artifacts/decisions.md` "chốt" model sentiment là FinBERT — **sai**, người viết tài liệu này viết nhầm. `decisions.md` §3 nói ngược lại: **từ chối** phương án tự host/fine-tune FinBERT, và **để ngỏ** việc chọn model/API cụ thể ("cần chốt cụ thể model/API nào... khi bắt đầu code module này"). `"FinBERT"` ở đây chỉ là **giá trị mặc định của biến cấu hình** `SENTIMENT_MODEL_NAME` — một nhãn hiển thị do API báo cáo lại, không phải model sentiment thật đang chạy. Lựa chọn model/pipeline sentiment thật vẫn còn mở, theo đúng `decisions.md` §3.
+>
+> **Cập nhật (task-13):** điểm trên đã được chốt lại sau, xem `decisions.md` §8 — **FinBERT local là model thật đang chạy**, không chỉ là giá trị mặc định của config. Worker Python (`workers/news/`) tải model về `workers/news/models/finbert` và chạy qua `transformers`, đứng sau interface `SentimentProvider` (`workers/news/src/core/sentiment/provider.py`) để đổi model/API khác không cần sửa code crawler. `SENTIMENT_MODEL_NAME` ở service vẫn chỉ là nhãn hiển thị cấu hình cho response — service không tự chạy model, chỉ đọc lại `news.sentiment`/`news.sentiment_score` mà worker Python đã ghi.
+
+### `POST /news/crawl`
+
+Kích hoạt worker crawl tin tức + sentiment (`workers/news/main.py`) như một **tiến trình hệ điều hành riêng** — đúng ADR-005 (`decisions.md` §7): API không tự crawl trong tiến trình Node, chỉ `spawn` process Python rồi trả về ngay lập tức, không block request HTTP trong lúc crawl chạy (có thể mất vài giây tới vài phút).
+
+Yêu cầu `Authorization: Bearer <accessToken>` (`JwtAuthGuard`) — không giới hạn theo `user_id` (crawl là hành động dùng chung, giống news).
+
+**Request:** không có body.
+
+**Response `202`**
+```json
+{
+  "jobId": "crawl-1787629110884-1",
+  "status": "RUNNING",
+  "startedAt": "2026-08-25T03:38:30.884Z",
+  "finishedAt": null,
+  "exitCode": null,
+  "error": null
+}
+```
+
+- Nếu đã có 1 crawl đang `RUNNING`, gọi lại endpoint này **không** spawn thêm process song song — trả về **cùng job** đang chạy (coalesce), tránh nhiều crawler cùng đọc/ghi cùng lúc trên cùng nguồn RSS.
+- Worker bị **kill (SIGKILL)** nếu chạy quá `NEWS_WORKER_TIMEOUT_MS` (mặc định 10 phút) — job chuyển sang `FAILED` với `error` giải thích lý do timeout, không treo request/tiến trình vô thời hạn (đúng nguyên tắc chống "uncontrolled infinite loop").
+- Trạng thái job chỉ lưu **trong bộ nhớ tiến trình API** (không có bảng job riêng, không thêm migration) — mất khi API restart. Đủ dùng cho demo 1 instance; không phải thiết kế cho nhiều instance API chạy song song.
+
+### `GET /news/crawl/status`
+
+Trả về job **gần nhất** (đang chạy hoặc đã kết thúc) của tiến trình API hiện tại — client poll endpoint này sau `POST /news/crawl` để biết khi nào crawl xong.
+
+Yêu cầu `Authorization: Bearer <accessToken>`.
+
+**Response `200`** — cùng shape với response của `POST /news/crawl` ở trên. `status` là `RUNNING` / `COMPLETED` / `FAILED`. `exitCode`/`error` chỉ có giá trị sau khi worker kết thúc; `error` chỉ khác `null` khi `status = FAILED` (worker exit code khác 0, timeout, hoặc lỗi spawn process — luôn kèm `stderr` thật của worker, không phải lỗi giả).
+
+**Response khi chưa từng crawl lần nào** (API mới khởi động): trả `null` (không phải `404`) — trạng thái bình thường trước lần crawl đầu tiên.
+
+**Lỗi:** `401` nếu thiếu/sai token.
 
 ### `GET /news?sentiment=POSITIVE\|NEUTRAL\|NEGATIVE&page=1&pageSize=20`
 

@@ -54,3 +54,49 @@ Kết luận: `docs/database/design.dbml` là bản thiết kế **sau này, ch�
 **Lý do:** Người dùng xác nhận muốn có auth thật thay vì user ngầm định — dùng cho ownership của `experiments`, `strategies` do user tạo, và AI-generated strategies (nếu làm phần mở rộng này sau).
 
 **Hệ quả cho code:** Cần `AuthModule` thật (JWT + refresh token), không phải placeholder "Pro Student" mơ hồ như `docs/software-architecture/modules.md` mô tả.
+
+### 5. Công thức weighted voting — bỏ ràng buộc tổng trọng số = 1
+
+**Phát hiện (người dùng chỉ ra):** UI bắt tổng trọng số phải bằng 1, từ chối bộ trọng số hợp lệ như `0.25 / 0.25 / 0.20 / 0.45`. Nhưng prototype ghi công thức rõ ràng:
+
+> Điểm tổng hợp = Σ (trọng số × tín hiệu) / Σ trọng số
+
+Đây là **trung bình có trọng số** — phép chia đã tự chuẩn hoá, nên tổng không cần bằng 1.
+
+**Nguyên nhân gốc:** `CompositeStrategyService.analyze()` tính `Σ (trọng số × tín hiệu)` mà **thiếu phép chia cho `Σ trọng số`**. Ràng buộc "tổng = 1" chính là thứ che lấp lỗi này: khi Σw = 1 thì hai công thức trùng nhau nên không ai phát hiện ra.
+
+**Chốt:** Hiện thực đúng công thức (chia cho tổng trọng số), bỏ `assertWeightsSumToOne` ở cả backend lẫn frontend. Thay bằng ràng buộc thật sự còn cần: mỗi trọng số phải hữu hạn và ≥ 0, và không được toàn bộ bằng 0 (mẫu số = 0).
+
+**Lý do bỏ ràng buộc mà không sửa công thức là sai:** score sẽ vượt ra ngoài `[-1, 1]` khi tổng trọng số > 1, khiến `buyThreshold`/`sellThreshold` mất ý nghĩa. Hai nửa phải đi cùng nhau.
+
+**Bằng chứng sửa đúng:** không test cũ nào phải đổi giá trị kỳ vọng — mọi fixture cũ đều có tổng = 1, nơi công thức cũ và mới cho cùng kết quả. Mẫu số dùng tổng trọng số của **mọi** thành viên (không chỉ thành viên khác HOLD), để HOLD đóng vai trò phiếu trắng kéo điểm về 0, đúng như công thức hiển thị.
+
+### 6. Sinh tín hiệu phải nằm trong Strategy Engine, không ở frontend
+
+**Phát hiện:** `RealtimePage.tsx` render badge `BUY`/`SELL` bằng `up ? 'BUY' : 'SELL'`, với `up` chỉ là "giá tăng so với nến đầu", và tự tính MA(20) phía client.
+
+**Chốt:** Thêm endpoint `GET /strategy-engine/signal?interval=` trả tín hiệu tổng hợp thật + tín hiệu từng plugin + MA(20), do Registry/Engine tính. Frontend chỉ hiển thị.
+
+**Lý do:** `BUY/SELL/HOLD` là output chuẩn hoá của Strategy Engine. Suy ra nó trong component React vi phạm đúng 2 anti-pattern của đề bài ("business logic trong frontend", "strategy logic ngoài Strategy Engine"). Ngoài ra badge đó trông có thẩm quyền nhưng thực chất chỉ là dấu của biến động giá — nguy hiểm hơn là không hiển thị gì.
+
+**Bằng chứng:** sau khi sửa, `5m` trả `SELL` còn `1h` trả `HOLD` trong khi **cả hai đều đang tăng giá** (+1.93% và +23.29%) — logic cũ chắc chắn cho `BUY` ở cả hai.
+
+### 7. Crawler giữ là tiến trình Python tách biệt — cài Python 3.13
+
+**Phát hiện:** `workers/news/` của đồng đội có 724 dòng crawler/parser/sentiment chạy được, nhưng **chưa dùng được**: `main.py` rỗng, không có tầng ghi Postgres (không psycopg/asyncpg), thư mục `models/` chỉ có README chứ chưa có model FinBERT, `torch` chưa cài. Máy chỉ có Python 3.9.6 trong khi code dùng cú pháp PEP 604 (`str | bytes`) đánh giá lúc định nghĩa class → cần ≥ 3.10.
+
+**Chốt (sau khi hỏi lại):** Cài Python 3.13, **giữ nguyên worker Python**, bổ sung tầng ghi DB + entry point + API trigger qua ranh giới job.
+
+**Lý do:** Giữ đúng ADR-005 — Crawler và Sentiment là tiến trình tách biệt, không nhúng vào API. Phương án viết lại crawler bằng Node chạy được ngay nhưng vứt bỏ code đồng đội và lệch kiến trúc đã công bố.
+
+**Ràng buộc bắt buộc:** API **không** gọi thẳng subprocess như một hàm đồng bộ — phải qua ranh giới job để Crawler vẫn là tiến trình độc lập.
+
+### 8. Sentiment model — FinBERT chạy local
+
+**Bối cảnh:** Mục 3 ở trên để ngỏ ("cần chốt cụ thể model/API nào khi bắt đầu code module này").
+
+**Chốt (sau khi hỏi lại):** **FinBERT local**, tải model về `workers/news/models/finbert`, chạy qua `transformers` — đúng như `workers/news/src/core/sentiment/sentiment.py` đồng đội đã viết sẵn.
+
+**Lý do:** Không tốn phí theo lượt gọi, chạy offline nên demo không phụ thuộc mạng hay API key.
+
+**Ràng buộc bắt buộc:** Model phải nằm sau một interface provider. Đề bài cấm "crawler gắn cứng vào 1 model ML" — đổi sang model khác không được phép sửa code crawler.

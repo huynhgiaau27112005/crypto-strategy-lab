@@ -1,1 +1,7 @@
 __pycache__/
+# Local FinBERT weights (~418MB) — downloaded by setup, never committed.
+# See workers/news/models/README.md for the download step.
+models/finbert/
+
+# Python virtualenv
+.venv/

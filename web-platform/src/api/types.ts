@@ -371,3 +371,20 @@ export interface SentimentSummaryDto {
   averageConfidence: number
   model: string
 }
+
+/** Status of the out-of-process crawl worker — artifacts/api-contract.md §4. */
+export type NewsCrawlStatus = 'RUNNING' | 'COMPLETED' | 'FAILED'
+
+/**
+ * `POST /news/crawl` (202) and `GET /news/crawl/status` (200) response
+ * shape — artifacts/api-contract.md §4. `error` is non-null only when
+ * `status` is `FAILED`.
+ */
+export interface NewsCrawlJobDto {
+  jobId: string
+  status: NewsCrawlStatus
+  startedAt: string
+  finishedAt: string | null
+  exitCode: number | null
+  error: string | null
+}

@@ -5,11 +5,12 @@ import requests
 class HTTPFetcher:
     def fetch(self, config: SourceConfig) -> bytes:
         try:
-            response = requests.get(
+            response = requests.request(
                 method=config.method,
                 url=config.url,
                 headers=config.headers,
                 params=config.params,
+                timeout=15,
             )
 
             response.raise_for_status()

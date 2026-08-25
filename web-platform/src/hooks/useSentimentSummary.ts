@@ -8,8 +8,14 @@ export interface UseSentimentSummaryResult {
   error: string | null
 }
 
-/** `GET /sentiment/summary?hours=` — artifacts/api-contract.md §4. */
-export function useSentimentSummary(hours: number): UseSentimentSummaryResult {
+/**
+ * `GET /sentiment/summary?hours=` — artifacts/api-contract.md §4.
+ *
+ * `refreshToken` is an opaque value the caller bumps to force a refetch —
+ * used after a crawl completes (`useNewsCrawl`) to refresh the summary
+ * panel with newly-scored articles.
+ */
+export function useSentimentSummary(hours: number, refreshToken: number | string = 0): UseSentimentSummaryResult {
   const [data, setData] = useState<SentimentSummaryDto | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -37,7 +43,7 @@ export function useSentimentSummary(hours: number): UseSentimentSummaryResult {
       cancelled = true
       controller.abort()
     }
-  }, [hours])
+  }, [hours, refreshToken])
 
   return { data, loading, error }
 }

@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import BlueprintCorners from '../components/BlueprintCorners'
 import Chip from '../components/Chip'
 import SignalBadge, { type SignalKind } from '../components/SignalBadge'
 import { useNews } from '../hooks/useNews'
+import { useNewsCrawl } from '../hooks/useNewsCrawl'
 import { useSentimentSummary } from '../hooks/useSentimentSummary'
 import type { SentimentLabel } from '../api/types'
 
@@ -37,23 +38,47 @@ function fmtPct(fraction: number): string {
 export default function NewsPage() {
   const [sentiment, setSentiment] = useState<SentimentLabel | null>(null)
   const [page, setPage] = useState(1)
+  const [refreshToken, setRefreshToken] = useState(0)
 
-  const { items, total, loading, error } = useNews(sentiment, page, NEWS_PAGE_SIZE)
-  const { data: summary, loading: summaryLoading, error: summaryError } = useSentimentSummary(SUMMARY_HOURS)
+  const { items, total, loading, error } = useNews(sentiment, page, NEWS_PAGE_SIZE, refreshToken)
+  const {
+    data: summary,
+    loading: summaryLoading,
+    error: summaryError,
+  } = useSentimentSummary(SUMMARY_HOURS, refreshToken)
+  const { job: crawlJob, state: crawlState, error: crawlError, triggerCrawl } = useNewsCrawl()
 
   const pages = Math.max(1, Math.ceil(total / NEWS_PAGE_SIZE))
+  const crawlRunning = crawlState === 'polling'
 
   const selectSentiment = (value: SentimentLabel | null) => {
     setSentiment(value)
     setPage(1)
   }
 
-  // Crawl-trigger endpoint does not exist yet (see task-10 report). This
-  // handler is the single, obvious place a follow-up task wires the real
-  // POST call into — the button stays disabled until then so it never
-  // silently does nothing when clicked.
+  // Once the worker process reaches a terminal state, refetch the article
+  // list and summary panel so newly-crawled/scored articles show up
+  // without a manual page reload.
+  useEffect(() => {
+    if (crawlState === 'terminal' && crawlJob?.status === 'COMPLETED') {
+      setRefreshToken((t) => t + 1)
+    }
+  }, [crawlState, crawlJob])
+
   const handleCrawlClick = () => {
-    // TODO(follow-up task): call the crawl-trigger endpoint once it exists.
+    if (crawlRunning) return
+    void triggerCrawl()
+  }
+
+  const crawlStatusText = (): string => {
+    if (crawlState === 'polling') return 'Đang crawl…'
+    if (crawlState === 'timeout') return 'Hết thời gian chờ trạng thái crawl.'
+    if (crawlState === 'error') return crawlError ?? 'Lỗi khi crawl.'
+    if (crawlState === 'terminal' && crawlJob) {
+      if (crawlJob.status === 'COMPLETED') return 'Crawl xong — danh sách đã được cập nhật.'
+      return `Crawl thất bại: ${crawlJob.error ?? 'không rõ lỗi'}`
+    }
+    return 'Kích hoạt crawler để lấy tin tức mới nhất từ RSS.'
   }
 
   return (
@@ -80,13 +105,13 @@ export default function NewsPage() {
             <button
               type="button"
               className="chip"
-              disabled
-              title="Endpoint kích hoạt crawl chưa tồn tại — sẽ được nối ở task sau."
+              disabled={crawlRunning}
+              title="Kích hoạt worker crawl tin tức + phân tích sentiment (chạy tiến trình riêng)."
               onClick={handleCrawlClick}
             >
-              Crawl tin tức
+              {crawlRunning ? 'Đang crawl…' : 'Crawl tin tức'}
             </button>
-            <p className="news-crawl-note">Chưa có endpoint kích hoạt crawl — nút sẽ được kích hoạt ở bước sau.</p>
+            <p className="news-crawl-note">{crawlStatusText()}</p>
           </div>
         </div>
 
