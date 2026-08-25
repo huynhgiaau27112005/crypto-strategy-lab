@@ -3,8 +3,10 @@ import {
   CandlestickSeries,
   ColorType,
   LineSeries,
+  LineStyle,
   createChart,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type UTCTimestamp,
 } from 'lightweight-charts'
@@ -63,15 +65,29 @@ function resolveColor(varName: string, fallback: string): string {
 export default function CandleChart({
   candles,
   maPeriod = 20,
+  maColorVar = '--color-accent',
+  secondaryMaPeriod,
+  secondaryMaColorVar = '--color-accent-400',
+  showLevels = false,
   height = 220,
 }: {
   candles: Candle[]
   maPeriod?: number
+  /** CSS custom property to resolve for the primary MA line — see resolveColor() below. */
+  maColorVar?: string
+  /** A second SMA overlay (e.g. MA(50) for the Backtest chart) — omitted entirely when unset. */
+  secondaryMaPeriod?: number
+  secondaryMaColorVar?: string
+  /** Draws two horizontal reference lines at the visible window's high/low — the "Hỗ trợ"/"Kháng cự" legend entries. Simple chart annotations (min/max of what's already rendered), not a computed trading signal. */
+  showLevels?: boolean
   height?: number
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const maSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const secondaryMaSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const supportLineRef = useRef<IPriceLine | null>(null)
+  const resistanceLineRef = useRef<IPriceLine | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -81,7 +97,8 @@ export default function CandleChart({
     const downColor = resolveColor('--color-down', '#b3453a')
     const textColor = resolveColor('--color-text', '#1d1f20')
     const dividerColor = resolveColor('--color-divider', 'rgba(29,31,32,0.16)')
-    const accentColor = resolveColor('--color-accent', '#5980a6')
+    const accentColor = resolveColor(maColorVar, '#5980a6')
+    const secondaryAccentColor = resolveColor(secondaryMaColorVar, '#94bce3')
 
     const chart: IChartApi = createChart(container, {
       autoSize: true,
@@ -113,21 +130,33 @@ export default function CandleChart({
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     })
+    const secondaryMaSeries = chart.addSeries(LineSeries, {
+      color: secondaryAccentColor,
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    })
 
     candleSeriesRef.current = candleSeries
     maSeriesRef.current = maSeries
+    secondaryMaSeriesRef.current = secondaryMaSeries
 
     return () => {
       chart.remove()
       candleSeriesRef.current = null
       maSeriesRef.current = null
+      secondaryMaSeriesRef.current = null
+      supportLineRef.current = null
+      resistanceLineRef.current = null
     }
   }, [])
 
   useEffect(() => {
     const candleSeries = candleSeriesRef.current
     const maSeries = maSeriesRef.current
-    if (!candleSeries || !maSeries) return
+    const secondaryMaSeries = secondaryMaSeriesRef.current
+    if (!candleSeries || !maSeries || !secondaryMaSeries) return
 
     const sorted = [...candles].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
     const ohlc = sorted.map((c) => ({
@@ -148,7 +177,56 @@ export default function CandleChart({
         .map((c, i) => (sma[i] == null ? null : { time: c.time, value: sma[i] as number }))
         .filter((point): point is { time: UTCTimestamp; value: number } => point != null),
     )
-  }, [candles, maPeriod])
+
+    if (secondaryMaPeriod != null) {
+      const sma2 = computeSma(
+        ohlc.map((c) => c.close),
+        secondaryMaPeriod,
+      )
+      secondaryMaSeries.setData(
+        ohlc
+          .map((c, i) => (sma2[i] == null ? null : { time: c.time, value: sma2[i] as number }))
+          .filter((point): point is { time: UTCTimestamp; value: number } => point != null),
+      )
+    } else {
+      secondaryMaSeries.setData([])
+    }
+
+    // Support/resistance reference lines: the visible window's low/high,
+    // the same simple min/max convention the approved prototype uses for
+    // this legend entry — a chart annotation, not a recomputed strategy
+    // signal (the real SUPPORT_RESISTANCE plugin signal never runs here).
+    if (supportLineRef.current) {
+      candleSeries.removePriceLine(supportLineRef.current)
+      supportLineRef.current = null
+    }
+    if (resistanceLineRef.current) {
+      candleSeries.removePriceLine(resistanceLineRef.current)
+      resistanceLineRef.current = null
+    }
+    if (showLevels && ohlc.length > 0) {
+      const upColor = resolveColor('--color-up', '#3f8f5f')
+      const downColor = resolveColor('--color-down', '#b3453a')
+      const high = Math.max(...ohlc.map((c) => c.high))
+      const low = Math.min(...ohlc.map((c) => c.low))
+      resistanceLineRef.current = candleSeries.createPriceLine({
+        price: high,
+        color: downColor,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: 'Kháng cự',
+      })
+      supportLineRef.current = candleSeries.createPriceLine({
+        price: low,
+        color: upColor,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: 'Hỗ trợ',
+      })
+    }
+  }, [candles, maPeriod, secondaryMaPeriod, showLevels])
 
   return <div ref={containerRef} style={{ width: '100%', height }} />
 }

@@ -1,10 +1,13 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { RequireAuth } from './auth/AuthContext'
 import AuthPage from './pages/AuthPage'
+import BacktestPage from './pages/BacktestPage'
 import LandingPage from './pages/LandingPage'
+import LeaderboardPage from './pages/LeaderboardPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 import RealtimePage from './pages/RealtimePage'
 import StrategyEnginePage from './pages/StrategyEnginePage'
+import { ExperimentProvider } from './state/ExperimentContext'
 import { StrategySelectionProvider } from './state/StrategySelectionContext'
 import WorkspaceLayout from './workspace/WorkspaceLayout'
 
@@ -22,7 +25,12 @@ export default function App() {
                 POST /strategy-search/experiments — same live state, no
                 second fetch, no backend endpoint to store it. */}
             <StrategySelectionProvider>
-              <WorkspaceLayout />
+              {/* Shared across the Backtest and Leaderboard tabs: the current
+                  experiment run (id + applied config) and the candidate
+                  currently drilled into — same live state, no second fetch. */}
+              <ExperimentProvider>
+                <WorkspaceLayout />
+              </ExperimentProvider>
             </StrategySelectionProvider>
           </RequireAuth>
         }
@@ -31,8 +39,8 @@ export default function App() {
         <Route path="realtime" element={<RealtimePage />} />
         <Route path="strategy" element={<StrategyEnginePage />} />
         <Route path="ai" element={<PlaceholderPage />} />
-        <Route path="backtest" element={<PlaceholderPage />} />
-        <Route path="leaderboard" element={<PlaceholderPage />} />
+        <Route path="backtest" element={<BacktestPage />} />
+        <Route path="leaderboard" element={<LeaderboardPage />} />
         <Route path="news" element={<PlaceholderPage />} />
         <Route path="*" element={<Navigate to="realtime" replace />} />
       </Route>
