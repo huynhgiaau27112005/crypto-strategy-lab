@@ -15,7 +15,9 @@
 | Sentiment | 1 endpoint + health | ✅ Hoạt động |
 | Strategy Engine | `GET /strategy-engine/signal` + health | ✅ Hoạt động — realtime signal, có auth |
 | Queue | `GET /queue/health` | ✅ Hoạt động — không auth, xem mục 2b |
-| Chart / Continuous Loop / Leaderboard / Strategy Plugin / Composite / Backtesting | chỉ có `GET /<module>/health` | ❌ Stub, chưa có API thật |
+| Strategy Plugin | `GET /strategy-plugin/strategies[/:name/versions]` + health | ✅ Hoạt động — từ task-15 gồm cả strategy AI của user, xem mục 2 |
+| AI Strategy | `generate/validate/save/mine/:id/:id/run` + health, `samples` | ✅ Hoạt động — `save` từ task-15 bắt buộc `domain` để combinable trong Strategy Search |
+| Chart / Continuous Loop / Leaderboard / Composite / Backtesting | chỉ có `GET /<module>/health` | ❌ Stub, chưa có API thật |
 
 ## 1. Xác thực
 
@@ -129,11 +131,15 @@ Bắt đầu một lần chạy tìm kiếm. Chạy **bất đồng bộ**: tr�
 | `topK` | ❌ | 10 | số nguyên 1–100 |
 | `minimumTrades` | ❌ | 20 | số nguyên 0–10000 |
 | `enabledDomains` | ❌ | cả 4 | `TREND` / `MOMENTUM` / `VOLATILITY` / `STRUCTURE` |
-| `strategyWeights` | ❌ | chia đều | mỗi trọng số là số hữu hạn, `>= 0`; không được **tất cả bằng 0** |
+| `strategyWeights` | ❌ | chia đều trên 4 built-in | mỗi trọng số là số hữu hạn, `>= 0`; không được **tất cả bằng 0** |
 
+> **`strategyWeights[].type` (task-15):** không còn giới hạn ở 4 literal built-in — chấp nhận cả `"AI:<strategyId>"`, trỏ tới một strategy `AI_GENERATED` **của chính user gọi request này** (kiểm tra ownership + `is_active`, `404`/`400` nếu không thuộc user hoặc không tồn tại). Domain của một entry `AI:<id>` không tra theo bảng cố định như built-in mà đọc trực tiếp từ `strategies.parameters.domain` — trường bắt buộc chọn lúc `POST /ai-strategy/save` (xem mục AI Strategy bên dưới). Nếu bỏ trống `strategyWeights`, mặc định **chỉ chia đều trên 4 strategy built-in** — muốn đưa strategy AI vào một search cụ thể phải khai báo tường minh trong `strategyWeights`, hệ thống không tự ý gộp mọi strategy AI của user vào mặc định.
+>
 > **Công thức điểm tổng hợp (`CompositeStrategyService.analyze`):** `Điểm tổng hợp = Σ (trọng số × tín hiệu) / Σ trọng số` — một **weighted average**, không phải weighted sum. Vì có chia cho tổng trọng số, **`strategyWeights` không bắt buộc phải tổng bằng 1** — công thức tự chuẩn hoá, điểm luôn nằm trong `[-1, 1]` với bất kỳ bộ trọng số dương nào (vd. `0.25/0.25/0.20/0.45`, tổng 1.15, vẫn hợp lệ). Mẫu số là tổng trọng số của **toàn bộ member có trọng số** (không chỉ member ra tín hiệu BUY/SELL) — một member HOLD vẫn tính vào mẫu số, đúng nghĩa "phiếu trắng" kéo điểm về gần 0. Nếu mẫu số bằng 0 (không có trọng số nào, hoặc tất cả bằng 0), service trả về `score = 0` và `signal = HOLD` thay vì `NaN` — nhưng trường hợp này bị chặn sớm hơn, ngay ở `POST /strategy-search/experiments` (xem lỗi `400` bên dưới), không để lọt xuống tầng tính điểm.
 >
-> **Ràng buộc coverage:** `strategyWeights` phải khớp **chính xác** với tập strategy type suy ra từ `enabledDomains` (TREND→MA, MOMENTUM→RSI, VOLATILITY→BOLLINGER, STRUCTURE→SUPPORT_RESISTANCE) — theo cả hai chiều: thiếu weight cho domain đã bật, hoặc thừa weight cho domain chưa bật, đều bị từ chối với `400`.
+> **Ràng buộc coverage:** `strategyWeights` phải khớp **chính xác** tập `StrategyDomain` mà `enabledDomains` bật — theo domain THẬT của từng entry đã resolve (built-in tra theo tên cố định, AI tra theo `parameters.domain`), không còn theo một bảng domain→type cố định 4 phần tử. Một domain có thể được phủ bởi built-in, bởi 1+ strategy AI của user, hoặc cả hai. Thiếu weight cho domain đã bật, hoặc thừa weight cho domain chưa bật, đều bị từ chối với `400`.
+>
+> **Precompute + loại strategy AI lỗi khỏi run (task-15):** trước khi vòng lặp candidate bắt đầu, mọi strategy AI có trong `strategyWeights` được chạy **1 lần cho cả chuỗi nến** (`AiStrategySignalPrecomputeService`, tuần tự từng strategy, không song song). Một strategy AI lỗi ở bước này (subprocess timeout, code đã hỏng từ lúc lưu tới lúc chạy, output sai định dạng) **không** làm hỏng cả request — nó bị loại khỏi run này, có log cảnh báo, và domain của nó chỉ mất khả dụng nếu không còn strategy nào khác (built-in hoặc AI khác) phủ domain đó. Nếu sau khi loại, không còn đủ 1 domain định hướng + 1 domain xác nhận khả dụng, experiment kết thúc `FAILED` với lý do rõ ràng thay vì treo hoặc chạy một search rỗng.
 
 **Response `202 Accepted`**
 ```json
@@ -143,7 +149,7 @@ Bắt đầu một lần chạy tìm kiếm. Chạy **bất đồng bộ**: tr�
 **Lỗi**
 | Mã | Khi nào |
 |---|---|
-| `400` | `timeframe` không hỗ trợ; khoảng thời gian không hợp lệ; số nằm ngoài khoảng; `strategyWeights` có trọng số âm hoặc không phải số hữu hạn; `strategyWeights` tất cả bằng 0; `strategyWeights` không khớp chính xác với các type suy ra từ `enabledDomains` (thiếu hoặc thừa type, xem ghi chú coverage phía trên); strategy type không tồn tại; thiếu ít nhất 1 domain "định hướng" (TREND/STRUCTURE) và 1 domain "xác nhận" (MOMENTUM/VOLATILITY); **dữ liệu nến không đủ** |
+| `400` | `timeframe` không hỗ trợ; khoảng thời gian không hợp lệ; số nằm ngoài khoảng; `strategyWeights` có trọng số âm hoặc không phải số hữu hạn; `strategyWeights` tất cả bằng 0; `strategyWeights` không khớp chính xác domain suy ra từ `enabledDomains` (thiếu hoặc thừa domain, xem ghi chú coverage phía trên); strategy type không tồn tại, hoặc `AI:<id>` không thuộc/không active với user hiện tại; thiếu ít nhất 1 domain "định hướng" (TREND/STRUCTURE) và 1 domain "xác nhận" (MOMENTUM/VOLATILITY); **dữ liệu nến không đủ** |
 | `401` | Thiếu/sai token |
 
 **Về lỗi "không đủ nến"** — thông báo dạng `"Dataset has 0 candles; at least 202 are required."`. Số nến tối thiểu phụ thuộc domain được bật: TREND cần 202, STRUCTURE 102, VOLATILITY 31, MOMENTUM 23 (lấy giá trị lớn nhất trong các domain đã bật). Đây **không phải bug** — nghĩa là bảng `candles` chưa có đủ dữ liệu lịch sử cho khoảng thời gian yêu cầu, cần nạp dữ liệu trước (xem `POST /market-data/import`).
@@ -322,7 +328,7 @@ Không cần auth. Trả `{ "status": "ok", "module": "strategy-search" }`.
 
 ### `GET /strategy-plugin/strategies`
 
-Yêu cầu `Authorization: Bearer <accessToken>` (`JwtAuthGuard`). Trả danh mục strategy — nguồn dữ liệu cho bảng weighted-voting ở frontend (`StrategySelectionContext`) và cho việc dựng `strategyWeights` khi gọi `POST /strategy-search/experiments`. **Đây không còn là stub chỉ có health** — `StrategyPluginService.listCatalog()` trộn 2 nguồn: metadata tĩnh từ từng `StrategyPlugin` đã đăng ký trong `StrategyRegistry` (`MA`, `RSI`, `BOLLINGER`, `SUPPORT_RESISTANCE`) với `id`/`version` thật đọc từ bảng `strategies` qua `StrategyRepository.listSystemStrategies()`.
+Yêu cầu `Authorization: Bearer <accessToken>` (`JwtAuthGuard`). Trả danh mục strategy — nguồn dữ liệu cho bảng weighted-voting ở frontend (`StrategySelectionContext`) và cho việc dựng `strategyWeights` khi gọi `POST /strategy-search/experiments`. `StrategyPluginService.listCatalog(userId)` **trộn 3 nguồn** (task-15 thêm nguồn thứ 3): metadata tĩnh từ từng `StrategyPlugin` đã đăng ký trong `StrategyRegistry` (`MA`, `RSI`, `BOLLINGER`, `SUPPORT_RESISTANCE`) với `id`/`version` thật đọc từ bảng `strategies` qua `StrategyRepository.listSystemStrategies()`, cộng với **danh sách strategy AI của chính user gọi request này** (`AiStrategyRepository.listLatestPerName`, chỉ version mới nhất mỗi tên, chỉ `is_active`). Một strategy AI hiển thị với `type = "AI:<strategyId>"`, `domain` đọc từ `parameters.domain` — một dòng AI lưu trước khi có domain bắt buộc (không có `parameters.domain` hợp lệ) bị **loại khỏi danh mục này** (log warning) chứ không làm hỏng cả response, vì nó không combinable trong search nếu chưa có domain.
 
 **Response `200`**
 ```json
@@ -338,11 +344,20 @@ Yêu cầu `Authorization: Bearer <accessToken>` (`JwtAuthGuard`). Trả danh m�
     ],
     "strategyId": "3f2a...-....",
     "version": 1
+  },
+  {
+    "type": "AI:6001f162-9a57-4972-90cf-07a594c732a7",
+    "domain": "TREND",
+    "displayName": "demo_ma_crossover",
+    "description": "Strategy do AI sinh — chạy qua subprocess Python, không có tham số điều chỉnh ở đây.",
+    "parameterSchema": [],
+    "strategyId": "6001f162-9a57-4972-90cf-07a594c732a7",
+    "version": 1
   }
 ]
 ```
 
-`strategyId`/`version` là `null` nếu plugin đã đăng ký trong registry nhưng chưa có row tương ứng trong bảng `strategies` (lệch dữ liệu giữa code và DB) — trường hợp này không bị chặn ở tầng API, frontend cần tự chịu `null`.
+`strategyId`/`version` là `null` nếu plugin đã đăng ký trong registry nhưng chưa có row tương ứng trong bảng `strategies` (lệch dữ liệu giữa code và DB) — trường hợp này không bị chặn ở tầng API, frontend cần tự chịu `null`. Với entry AI, `strategyId`/`version` luôn có giá trị (chính là `strategies.id`/`strategies.version` của dòng đó — không có khái niệm "chưa có row" cho AI, vì entry chỉ tồn tại sau khi đã lưu row).
 
 **Lỗi:** `401` nếu thiếu/sai token.
 
@@ -521,6 +536,48 @@ Chưa có candle nào (thị trường/interval quá mới) → trả về place
 **Lỗi:** `400` nếu `interval` không hợp lệ; `401` nếu thiếu/sai token.
 
 **Frontend:** `web-platform/src/hooks/useStrategySignal.ts` — một instance/pane, fetch keyed theo `interval` riêng của pane đó (cùng kiểu isolation với `useMarketSocket`), abort request khi đổi interval/unmount. Badge hiển thị placeholder trung lập (`···` lúc đang tải, `—` khi lỗi) — không bao giờ mặc định `BUY`.
+
+## 3c. AI Strategy
+
+Toàn bộ endpoint yêu cầu `Authorization: Bearer <accessToken>` trừ `GET /ai-strategy/health` và `GET /ai-strategy/samples`. Sinh/lưu/chạy strategy do LLM viết bằng Python (contract `generate_signals(candles) -> [BUY|SELL|HOLD]`, một lời gọi cho cả chuỗi nến — xem `artifacts/ai-strategy.md`).
+
+| Endpoint | Việc gì |
+|---|---|
+| `GET /ai-strategy/samples` | Vài prompt mẫu tĩnh cho panel "Mẫu mô tả" |
+| `POST /ai-strategy/generate` | `{ prompt }` → gọi LLM provider (`FakeProvider` khi test/không có API key, `OpenAiCompatibleProvider` khi có), trả `{ code, raw, providerName, validation }` — code **chưa được lưu** |
+| `POST /ai-strategy/validate` | `{ code }` → chạy lại 4 bước validate (parses/contract/safety/smoke) qua `validate.py`, không lưu |
+| `POST /ai-strategy/save` | Lưu — xem chi tiết dưới |
+| `GET /ai-strategy/mine` | Danh sách strategy AI **của user hiện tại**, không kèm `sourceCode` |
+| `GET /ai-strategy/:id` | Chi tiết 1 strategy (kèm `sourceCode`), chỉ nếu thuộc user hiện tại |
+| `POST /ai-strategy/:id/run` | Chạy thử 1 strategy đã lưu trên nến thật (`{ timeframe, limit }`), trả tín hiệu cho từng nến — endpoint "chạy thử" độc lập, khác với precompute nội bộ mà Strategy Search tự gọi |
+
+### `POST /ai-strategy/save`
+
+**Request** (task-15 thêm `domain`, **bắt buộc**)
+```json
+{ "name": "demo_ma_crossover", "code": "def generate_signals(candles):\n    ...", "domain": "TREND" }
+```
+
+`domain` ∈ `TREND` / `MOMENTUM` / `VOLATILITY` / `STRUCTURE` — không có giá trị mặc định, không suy đoán từ code. Lý do: một strategy AI cần domain để combinable trong Strategy Search (generator bắt buộc ≥ 1 domain định hướng + 1 domain xác nhận, xem mục 2), và domain của code Python là điều chỉ người viết prompt mới biết ý định thật ("đây là tín hiệu định hướng hay tín hiệu xác nhận"). Lưu vào cột `parameters` (jsonb) đã có sẵn của bảng `strategies`, dạng `{ "domain": "TREND" }` — không cần cột mới, không cần migration.
+
+Trước khi lưu, code vẫn phải qua đủ 4 bước validate (parses/contract/safety/smoke) như cũ — `domain` không thay thế hay bỏ qua bước này. Mỗi lần lưu tạo **version mới**, không update đè (immutable, cùng quy tắc với strategy hệ thống).
+
+**Response `201`**
+```json
+{
+  "id": "6001f162-9a57-4972-90cf-07a594c732a7",
+  "name": "demo_ma_crossover",
+  "version": 1,
+  "createdAt": "2026-08-25T08:41:09.559Z",
+  "isActive": true,
+  "domain": "TREND",
+  "sourceCode": "def generate_signals(candles):\n    ..."
+}
+```
+
+**Lỗi:** `400` nếu code không qua validate, hoặc thiếu/sai `domain`; `401` nếu thiếu/sai token.
+
+`GET /ai-strategy/mine`/`GET /ai-strategy/:id` cũng trả thêm `domain` (kiểu `StrategyDomain | null` — `null` chỉ với dòng lưu trước khi `domain` bắt buộc; dòng này vẫn hiển thị được ở "Danh sách của tôi" nhưng bị loại khỏi danh mục Strategy Search, xem mục 2 `GET /strategy-plugin/strategies`).
 
 ## 4. News & Sentiment
 

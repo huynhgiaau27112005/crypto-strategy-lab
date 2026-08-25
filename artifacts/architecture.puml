@@ -99,11 +99,13 @@ package "Modular Monolith — NestJS (service/)" as BE {
   }
 
   package "Strategy Plugin Module" as M_PLUG {
-    rectangle "StrategyRegistry\nregister / get / list / has" as PLUG_REG
+    rectangle "StrategyRegistry\nregister/get/list/has\n(built-ins) +\nresolve(type) (task-15:\nbuilt-in hoặc AI adapter)" as PLUG_REG
     rectangle "MaPlugin\nRsiPlugin\nBollingerPlugin\nSupportResistancePlugin" as PLUG_P
+    rectangle "AiStrategyPluginAdapter\n(task-15) 1 instance dùng\nchung cho MỌI \"AI:<id>\";\nanalyze() = tra bảng\nSignalContext.aiSignals" as PLUG_AI
     rectangle "StrategyPluginController\n/strategy-plugin/strategies\n/strategies/:name/versions" as PLUG_C
-    rectangle "StrategyPluginService\nlistCatalog / versioning" as PLUG_S
+    rectangle "StrategyPluginService\nlistCatalog(userId)\n= built-ins + AI rows\ncủa user (task-15)" as PLUG_S
     PLUG_P --> PLUG_REG : onModuleInit\nregister()
+    PLUG_AI --> PLUG_REG : onModuleInit\nregisterAiAdapter()
     PLUG_C --> PLUG_S
     PLUG_S --> PLUG_REG
   }
@@ -171,13 +173,15 @@ package "Modular Monolith — NestJS (service/)" as BE {
     rectangle "AiStrategyValidatorService\n(AST gate)" as AI_V
     rectangle "AiStrategyRunnerService\npython-process.util\n(timeout, output cap)" as AI_RUN
     rectangle "contract-prompt.ts\ngenerate_signals(candles)\n→ [BUY|SELL|HOLD]" as AI_CT
-    rectangle "AiStrategyRepository" as AI_R
+    rectangle "AiStrategyRepository\nlistLatestPerName(userId)\nfindOwnedActiveById\n(task-15)" as AI_R
+    rectangle "AiStrategySignalPrecomputeService\n(task-15) chạy whole-series\n1 lần/experiment run, tuần tự,\ncatch từng lỗi → loại strategy\nkhỏi run, không throw" as AI_PRE
     AI_C --> AI_S
     AI_S --> AI_P
     AI_S --> AI_V
     AI_S --> AI_RUN
     AI_S --> AI_R
     AI_P --> AI_CT
+    AI_PRE --> AI_RUN
   }
 
   package "Database Module" as M_DB {
@@ -186,15 +190,18 @@ package "Modular Monolith — NestJS (service/)" as BE {
 }
 
 ' ---- dependency giữa các module (theo imports thật trong *.module.ts)
-ENG_S --> PLUG_REG : registry.get(type)
+ENG_S --> PLUG_REG : registry.resolve(type)\n.analyze() (task-15:\nkhông if theo loại strategy)
 COMP_S --> ENG_S
 BT_S --> COMP_S
 SR_S --> BT_S
 SR_S --> LB_S
 SR_S --> PLUG_REG
 SR_FP --> PLUG_REG : displayName
+SR_S --> AI_R : findOwnedActiveById\n(resolve "AI:<id>" ở start())
+SR_S --> AI_PRE : precompute()\n1 lần/run, trước vòng lặp\ncandidate (task-15)
 ENG_RS --> MKT_S
 PLUG_S --> DB_S
+PLUG_S --> AI_R : listLatestPerName(userId)\n(nhóm "Strategy do AI generate")
 
 AUTH_R --> DB_S
 MKT_R --> DB_S
@@ -369,6 +376,27 @@ note bottom of AI_V
   security sandbox. Chạy code do LLM sinh
   trong subprocess + timeout không đủ để
   chặn kẻ tấn công có chủ đích.
+end note
+
+note right of PLUG_AI
+  **task-15 — cost asymmetry per-candle vs whole-series:**
+  Built-in plugin.analyze() = tính toán rẻ, gọi
+  1 lần/candle trong vòng lặp backtest. AI strategy
+  cần 1 lần gọi subprocess Python cho CẢ chuỗi nến
+  (contract generate_signals(candles)). Gọi Python
+  mỗi candle sẽ là chính anti-pattern "uncontrolled
+  infinite loop" bị cấm.
+  Giải: AI_PRE chạy whole-series 1 LẦN/EXPERIMENT RUN
+  (mọi candidate trong 1 run dùng chung 1 chuỗi nến),
+  lưu kết quả vào SignalContext.aiSignals TRƯỚC khi
+  vòng lặp candidate bắt đầu. PLUG_AI.analyze() sau đó
+  chỉ là tra bảng O(1) — rẻ ngang built-in per-candle,
+  nhìn từ vòng lặp backtest.
+  Domain: bắt buộc chọn ở POST /ai-strategy/save
+  (không suy đoán, không mặc định).
+  Weight: strategy AI là 1 row `strategies` bình thường
+  → dùng nguyên experiment_config_strategies, không có
+  cơ chế trọng số riêng.
 end note
 
 @enduml
