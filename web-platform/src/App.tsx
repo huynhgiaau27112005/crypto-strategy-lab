@@ -4,6 +4,7 @@ import AuthPage from './pages/AuthPage'
 import BacktestPage from './pages/BacktestPage'
 import LandingPage from './pages/LandingPage'
 import LeaderboardPage from './pages/LeaderboardPage'
+import NewsPage from './pages/NewsPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 import RealtimePage from './pages/RealtimePage'
 import StrategyEnginePage from './pages/StrategyEnginePage'
@@ -41,7 +42,7 @@ export default function App() {
         <Route path="ai" element={<PlaceholderPage />} />
         <Route path="backtest" element={<BacktestPage />} />
         <Route path="leaderboard" element={<LeaderboardPage />} />
-        <Route path="news" element={<PlaceholderPage />} />
+        <Route path="news" element={<NewsPage />} />
         <Route path="*" element={<Navigate to="realtime" replace />} />
       </Route>
     </Routes>

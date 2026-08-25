@@ -3,10 +3,9 @@ import Panel from '../components/Panel'
 import { PAGE_META, routeIdFromPath } from '../workspace/navConfig'
 
 /**
- * Task scope for this pass covers only the Realtime tab's real content —
- * the other five nav items (Strategy Engine, AI Strategy, Backtest,
- * Leaderboard, News & Sentiment) render this instead of faked data, so the
- * gap is visible rather than hidden behind mock content.
+ * Renders for nav items whose real content has not been built yet (only
+ * AI Strategy, as of this pass) instead of faked data, so the gap is
+ * visible rather than hidden behind mock content.
  */
 export default function PlaceholderPage() {
   const location = useLocation()

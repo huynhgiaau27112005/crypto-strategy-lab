@@ -287,3 +287,46 @@ export interface CandidateDetailDto {
   trades: TradeDto[]
   tradeTotal: number
 }
+
+/** `news.sentiment` enum (`sentiment_label`) — artifacts/api-contract.md §4. */
+export type SentimentLabel = 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE'
+
+/**
+ * One element of `GET /news`'s `items` — artifacts/api-contract.md §4.
+ * `summary`, `coin` are service-derived (not DB columns); `sentimentScore`
+ * is the raw `sentiment_score` column, aliased as "confidence" for display.
+ * `sentiment`/`sentimentScore` can both be null for an unanalyzed article,
+ * even though the contract's example always shows a classified one.
+ */
+export interface NewsItemDto {
+  id: string
+  title: string
+  summary: string
+  source: string
+  url: string
+  publishedAt: string
+  sentiment: SentimentLabel | null
+  sentimentScore: number | null
+  coin: string
+}
+
+/** `GET /news?sentiment=&page=&pageSize=` response — artifacts/api-contract.md §4. */
+export interface NewsListResponse {
+  items: NewsItemDto[]
+  total: number
+}
+
+/**
+ * `GET /sentiment/summary?hours=` response — artifacts/api-contract.md §4.
+ * `positive`/`neutral`/`negative` are FRACTIONS in [0, 1] (of `analyzed`),
+ * not percentages — multiply by 100 only at render time. All fields are 0
+ * (not NaN) when `analyzed` is 0, e.g. an empty `news` table.
+ */
+export interface SentimentSummaryDto {
+  positive: number
+  neutral: number
+  negative: number
+  analyzed: number
+  averageConfidence: number
+  model: string
+}
