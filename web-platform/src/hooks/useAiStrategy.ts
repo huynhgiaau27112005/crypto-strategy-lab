@@ -6,6 +6,7 @@ import type {
   AiValidationResultDto,
   GenerateAiStrategyResponse,
   RunAiStrategyResponse,
+  StrategyDomain,
 } from '../api/types'
 
 export type AiGenerateState = 'idle' | 'generating' | 'done' | 'error'
@@ -33,6 +34,11 @@ export function useAiStrategy() {
   const [validating, setValidating] = useState(false)
 
   const [saveName, setSaveName] = useState('')
+  // Required before Save is enabled — see AiStrategyPage's domain select
+  // and ai-strategy.dto.ts's saveStrategySchema (backend rejects a missing
+  // domain; this mirrors that requirement for the UI's disabled state,
+  // never as the actual enforcement).
+  const [domain, setDomain] = useState<StrategyDomain | ''>('')
   const [saveState, setSaveState] = useState<AiSaveState>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
   const [savedDetail, setSavedDetail] = useState<AiStrategyDetailDto | null>(null)
@@ -130,13 +136,13 @@ export function useAiStrategy() {
   }, [])
 
   const save = useCallback(async () => {
-    if (!saveName.trim() || !code.trim() || saveState === 'saving') return
+    if (!saveName.trim() || !code.trim() || !domain || saveState === 'saving') return
     setSaveState('saving')
     setSaveError(null)
     try {
       const detail = await apiFetch<AiStrategyDetailDto>('/ai-strategy/save', {
         method: 'POST',
-        body: JSON.stringify({ name: saveName.trim(), code }),
+        body: JSON.stringify({ name: saveName.trim(), code, domain }),
       })
       setSavedDetail(detail)
       setSaveState('done')
@@ -145,7 +151,7 @@ export function useAiStrategy() {
       setSaveError(err instanceof Error ? err.message : 'Lưu strategy thất bại.')
       setSaveState('error')
     }
-  }, [saveName, code, saveState, refreshMine])
+  }, [saveName, code, domain, saveState, refreshMine])
 
   const runSaved = useCallback(async (id: string, timeframe = '1h', limit = 200) => {
     setRunState('running')
@@ -181,6 +187,8 @@ export function useAiStrategy() {
 
     saveName,
     setSaveName,
+    domain,
+    setDomain,
     saveState,
     saveError,
     savedDetail,

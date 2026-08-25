@@ -11,19 +11,31 @@ import { BacktestRunRepository } from '../backtesting/repositories/backtest-run.
 import { StrategyWeightMap } from '../composite-strategy/composite-strategy.service';
 import { LeaderboardService } from '../leaderboard/leaderboard.service';
 import {
+  aiStrategyIdFromType,
   DEFAULT_SEARCH_CONFIG,
+  isAiStrategyType,
   SearchConfig,
+  SearchStrategyType,
   StartSearchRequest,
+  strategyRowDomain,
+  strategyTypeKey,
   StrategyDomain,
   StrategyWeight,
   defaultEqualWeights,
 } from './domain/search.types';
-import { DomainGuidedRandomGenerator } from './generators/domain-guided-random.generator';
+import { aiCatalogEntry, STRATEGY_CATALOG } from './catalog/strategy-catalog';
+import {
+  DomainGuidedRandomGenerator,
+  RunCatalog,
+} from './generators/domain-guided-random.generator';
 import {
   CandidateDetail,
   CandidateRepository,
 } from './repositories/candidate.repository';
-import { ExperimentConfigRepository } from './repositories/experiment-config.repository';
+import {
+  ExperimentConfigRepository,
+  WeightRow,
+} from './repositories/experiment-config.repository';
 import { ExperimentIterationRepository } from './repositories/experiment-iteration.repository';
 import { ExperimentRepository } from './repositories/experiment.repository';
 import { StrategyRepository } from './repositories/strategy.repository';
@@ -40,6 +52,11 @@ import {
 } from '../leaderboard/leaderboard-cache-keys';
 import type { SearchTopRow } from './repositories/experiment.repository';
 import { MetricsService } from '../../observability/metrics/metrics.service';
+import { AiStrategyRepository } from '../ai-strategy/repositories/ai-strategy.repository';
+import { AiStrategySignalPrecomputeService } from '../ai-strategy/ai-strategy-signal-precompute.service';
+import { CandleInput } from '../ai-strategy/ai-strategy.types';
+import { CandleEntity } from '../../database/types';
+import { StrategySignal } from '../strategy-engine/strategy.types';
 
 @Injectable()
 export class StrategySearchService implements OnApplicationBootstrap {
@@ -65,6 +82,8 @@ export class StrategySearchService implements OnApplicationBootstrap {
     private readonly searchQueue: SearchQueueService,
     private readonly cache: CacheService,
     private readonly metrics: MetricsService,
+    private readonly aiStrategies: AiStrategyRepository,
+    private readonly aiPrecompute: AiStrategySignalPrecomputeService,
   ) {}
 
   // Runs in BOTH the API process and the worker process (StrategySearchModule
@@ -107,17 +126,38 @@ export class StrategySearchService implements OnApplicationBootstrap {
     const weights: StrategyWeight[] =
       request.strategyWeights ??
       defaultEqualWeights(
-        config.enabledDomains.flatMap((domain) => this.typesForDomain(domain)),
+        config.enabledDomains.map((domain) => this.builtinTypeForDomain(domain)),
       );
     this.assertWeightsValid(weights);
-    this.assertWeightsCoverEnabledDomains(weights, config.enabledDomains);
-    const strategyWeights = weights.map((w) => {
-      const strategy = byName.get(w.type);
-      if (!strategy) {
-        throw new BadRequestException(`Unknown strategy type "${w.type}".`);
-      }
-      return { strategyId: strategy.id, weight: w.weight };
-    });
+
+    // Resolve every requested type to its `strategies` row and domain —
+    // built-in by name (shared, no ownership check), AI by id scoped to
+    // this user and required to be active (see AiStrategyRepository.
+    // findOwnedActiveById). A domain now comes from the actual resolved
+    // row rather than a fixed domain->type table, since a domain can be
+    // covered by a built-in, by one or more of the user's own AI
+    // strategies, or both.
+    const resolved = await Promise.all(
+      weights.map(async (w) => {
+        if (isAiStrategyType(w.type)) {
+          const id = aiStrategyIdFromType(w.type);
+          const row = await this.aiStrategies.findOwnedActiveById(id, userId);
+          if (!row) {
+            throw new BadRequestException(
+              `AI strategy "${w.type}" not found, inactive, or not owned by this account.`,
+            );
+          }
+          return { weight: w.weight, strategyId: row.id, domain: strategyRowDomain(row) };
+        }
+        const strategy = byName.get(w.type);
+        if (!strategy) {
+          throw new BadRequestException(`Unknown strategy type "${w.type}".`);
+        }
+        return { weight: w.weight, strategyId: strategy.id, domain: strategyRowDomain(strategy) };
+      }),
+    );
+    this.assertWeightsCoverEnabledDomains(resolved, config.enabledDomains);
+    const strategyWeights = resolved.map((r) => ({ strategyId: r.strategyId, weight: r.weight }));
 
     const experiment = await this.database.withTransaction(async (client) => {
       const created = await this.experiments.create(userId, null, client);
@@ -295,26 +335,27 @@ export class StrategySearchService implements OnApplicationBootstrap {
     return resolved;
   }
 
-  // Inverts typesForDomain() to recover which StrategyDomains are
-  // represented by the persisted experiment_config_strategies rows. This
+  // Recovers which StrategyDomains are represented by the persisted
+  // experiment_config_strategies rows, resolving each row's domain
+  // directly (built-in by name, AI by its recorded `parameters.domain` —
+  // see strategyRowDomain) rather than a fixed domain->type table, since a
+  // domain can now be covered by a built-in, an AI strategy, or both. This
   // keeps a resumed-after-restart config's enabledDomains in sync with the
-  // weights that were actually persisted for the experiment, instead of
-  // defaulting to all four domains regardless of what the experiment was
-  // started with.
+  // weights actually persisted for the experiment. A row whose domain
+  // cannot be resolved (e.g. a legacy AI row with no domain recorded) is
+  // skipped rather than failing the whole reconstruction.
   private domainsFromWeightRows(
-    rows: Array<{ name: string }>,
+    rows: Array<{ name: string; type: string; parameters: Record<string, unknown> }>,
   ): StrategyDomain[] {
-    const allDomains: StrategyDomain[] = [
-      'TREND',
-      'MOMENTUM',
-      'VOLATILITY',
-      'STRUCTURE',
-    ];
-    const typesPresent = new Set(rows.map((row) => row.name));
-    const domains = allDomains.filter((domain) =>
-      this.typesForDomain(domain).some((type) => typesPresent.has(type)),
-    );
-    return domains.length > 0 ? domains : DEFAULT_SEARCH_CONFIG.enabledDomains;
+    const domains = new Set<StrategyDomain>();
+    for (const row of rows) {
+      try {
+        domains.add(strategyRowDomain(row));
+      } catch {
+        // Skip — see doc comment above.
+      }
+    }
+    return domains.size > 0 ? [...domains] : DEFAULT_SEARCH_CONFIG.enabledDomains;
   }
 
   // Enqueues the search onto the "search" BullMQ queue instead of running
@@ -353,14 +394,18 @@ export class StrategySearchService implements OnApplicationBootstrap {
       if (!experimentConfig) throw new Error('Experiment config not found.');
       const weightRows =
         await this.experimentConfigs.weightsByExperimentId(experimentId);
-      const strategyIdByName = new Map(
-        weightRows.map((row) => [row.name, row.strategy_id]),
+      const keyedRows = weightRows.map((row) => ({
+        row,
+        key: strategyTypeKey({ id: row.strategy_id, name: row.name, type: row.type }),
+      }));
+      const strategyIdByType = new Map(
+        keyedRows.map(({ row, key }) => [key, row.strategy_id]),
       );
       // Weights belong to the experiment CONFIG and are fixed for every
       // candidate in this run, so they are passed into the backtest rather
       // than carried on CandidateMember. See artifacts/decisions.md §4b.
       const weightMap = Object.fromEntries(
-        weightRows.map((row) => [row.name, Number(row.weight)]),
+        keyedRows.map(({ row, key }) => [key, Number(row.weight)]),
       ) as StrategyWeightMap;
 
       const seed = Date.now() >>> 0;
@@ -375,6 +420,36 @@ export class StrategySearchService implements OnApplicationBootstrap {
           'The experiment dataset no longer contains enough candles.',
         );
       }
+
+      // Precompute every AI strategy's whole-series signals EXACTLY ONCE
+      // for this run — every candidate generated below shares this same
+      // candle series (see AiStrategySignalPrecomputeService's doc
+      // comment for why this, not per-candidate or per-candle, is the
+      // right amortization point). A strategy that fails here (broken
+      // code, a timed-out subprocess) is logged and simply excluded from
+      // the run catalog below — see buildRunCatalog() — never lets one
+      // broken AI strategy hang or fail the whole experiment.
+      const aiRows = keyedRows.filter(({ row }) => row.type === 'AI_GENERATED');
+      const aiSignalsByType = aiRows.length
+        ? await this.aiPrecompute.precompute(
+            aiRows.map(({ row, key }) => ({
+              key,
+              sourceCode: row.source_code ?? '',
+            })),
+            this.toAiCandleInput(candles),
+          )
+        : new Map<string, StrategySignal[]>();
+      const aiSignals = aiSignalsByType as unknown as Map<
+        SearchStrategyType,
+        StrategySignal[]
+      >;
+
+      const runCatalog = this.buildRunCatalog(keyedRows, aiSignalsByType);
+      const usableDomains = config.enabledDomains.filter(
+        (domain) => runCatalog[domain].length > 0,
+      );
+      this.assertUsableDomains(usableDomains, config.enabledDomains);
+      const runConfig: SearchConfig = { ...config, enabledDomains: usableDomains };
 
       let generated = await this.iterations.countByExperimentId(experimentId);
       let bestScore = Number.NEGATIVE_INFINITY;
@@ -406,7 +481,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
         }
         attempts += 1;
 
-        const generatedCandidate = this.generator.generate(random, config);
+        const generatedCandidate = this.generator.generate(random, runConfig, runCatalog);
         const candidateDefinition =
           this.fingerprintService.canonicalize(generatedCandidate);
 
@@ -424,7 +499,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
               client,
               iteration.id,
               candidateDefinition.members.map((member) => {
-                const strategyId = strategyIdByName.get(member.type);
+                const strategyId = strategyIdByType.get(member.type);
                 if (!strategyId) {
                   throw new Error(
                     `No strategyId resolved for generated member type "${member.type}"; ` +
@@ -441,6 +516,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
             candidateDefinition,
             candles,
             weightMap,
+            aiSignals,
           );
           this.metrics.backtestsRunTotal.inc();
           await this.backtestRuns.complete(candidateEntity.id, result);
@@ -505,19 +581,107 @@ export class StrategySearchService implements OnApplicationBootstrap {
     }
   }
 
-  private typesForDomain(
+  // The one built-in plugin type for a domain — used only for the
+  // default-equal-weight fallback in start() when the caller omits
+  // strategyWeights entirely (a caller that wants an AI strategy included
+  // must say so explicitly via strategyWeights; the default never reaches
+  // into "the user's AI strategies" on its own).
+  private builtinTypeForDomain(
     domain: StrategyDomain,
-  ): Array<'MA' | 'RSI' | 'BOLLINGER' | 'SUPPORT_RESISTANCE'> {
-    const map: Record<
-      StrategyDomain,
-      Array<'MA' | 'RSI' | 'BOLLINGER' | 'SUPPORT_RESISTANCE'>
-    > = {
-      TREND: ['MA'],
-      MOMENTUM: ['RSI'],
-      VOLATILITY: ['BOLLINGER'],
-      STRUCTURE: ['SUPPORT_RESISTANCE'],
+  ): 'MA' | 'RSI' | 'BOLLINGER' | 'SUPPORT_RESISTANCE' {
+    const map: Record<StrategyDomain, 'MA' | 'RSI' | 'BOLLINGER' | 'SUPPORT_RESISTANCE'> = {
+      TREND: 'MA',
+      MOMENTUM: 'RSI',
+      VOLATILITY: 'BOLLINGER',
+      STRUCTURE: 'SUPPORT_RESISTANCE',
     };
     return map[domain];
+  }
+
+  // Maps candle rows to the ai-strategy module's CandleInput contract —
+  // same shape AiStrategyService.run() builds for the standalone "chạy
+  // thử" endpoint, duplicated here (not imported) because it is a trivial,
+  // one-way field mapping and importing it would pull a controller-facing
+  // service into the search module for no benefit.
+  private toAiCandleInput(candles: CandleEntity[]): CandleInput[] {
+    return candles.map((c) => ({
+      timestamp: new Date(c.timestamp).getTime(),
+      open: Number(c.open),
+      high: Number(c.high),
+      low: Number(c.low),
+      close: Number(c.close),
+      volume: Number(c.volume),
+    }));
+  }
+
+  // Builds this run's per-domain sampler catalog from the experiment's
+  // actual weight rows: a built-in row contributes the fixed
+  // STRATEGY_CATALOG entry for its domain, an AI row contributes a fixed
+  // (non-randomized) member pinned to its exact strategyId/version — but
+  // ONLY if its signals were successfully precomputed (aiSignalsByType has
+  // its key). This is where a failed/excluded AI strategy actually stops
+  // participating in candidate generation for this run — see run()'s
+  // "Precompute" comment.
+  private buildRunCatalog(
+    keyedRows: Array<{ row: WeightRow; key: SearchStrategyType }>,
+    aiSignalsByType: Map<string, StrategySignal[]>,
+  ): RunCatalog {
+    const catalog: RunCatalog = { TREND: [], MOMENTUM: [], VOLATILITY: [], STRUCTURE: [] };
+    for (const { row, key } of keyedRows) {
+      let domain: StrategyDomain;
+      try {
+        domain = strategyRowDomain(row);
+      } catch (error) {
+        this.logger.warn(
+          `Weight row for "${row.name}" has no resolvable domain and is excluded from this run: ${this.errorMessage(error)}`,
+        );
+        continue;
+      }
+      if (row.type === 'AI_GENERATED') {
+        if (!aiSignalsByType.has(key)) continue; // excluded — precompute failed
+        catalog[domain].push(
+          aiCatalogEntry({ id: row.strategy_id, domain, version: row.version }),
+        );
+      } else {
+        const entry = STRATEGY_CATALOG[domain];
+        if (entry.type === row.name) catalog[domain].push(entry);
+      }
+    }
+    return catalog;
+  }
+
+  // Fails the run explicitly (rather than letting the generator crash
+  // mid-loop on an empty domain array, or silently searching a narrower
+  // space than the experiment was started with) when precompute
+  // failures/domain-resolution gaps leave no directional or no
+  // confirmation domain usable. A partial reduction that still leaves both
+  // roles covered is allowed to proceed — logged, not fatal.
+  private assertUsableDomains(
+    usableDomains: StrategyDomain[],
+    requestedDomains: StrategyDomain[],
+  ): void {
+    const dropped = requestedDomains.filter((d) => !usableDomains.includes(d));
+    if (dropped.length === 0) {
+      // Nothing was excluded by precompute failures/domain-resolution gaps
+      // — trust the directional/confirmation invariant start()'s
+      // validateRequest() already established before this experiment's
+      // weights were persisted; re-deriving domains from persisted rows
+      // (loadConfig()'s reconstruction path) can legitimately yield a
+      // single domain in isolation (e.g. a resumed test/tooling fixture),
+      // which is not this method's concern to re-validate.
+      return;
+    }
+    this.logger.warn(
+      `Domains unusable for this run (no available strategy): ${dropped.join(', ')}`,
+    );
+    const hasDirectional = usableDomains.some((d) => d === 'TREND' || d === 'STRUCTURE');
+    const hasConfirmation = usableDomains.some((d) => d === 'MOMENTUM' || d === 'VOLATILITY');
+    if (!hasDirectional || !hasConfirmation) {
+      throw new Error(
+        'No directional and confirmation domain pair is usable for this run — ' +
+          'every candidate strategy for the missing role failed to precompute or resolve.',
+      );
+    }
   }
 
   // CompositeStrategyService.analyze() divides the weighted sum by the sum
@@ -553,18 +717,18 @@ export class StrategySearchService implements OnApplicationBootstrap {
   // candidate member with no strategyId, and a weight for a type whose
   // domain isn't enabled is silently useless. Either case previously
   // produced an experiment that runs to COMPLETED with zero candidates.
+  // Domain is read from each RESOLVED weight entry (built-in or AI) rather
+  // than a fixed domain->type table — a domain can now be covered by a
+  // built-in, one or more AI strategies, or both.
   private assertWeightsCoverEnabledDomains(
-    weights: StrategyWeight[],
+    resolved: Array<{ domain: StrategyDomain }>,
     enabledDomains: StrategyDomain[],
   ): void {
-    const expectedTypes = new Set(
-      enabledDomains.flatMap((domain) => this.typesForDomain(domain)),
-    );
-    const givenTypes = new Set(weights.map((w) => w.type));
+    const givenDomains = new Set(resolved.map((r) => r.domain));
 
-    const missing = [...expectedTypes].filter((type) => !givenTypes.has(type));
-    const unexpected = [...givenTypes].filter(
-      (type) => !expectedTypes.has(type),
+    const missing = enabledDomains.filter((domain) => !givenDomains.has(domain));
+    const unexpected = [...givenDomains].filter(
+      (domain) => !enabledDomains.includes(domain),
     );
 
     if (missing.length > 0 || unexpected.length > 0) {
@@ -576,7 +740,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
       }
       if (unexpected.length > 0) {
         parts.push(
-          `weights given for types whose domain is not enabled: ${unexpected.join(', ')}`,
+          `weights given for a domain that is not enabled: ${unexpected.join(', ')}`,
         );
       }
       throw new BadRequestException(

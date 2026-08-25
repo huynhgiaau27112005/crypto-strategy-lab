@@ -3,6 +3,7 @@ import BlueprintCorners from './BlueprintCorners'
 import Panel from './Panel'
 import { useStrategyVersions } from '../hooks/useStrategyVersions'
 import type { ParameterSpec, StrategyCatalogItem, StrategyVersionSummary } from '../api/types'
+import { isAiStrategyType } from '../api/types'
 
 function defaultValues(schema: ParameterSpec[]): Record<string, number> {
   const values: Record<string, number> = {}
@@ -117,6 +118,28 @@ export default function ParameterPanel({ strategy }: { strategy: StrategyCatalog
         <div className="kicker">Tham số plugin</div>
         <p className="text-muted parameter-panel-empty">
           Chọn một strategy ở danh sách bên trái để xem tham số.
+        </p>
+      </Panel>
+    )
+  }
+
+  // An AI-generated strategy has no numeric parameter space or version
+  // history through this panel — it is Python source code, versioned via
+  // the AI Strategy tab's own save flow, not through
+  // StrategyPluginService.saveVersion(). Show a simplified, read-only
+  // summary instead of the built-in version picker/save form.
+  if (isAiStrategyType(strategy.type)) {
+    return (
+      <Panel className="parameter-panel">
+        <div className="kicker">Tham số plugin</div>
+        <h4 className="parameter-panel-title">{strategy.displayName}</h4>
+        <div className="text-muted mono parameter-panel-meta">
+          {strategy.type} · {strategy.domain}
+          {strategy.version != null ? ` · v${strategy.version}` : ''}
+        </div>
+        <p className="text-muted parameter-note" style={{ marginTop: 12 }}>
+          Strategy do AI sinh — không có tham số số học để chỉnh ở đây. Chỉnh sửa code và lưu version mới
+          ở tab AI Strategy.
         </p>
       </Panel>
     )

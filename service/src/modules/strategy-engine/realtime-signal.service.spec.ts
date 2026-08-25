@@ -56,6 +56,7 @@ describe('RealtimeSignalService', () => {
     const registry = {
       list: () => plugins,
       get: (type: string) => plugins.find((p) => p.type === type),
+      resolve: (type: string) => plugins.find((p) => p.type === type),
     } as unknown as StrategyRegistry;
     const strategyEngine = new StrategyEngineService(registry);
     const composite = new CompositeStrategyService(strategyEngine);
@@ -92,6 +93,7 @@ describe('RealtimeSignalService', () => {
     const registry = {
       list: () => plugins,
       get: (type: string) => plugins.find((p) => p.type === type),
+      resolve: (type: string) => plugins.find((p) => p.type === type),
     } as unknown as StrategyRegistry;
     const strategyEngine = new StrategyEngineService(registry);
     const composite = new CompositeStrategyService(strategyEngine);

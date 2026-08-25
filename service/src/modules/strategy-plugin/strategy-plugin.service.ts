@@ -1,20 +1,31 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { StrategyRegistry } from './strategy-registry';
 import { StrategyRepository } from '../strategy-search/repositories/strategy.repository';
 import { StrategyCatalogItem, StrategyVersionSummary } from './strategy-plugin.types';
-import { SearchStrategyType } from '../strategy-search/domain/search.types';
+import { aiStrategyType, SearchStrategyType, strategyRowDomain } from '../strategy-search/domain/search.types';
+import { AiStrategyRepository } from '../ai-strategy/repositories/ai-strategy.repository';
 
 @Injectable()
 export class StrategyPluginService {
+  private readonly logger = new Logger(StrategyPluginService.name);
+
   constructor(
     private readonly registry: StrategyRegistry,
     private readonly strategies: StrategyRepository,
+    private readonly aiStrategies: AiStrategyRepository,
   ) {}
 
-  async listCatalog(): Promise<StrategyCatalogItem[]> {
+  // Built-in plugins (shared, same for every caller) plus this user's own
+  // saved AI strategies (per-user — task-15's "Strategy sau khi lưu sẽ
+  // xuất hiện ở nhóm 'Strategy do AI generate'"). AI entries are built
+  // directly from `strategies` rows, NOT from registry.list() — the
+  // registry's AI adapter is a single shared instance used only to
+  // *resolve* an "AI:<id>" type at analyze() time (see
+  // strategy-registry.ts), it does not enumerate individual AI strategies.
+  async listCatalog(userId: string): Promise<StrategyCatalogItem[]> {
     const rows = await this.strategies.listSystemStrategies();
     const byName = new Map(rows.map((row) => [row.name, row]));
-    return this.registry.list().map((plugin) => {
+    const builtIns = this.registry.list().map((plugin) => {
       const row = byName.get(plugin.type) ?? null;
       return {
         type: plugin.type,
@@ -26,6 +37,33 @@ export class StrategyPluginService {
         version: row?.version ?? null,
       };
     });
+
+    const aiRows = await this.aiStrategies.listLatestPerName(userId);
+    const aiItems: StrategyCatalogItem[] = [];
+    for (const row of aiRows) {
+      try {
+        aiItems.push({
+          type: aiStrategyType(row.id),
+          domain: strategyRowDomain(row),
+          displayName: row.name,
+          description: 'Strategy do AI sinh — chạy qua subprocess Python, không có tham số điều chỉnh ở đây.',
+          parameterSchema: [],
+          strategyId: row.id,
+          version: row.version,
+        });
+      } catch (error) {
+        // Legacy row saved before domain selection existed — cannot be
+        // combined into a search candidate without a domain, so it is
+        // omitted from the catalog rather than failing the whole listing.
+        this.logger.warn(
+          `AI strategy "${row.name}" (${row.id}) omitted from the catalog: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
+    return [...builtIns, ...aiItems];
   }
 
   async listVersions(name: string, userId: string): Promise<StrategyVersionSummary[]> {

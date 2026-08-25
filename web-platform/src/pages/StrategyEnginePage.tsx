@@ -7,6 +7,7 @@ import WeightedVotingTable from '../components/WeightedVotingTable'
 import { useStrategySignal } from '../hooks/useStrategySignal'
 import { useStrategySelection } from '../state/StrategySelectionContext'
 import type { SearchStrategyType, StrategyCatalogItem, StrategySignal } from '../api/types'
+import { isAiStrategyType } from '../api/types'
 
 /** Reference interval for this tab's live signal read — matches the
  * approved prototype's "Tín hiệu trên chart (BTCUSDT · 15m)" heading for
@@ -79,6 +80,8 @@ export default function StrategyEnginePage() {
 
   const detailStrategy = strategies.find((s) => s.type === detailType) ?? strategies[0] ?? null
   const selectedStrategies = strategies.filter((s) => selected[s.type])
+  const systemStrategies = strategies.filter((s) => !isAiStrategyType(s.type))
+  const aiStrategies = strategies.filter((s) => isAiStrategyType(s.type))
 
   const perStrategySignalOf = (type: SearchStrategyType) =>
     signal?.perStrategy.find((p) => p.type === type)?.signal ?? null
@@ -96,11 +99,11 @@ export default function StrategyEnginePage() {
             <p className="text-muted">Đang tải danh sách strategy…</p>
           ) : error ? (
             <p className="text-muted">Lỗi: {error}</p>
-          ) : strategies.length === 0 ? (
+          ) : systemStrategies.length === 0 ? (
             <p className="text-muted">Chưa có strategy hệ thống nào.</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {strategies.map((s) => (
+              {systemStrategies.map((s) => (
                 <StrategyRow
                   key={s.type}
                   strategy={s}
@@ -123,9 +126,29 @@ export default function StrategyEnginePage() {
           <p className="text-muted" style={{ fontSize: 12, margin: '0 0 12px' }}>
             Sinh từ prompt của tài khoản này ở tab AI Strategy.
           </p>
-          <p className="text-muted" style={{ fontSize: 12 }}>
-            Chưa có strategy nào do AI sinh ra cho tài khoản này.
-          </p>
+          {loading ? (
+            <p className="text-muted">Đang tải danh sách strategy…</p>
+          ) : error ? (
+            <p className="text-muted">Lỗi: {error}</p>
+          ) : aiStrategies.length === 0 ? (
+            <p className="text-muted">Chưa có strategy nào do AI sinh ra cho tài khoản này.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {aiStrategies.map((s) => (
+                <StrategyRow
+                  key={s.type}
+                  strategy={s}
+                  checked={!!selected[s.type]}
+                  focused={detailStrategy?.type === s.type}
+                  onToggle={() => toggleSelected(s.type)}
+                  onSelect={() => setDetailType(s.type)}
+                  signal={perStrategySignalOf(s.type)}
+                  signalLoading={signalLoading}
+                  signalError={signalError}
+                />
+              ))}
+            </div>
+          )}
           <button
             type="button"
             className="btn btn-secondary btn-block"

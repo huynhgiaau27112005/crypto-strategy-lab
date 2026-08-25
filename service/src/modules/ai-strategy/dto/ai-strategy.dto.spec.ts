@@ -31,18 +31,36 @@ describe('generateStrategySchema', () => {
 });
 
 describe('saveStrategySchema', () => {
-  it('accepts a valid name and code', () => {
-    const result = saveStrategySchema.safeParse({ name: 'MY_STRATEGY_1', code: 'def generate_signals(candles):\n    return []' });
+  it('accepts a valid name, code, and domain', () => {
+    const result = saveStrategySchema.safeParse({
+      name: 'MY_STRATEGY_1',
+      code: 'def generate_signals(candles):\n    return []',
+      domain: 'MOMENTUM',
+    });
     expect(result.success).toBe(true);
   });
 
   it('rejects a name with spaces or special characters', () => {
-    const result = saveStrategySchema.safeParse({ name: 'my strategy!', code: 'x' });
+    const result = saveStrategySchema.safeParse({ name: 'my strategy!', code: 'x', domain: 'MOMENTUM' });
     expect(result.success).toBe(false);
   });
 
   it('rejects an empty code field', () => {
-    const result = saveStrategySchema.safeParse({ name: 'OK', code: '' });
+    const result = saveStrategySchema.safeParse({ name: 'OK', code: '', domain: 'MOMENTUM' });
+    expect(result.success).toBe(false);
+  });
+
+  // A domain is required, not defaulted — an AI strategy without one
+  // cannot be combined into a search candidate (see search.types.ts's
+  // strategyRowDomain). This is what actually forces the choice at save
+  // time instead of a silent default.
+  it('rejects a missing domain', () => {
+    const result = saveStrategySchema.safeParse({ name: 'OK', code: 'x' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a domain outside the fixed 4-value set', () => {
+    const result = saveStrategySchema.safeParse({ name: 'OK', code: 'x', domain: 'BOGUS' });
     expect(result.success).toBe(false);
   });
 });

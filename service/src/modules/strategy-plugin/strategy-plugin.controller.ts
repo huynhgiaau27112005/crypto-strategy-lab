@@ -17,8 +17,8 @@ export class StrategyPluginController {
 
   @UseGuards(JwtAuthGuard)
   @Get('strategies')
-  listStrategies(): Promise<StrategyCatalogItem[]> {
-    return this.strategyPluginService.listCatalog();
+  listStrategies(@CurrentUser() user: CurrentUserPayload): Promise<StrategyCatalogItem[]> {
+    return this.strategyPluginService.listCatalog(user.id);
   }
 
   // Versions this user is entitled to see for `name`: the shared SYSTEM

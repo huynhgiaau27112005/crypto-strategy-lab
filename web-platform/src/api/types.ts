@@ -125,8 +125,17 @@ export interface RealtimeSignalDto {
  */
 export type StrategyDomain = 'TREND' | 'MOMENTUM' | 'VOLATILITY' | 'STRUCTURE'
 
-/** The four registered plugin types — service/src/modules/strategy-plugin/plugins/*. */
-export type SearchStrategyType = 'MA' | 'RSI' | 'BOLLINGER' | 'SUPPORT_RESISTANCE'
+/**
+ * The four built-in plugin types (service/src/modules/strategy-plugin/plugins/*)
+ * plus the "AI:<strategyId>" namespace for a user's own saved AI-generated
+ * strategy — see service/src/modules/strategy-search/domain/search.types.ts.
+ */
+export type SearchStrategyType = 'MA' | 'RSI' | 'BOLLINGER' | 'SUPPORT_RESISTANCE' | `AI:${string}`
+
+/** True for a catalog/weight entry that is a user's own AI-generated strategy rather than a built-in plugin. */
+export function isAiStrategyType(type: string): type is `AI:${string}` {
+  return type.startsWith('AI:')
+}
 
 /** One numeric parameter a plugin exposes, part of GET /strategy-plugin/strategies. */
 export interface ParameterSpec {
@@ -413,6 +422,13 @@ export interface GenerateAiStrategyResponse {
   validation: AiValidationResultDto
 }
 
+/** Body of POST /ai-strategy/save — `domain` is required (task-15): a saved AI strategy needs one to be combinable in Strategy Search, never silently defaulted. */
+export interface SaveAiStrategyRequest {
+  name: string
+  code: string
+  domain: StrategyDomain
+}
+
 /** Response of GET /ai-strategy/mine (one row) — no source_code, for the account's strategy table. */
 export interface AiStrategySummaryDto {
   id: string
@@ -420,6 +436,8 @@ export interface AiStrategySummaryDto {
   version: number
   createdAt: string
   isActive: boolean
+  /** null only for a strategy saved before domain selection existed. */
+  domain: StrategyDomain | null
 }
 
 /** Response of GET /ai-strategy/:id and POST /ai-strategy/save — includes source. */

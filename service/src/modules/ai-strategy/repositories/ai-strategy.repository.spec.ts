@@ -70,7 +70,7 @@ describe('AiStrategyRepository', () => {
       } as unknown as DatabaseService;
       const repository = new AiStrategyRepository(database);
 
-      const result = await repository.createVersion('user-1', 'MY_STRAT', 'def generate_signals(candles):\n    return []');
+      const result = await repository.createVersion('user-1', 'MY_STRAT', 'def generate_signals(candles):\n    return []', 'MOMENTUM');
 
       expect(result).toEqual(
         expect.objectContaining({ id: 'new-row', version: 1, type: 'AI_GENERATED', owner_user_id: 'user-1' }),
@@ -107,7 +107,7 @@ describe('AiStrategyRepository', () => {
       } as unknown as DatabaseService;
       const repository = new AiStrategyRepository(database);
 
-      const result = await repository.createVersion('user-1', 'MY_STRAT', 'def generate_signals(candles):\n    return []');
+      const result = await repository.createVersion('user-1', 'MY_STRAT', 'def generate_signals(candles):\n    return []', 'MOMENTUM');
       expect(result).toEqual({ id: 'new-row', version: 3, type: 'AI_GENERATED' });
       expect(attempt).toBe(2);
     });

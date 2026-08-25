@@ -121,6 +121,12 @@ describe('StrategySearchService', () => {
     };
 
     const metrics = new MetricsService();
+    const aiStrategies = {
+      findOwnedActiveById: jest.fn().mockResolvedValue(null),
+    };
+    const aiPrecompute = {
+      precompute: jest.fn().mockResolvedValue(new Map()),
+    };
 
     const mocks = {
       database,
@@ -137,6 +143,8 @@ describe('StrategySearchService', () => {
       searchQueue,
       cache,
       metrics,
+      aiStrategies,
+      aiPrecompute,
       ...overrides,
     };
 
@@ -155,6 +163,8 @@ describe('StrategySearchService', () => {
       mocks.searchQueue as any,
       mocks.cache as any,
       mocks.metrics as any,
+      mocks.aiStrategies as any,
+      mocks.aiPrecompute as any,
     );
 
     return { service, mocks };

@@ -6,6 +6,7 @@ import { CandleRepository } from '../market-data/repositories/candle.repository'
 import { LLM_PROVIDER } from './providers/llm-provider.factory';
 import type {
   AiStrategyDetail,
+  AiStrategyDomain,
   AiStrategySummary,
   CandleInput,
   GeneratedStrategy,
@@ -67,7 +68,12 @@ export class AiStrategyService {
    * could have passed since generate()). Rejects with the failing checks
    * if invalid; never silently saves broken code.
    */
-  async save(userId: string, name: string, code: string): Promise<AiStrategyDetail> {
+  async save(
+    userId: string,
+    name: string,
+    code: string,
+    domain: AiStrategyDomain,
+  ): Promise<AiStrategyDetail> {
     const validation = await this.validator.validate(code);
     if (!validation.valid) {
       const reasons = validation.checks
@@ -77,7 +83,7 @@ export class AiStrategyService {
       throw new BadRequestException(`Strategy failed validation, not saved. ${reasons}`);
     }
 
-    const row = await this.repository.createVersion(userId, name, code);
+    const row = await this.repository.createVersion(userId, name, code, domain);
     return toDetail(row);
   }
 
@@ -146,6 +152,15 @@ export class AiStrategyService {
   }
 }
 
+const VALID_DOMAINS: readonly AiStrategyDomain[] = ['TREND', 'MOMENTUM', 'VOLATILITY', 'STRUCTURE'];
+
+function rowDomain(row: StrategyEntity): AiStrategyDomain | null {
+  const domain = row.parameters?.domain;
+  return typeof domain === 'string' && (VALID_DOMAINS as string[]).includes(domain)
+    ? (domain as AiStrategyDomain)
+    : null;
+}
+
 function toSummary(row: StrategyEntity): AiStrategySummary {
   return {
     id: row.id,
@@ -153,6 +168,7 @@ function toSummary(row: StrategyEntity): AiStrategySummary {
     version: row.version,
     createdAt: row.created_at,
     isActive: row.is_active,
+    domain: rowDomain(row),
   };
 }
 

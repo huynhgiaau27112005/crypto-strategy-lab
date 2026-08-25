@@ -1,5 +1,14 @@
 export type Signal = 'BUY' | 'SELL' | 'HOLD';
 
+// Mirrors strategy-search/domain/search.types.ts's StrategyDomain exactly
+// (a fixed set of 4 values, unlikely to ever change). Duplicated as a
+// plain type here rather than importing across modules, so ai-strategy
+// stays independent of strategy-search — a saved AI strategy's domain is
+// meaningful (and validated) on its own, whether or not the search module
+// is even wired up. See AiStrategyRepository.createVersion and
+// artifacts/ai-strategy.md "Domain assignment".
+export type AiStrategyDomain = 'TREND' | 'MOMENTUM' | 'VOLATILITY' | 'STRUCTURE';
+
 export interface ValidationCheck {
   key: 'parses' | 'contract' | 'safety' | 'smoke';
   passed: boolean;
@@ -45,6 +54,11 @@ export interface AiStrategySummary {
   version: number;
   createdAt: Date;
   isActive: boolean;
+  // null only for a row saved before domain selection existed on this
+  // form (no migration backfills it) — such a row is excluded from the
+  // Strategy Search catalog (see strategy-plugin.service.ts) but still
+  // shown here so the user can see it exists.
+  domain: AiStrategyDomain | null;
 }
 
 export interface AiStrategyDetail extends AiStrategySummary {

@@ -52,7 +52,7 @@ describe('AiStrategyService', () => {
       const repository = { createVersion: jest.fn() };
       const { service } = makeService({ validator, repository });
 
-      await expect(service.save('user-1', 'MY_STRAT', 'import os')).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.save('user-1', 'MY_STRAT', 'import os', 'MOMENTUM')).rejects.toBeInstanceOf(BadRequestException);
       expect(repository.createVersion).not.toHaveBeenCalled();
     });
 
@@ -69,9 +69,9 @@ describe('AiStrategyService', () => {
       };
       const { service } = makeService({ repository });
 
-      const result = await service.save('user-1', 'MY_STRAT', 'def generate_signals(candles):\n    return []');
+      const result = await service.save('user-1', 'MY_STRAT', 'def generate_signals(candles):\n    return []', 'MOMENTUM');
       expect(result.id).toBe('row-1');
-      expect(repository.createVersion).toHaveBeenCalledWith('user-1', 'MY_STRAT', 'def generate_signals(candles):\n    return []');
+      expect(repository.createVersion).toHaveBeenCalledWith('user-1', 'MY_STRAT', 'def generate_signals(candles):\n    return []', 'MOMENTUM');
     });
   });
 

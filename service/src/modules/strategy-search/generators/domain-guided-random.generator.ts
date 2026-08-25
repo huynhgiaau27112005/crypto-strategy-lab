@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { STRATEGY_CATALOG } from '../catalog/strategy-catalog';
+import { CatalogEntry, STRATEGY_CATALOG } from '../catalog/strategy-catalog';
 import {
   CandidateDefinition,
   SearchAlgorithm,
@@ -7,13 +7,37 @@ import {
   StrategyDomain,
 } from '../domain/search.types';
 
+// One domain can now have more than one representative to draw from —
+// the built-in plugin AND any of this run's enabled AI strategies whose
+// domain matches (see StrategySearchService.run(), which builds this map
+// per run from the actual weightRows the experiment was started with).
+// Defaults to the built-in-only, single-entry-per-domain catalog so every
+// existing call site/test that only ever exercised built-ins keeps
+// behaving identically without passing this argument.
+export type RunCatalog = Record<StrategyDomain, CatalogEntry[]>;
+
+function defaultRunCatalog(): RunCatalog {
+  return {
+    TREND: [STRATEGY_CATALOG.TREND],
+    MOMENTUM: [STRATEGY_CATALOG.MOMENTUM],
+    VOLATILITY: [STRATEGY_CATALOG.VOLATILITY],
+    STRUCTURE: [STRATEGY_CATALOG.STRUCTURE],
+  };
+}
+
 @Injectable()
 export class DomainGuidedRandomGenerator implements SearchAlgorithm {
-  generate(random: () => number, config: SearchConfig): CandidateDefinition {
+  generate(
+    random: () => number,
+    config: SearchConfig,
+    runCatalog: RunCatalog = defaultRunCatalog(),
+  ): CandidateDefinition {
     const domains = this.pickValidDomains(random, config);
-    const members = domains.map((domain) =>
-      STRATEGY_CATALOG[domain].sample(random),
-    );
+    const members = domains.map((domain) => {
+      const entries = runCatalog[domain];
+      const entry = entries[Math.floor(random() * entries.length)];
+      return entry.sample(random);
+    });
 
     return {
       schemaVersion: 1,

@@ -43,8 +43,20 @@ describe('CandidateRepository', () => {
       overall_score: '81.400000',
     };
     const memberRows = [
-      { type: 'MA', parameters: { fastPeriod: 20, slowPeriod: 50 }, weight: '0.500000' },
-      { type: 'RSI', parameters: { period: 14 }, weight: '0.500000' },
+      {
+        strategy_id: 's-ma',
+        name: 'MA',
+        strategy_type: 'SYSTEM',
+        parameters: { fastPeriod: 20, slowPeriod: 50 },
+        weight: '0.500000',
+      },
+      {
+        strategy_id: 's-rsi',
+        name: 'RSI',
+        strategy_type: 'SYSTEM',
+        parameters: { period: 14 },
+        weight: '0.500000',
+      },
     ];
     const tradeRows = [
       {
@@ -174,6 +186,31 @@ describe('CandidateRepository', () => {
         ],
         tradeTotal: 27,
       });
+    });
+
+    it('resolves an AI_GENERATED member row to type "AI:<strategyId>", not its human name', async () => {
+      const query = jest
+        .fn()
+        .mockResolvedValueOnce({ rows: [headerRow] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              strategy_id: 'ai-1',
+              name: 'MyMomentumBot',
+              strategy_type: 'AI_GENERATED',
+              parameters: {},
+              weight: '0.500000',
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] });
+      const database = { query } as unknown as DatabaseService;
+      const repository = new CandidateRepository(database);
+
+      const detail = await repository.findDetail(CANDIDATE_ID, USER_ID, 1, 20);
+
+      expect(detail?.members).toEqual([{ type: 'AI:ai-1', parameters: {}, weight: 0.5 }]);
     });
 
     it('returns evaluation: null when the candidate has no evaluation row yet', async () => {

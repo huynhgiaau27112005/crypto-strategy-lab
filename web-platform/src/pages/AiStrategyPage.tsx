@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import BlueprintCorners from '../components/BlueprintCorners'
 import { useAiStrategy } from '../hooks/useAiStrategy'
-import type { AiValidationCheckDto } from '../api/types'
+import type { AiValidationCheckDto, StrategyDomain } from '../api/types'
 
 const CHECK_LABEL: Record<AiValidationCheckDto['key'], string> = {
   parses: 'Cú pháp Python hợp lệ',
@@ -9,6 +9,17 @@ const CHECK_LABEL: Record<AiValidationCheckDto['key'], string> = {
   safety: 'An toàn tĩnh (không import/gọi nằm ngoài allowlist)',
   smoke: 'Smoke run trên dữ liệu mẫu',
 }
+
+// Required at save time so a saved AI strategy can be combined into
+// Strategy Search (a candidate needs at least one directional + one
+// confirmation domain — see artifacts/ai-strategy.md "Domain assignment").
+// TREND/STRUCTURE decide entry direction, MOMENTUM/VOLATILITY confirm it.
+const DOMAIN_OPTIONS: Array<{ value: StrategyDomain; label: string }> = [
+  { value: 'TREND', label: 'TREND (định hướng)' },
+  { value: 'STRUCTURE', label: 'STRUCTURE (định hướng)' },
+  { value: 'MOMENTUM', label: 'MOMENTUM (xác nhận)' },
+  { value: 'VOLATILITY', label: 'VOLATILITY (xác nhận)' },
+]
 
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('vi-VN', { year: 'numeric', month: '2-digit', day: '2-digit' })
@@ -20,7 +31,7 @@ export default function AiStrategyPage() {
 
   const generating = ai.generateState === 'generating'
   const saving = ai.saveState === 'saving'
-  const canSave = !!ai.validation?.valid && ai.saveName.trim().length > 0 && !saving
+  const canSave = !!ai.validation?.valid && ai.saveName.trim().length > 0 && !!ai.domain && !saving
 
   const aiStatus = generating
     ? 'Đang sinh…'
@@ -239,6 +250,21 @@ export default function AiStrategyPage() {
                 <label>Version</label>
                 <input className="input" type="text" value="Tự động khi lưu" disabled readOnly />
               </div>
+              <div className="field">
+                <label>Domain (bắt buộc để đưa vào Search)</label>
+                <select
+                  className="input"
+                  value={ai.domain}
+                  onChange={(e) => ai.setDomain(e.target.value as typeof ai.domain)}
+                >
+                  <option value="">— Chọn domain —</option>
+                  {DOMAIN_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               {ai.saveError ? (
                 <p className="text-muted" style={{ fontSize: 11, color: 'var(--color-down, #c0392b)' }}>
                   {ai.saveError}
@@ -260,8 +286,8 @@ export default function AiStrategyPage() {
                 {saving ? 'Đang lưu…' : 'Lưu strategy'}
               </button>
               <p className="text-muted" style={{ fontSize: 11, margin: 0, lineHeight: 1.5 }}>
-                Strategy sau khi lưu sẽ xuất hiện ở nhóm "Strategy do AI generate" và được đưa vào sinh tổ hợp
-                (tính năng đưa vào Search sẽ được nối ở bước triển khai sau).
+                Strategy sau khi lưu sẽ xuất hiện ở nhóm "Strategy do AI generate" trong tab Strategy Engine,
+                có thể tick chọn và gán trọng số như strategy hệ thống, rồi đưa vào sinh tổ hợp (Search).
               </p>
             </div>
           </div>
@@ -290,6 +316,7 @@ export default function AiStrategyPage() {
                 <th>Tên strategy</th>
                 <th>Ngày tạo</th>
                 <th>Version</th>
+                <th>Domain</th>
                 <th>Trạng thái</th>
                 <th style={{ textAlign: 'right' }}>Hành động</th>
               </tr>
@@ -300,6 +327,7 @@ export default function AiStrategyPage() {
                   <td style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 }}>{s.name}</td>
                   <td style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 }}>{fmtDate(s.createdAt)}</td>
                   <td style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 }}>v{s.version}</td>
+                  <td style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 }}>{s.domain ?? '—'}</td>
                   <td>
                     <span className={`tag ${s.isActive ? 'tag-accent' : 'tag-neutral'}`}>
                       {s.isActive ? 'Active' : 'Inactive'}

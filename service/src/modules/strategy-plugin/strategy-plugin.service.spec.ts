@@ -19,8 +19,9 @@ describe('StrategyPluginService', () => {
         .mockResolvedValue([{ id: 'uuid-ma', name: 'MA', version: 3 }]),
     } as never;
 
-    const service = new StrategyPluginService(registry, repo);
-    await expect(service.listCatalog()).resolves.toEqual([
+    const aiRepo = { listLatestPerName: jest.fn().mockResolvedValue([]) } as never;
+    const service = new StrategyPluginService(registry, repo, aiRepo);
+    await expect(service.listCatalog('user-1')).resolves.toEqual([
       {
         type: 'MA',
         domain: 'TREND',
@@ -41,8 +42,9 @@ describe('StrategyPluginService', () => {
     } as never;
     const repo = { listSystemStrategies: jest.fn().mockResolvedValue([]) } as never;
 
-    const service = new StrategyPluginService(registry, repo);
-    const [item] = await service.listCatalog();
+    const aiRepo = { listLatestPerName: jest.fn().mockResolvedValue([]) } as never;
+    const service = new StrategyPluginService(registry, repo, aiRepo);
+    const [item] = await service.listCatalog('user-1');
     expect(item).toMatchObject({ type: 'RSI', strategyId: null, version: null });
   });
 
@@ -58,7 +60,8 @@ describe('StrategyPluginService', () => {
 
     it('rejects an out-of-range parameter instead of trusting the client', async () => {
       const repo = { createVersion: jest.fn() } as never;
-      const service = new StrategyPluginService(registry, repo);
+      const aiRepo = { listLatestPerName: jest.fn().mockResolvedValue([]) } as never;
+    const service = new StrategyPluginService(registry, repo, aiRepo);
       await expect(
         service.saveVersion('MA', 'user-1', { fastPeriod: 999, slowPeriod: 50 }),
       ).rejects.toThrow(/between/);
@@ -67,7 +70,8 @@ describe('StrategyPluginService', () => {
 
     it('rejects an unknown parameter key', async () => {
       const repo = { createVersion: jest.fn() } as never;
-      const service = new StrategyPluginService(registry, repo);
+      const aiRepo = { listLatestPerName: jest.fn().mockResolvedValue([]) } as never;
+    const service = new StrategyPluginService(registry, repo, aiRepo);
       await expect(
         service.saveVersion('MA', 'user-1', { fastPeriod: 10, slowPeriod: 50, bogus: 1 } as never),
       ).rejects.toThrow(/Unknown parameter/);
@@ -75,7 +79,8 @@ describe('StrategyPluginService', () => {
 
     it('rejects a missing parameter key', async () => {
       const repo = { createVersion: jest.fn() } as never;
-      const service = new StrategyPluginService(registry, repo);
+      const aiRepo = { listLatestPerName: jest.fn().mockResolvedValue([]) } as never;
+    const service = new StrategyPluginService(registry, repo, aiRepo);
       await expect(
         service.saveVersion('MA', 'user-1', { fastPeriod: 10 } as never),
       ).rejects.toThrow(/Missing parameter/);
@@ -83,7 +88,8 @@ describe('StrategyPluginService', () => {
 
     it('rejects a non-integer value for an int parameter', async () => {
       const repo = { createVersion: jest.fn() } as never;
-      const service = new StrategyPluginService(registry, repo);
+      const aiRepo = { listLatestPerName: jest.fn().mockResolvedValue([]) } as never;
+    const service = new StrategyPluginService(registry, repo, aiRepo);
       await expect(
         service.saveVersion('MA', 'user-1', { fastPeriod: 10.5, slowPeriod: 50 }),
       ).rejects.toThrow(/integer/);
@@ -91,7 +97,8 @@ describe('StrategyPluginService', () => {
 
     it('rejects a value not aligned to step', async () => {
       const repo = { createVersion: jest.fn() } as never;
-      const service = new StrategyPluginService(registry, repo);
+      const aiRepo = { listLatestPerName: jest.fn().mockResolvedValue([]) } as never;
+    const service = new StrategyPluginService(registry, repo, aiRepo);
       await expect(
         service.saveVersion('MA', 'user-1', { fastPeriod: 10, slowPeriod: 55 }),
       ).rejects.toThrow(/increments/);
@@ -99,7 +106,8 @@ describe('StrategyPluginService', () => {
 
     it('rejects an unknown strategy type', async () => {
       const repo = { createVersion: jest.fn() } as never;
-      const service = new StrategyPluginService(registry, repo);
+      const aiRepo = { listLatestPerName: jest.fn().mockResolvedValue([]) } as never;
+    const service = new StrategyPluginService(registry, repo, aiRepo);
       await expect(
         service.saveVersion('NOT_REAL', 'user-1', {}),
       ).rejects.toThrow(/No strategy plugin/);
@@ -116,7 +124,8 @@ describe('StrategyPluginService', () => {
         created_at: new Date('2026-01-01'),
       });
       const repo = { createVersion } as never;
-      const service = new StrategyPluginService(registry, repo);
+      const aiRepo = { listLatestPerName: jest.fn().mockResolvedValue([]) } as never;
+    const service = new StrategyPluginService(registry, repo, aiRepo);
       const result = await service.saveVersion('MA', 'user-1', { fastPeriod: 10, slowPeriod: 50 });
       expect(createVersion).toHaveBeenCalledWith('MA', 'user-1', { fastPeriod: 10, slowPeriod: 50 });
       expect(result).toMatchObject({ strategyId: 'new-id', version: 2, isMine: true });

@@ -15,6 +15,12 @@ export const validateStrategySchema = z.object({
 });
 export type ValidateStrategyBody = z.infer<typeof validateStrategySchema>;
 
+// `domain` is required, never defaulted: a saved AI strategy needs a
+// StrategyDomain to be combinable in Strategy Search (the generator
+// requires at least one directional and one confirmation domain per
+// candidate — see artifacts/ai-strategy.md "Domain assignment"). Asked
+// explicitly at save time rather than inferred from the source code or
+// silently defaulted to one domain for every strategy.
 export const saveStrategySchema = z.object({
   name: z
     .string()
@@ -23,6 +29,7 @@ export const saveStrategySchema = z.object({
     .max(255)
     .regex(/^[A-Za-z0-9_.\-]+$/, 'name must be alphanumeric with _ . - only'),
   code: z.string().min(1, 'code must not be empty'),
+  domain: z.enum(['TREND', 'MOMENTUM', 'VOLATILITY', 'STRUCTURE']),
 });
 export type SaveStrategyBody = z.infer<typeof saveStrategySchema>;
 

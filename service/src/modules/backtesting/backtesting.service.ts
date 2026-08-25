@@ -4,7 +4,8 @@ import {
   CompositeStrategyService,
   StrategyWeightMap,
 } from '../composite-strategy/composite-strategy.service';
-import { CandidateDefinition } from '../strategy-search/domain/search.types';
+import { CandidateDefinition, SearchStrategyType } from '../strategy-search/domain/search.types';
+import { StrategySignal } from '../strategy-engine/strategy.types';
 import {
   BacktestEvaluation,
   BacktestResult,
@@ -21,6 +22,12 @@ export class BacktestingService {
     candidate: CandidateDefinition,
     candles: CandleEntity[],
     weights: StrategyWeightMap,
+    // Precomputed whole-series AI signals (see AiStrategySignalPrecomputeService),
+    // computed once per experiment run and threaded through every candidate's
+    // backtest here — never recomputed per candidate. Optional/omittable for
+    // any candidate with no AI members, and for every existing caller/test
+    // that predates AI strategies.
+    aiSignals?: Map<SearchStrategyType, StrategySignal[]>,
   ): BacktestResult {
     if (candles.length < 2)
       throw new Error('At least two candles are required.');
@@ -42,6 +49,7 @@ export class BacktestingService {
         {
           candles,
           index,
+          aiSignals,
         },
         weights,
       );

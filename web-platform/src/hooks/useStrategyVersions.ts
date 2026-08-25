@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { apiFetch, ApiError } from '../api/client'
 import type { SearchStrategyType, StrategyVersionSummary } from '../api/types'
+import { isAiStrategyType } from '../api/types'
 
 export interface UseStrategyVersions {
   versions: StrategyVersionSummary[]
@@ -33,7 +34,11 @@ export function useStrategyVersions(type: SearchStrategyType | null): UseStrateg
   const [reloadToken, setReloadToken] = useState(0)
 
   useEffect(() => {
-    if (!type) {
+    // An AI strategy has no numeric-parameter version history through this
+    // endpoint (it isn't a registered built-in plugin — see
+    // StrategyRegistry.has()/get() vs resolve()) — skip the request rather
+    // than surfacing a 404 as a UI error.
+    if (!type || isAiStrategyType(type)) {
       setVersions([])
       setError(null)
       setLoading(false)

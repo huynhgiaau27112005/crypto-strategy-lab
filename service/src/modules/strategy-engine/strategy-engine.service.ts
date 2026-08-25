@@ -8,6 +8,6 @@ export class StrategyEngineService {
   constructor(private readonly registry: StrategyRegistry) {}
 
   analyze(member: CandidateMember, context: SignalContext): StrategySignal {
-    return this.registry.get(member.type).analyze(member, context);
+    return this.registry.resolve(member.type).analyze(member, context);
   }
 }

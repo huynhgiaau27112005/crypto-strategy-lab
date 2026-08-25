@@ -8,6 +8,16 @@ export interface StrategyWeightInput {
   weight: number;
 }
 
+export interface WeightRow {
+  strategy_id: string;
+  name: string;
+  type: 'SYSTEM' | 'USER' | 'AI_GENERATED';
+  version: number;
+  parameters: Record<string, unknown>;
+  source_code: string | null;
+  weight: string;
+}
+
 @Injectable()
 export class ExperimentConfigRepository {
   constructor(private readonly database: DatabaseService) {}
@@ -66,15 +76,15 @@ export class ExperimentConfigRepository {
     return result.rows[0].iteration_limit;
   }
 
-  async weightsByExperimentId(
-    experimentId: string,
-  ): Promise<Array<{ strategy_id: string; name: string; weight: string }>> {
-    const result = await this.database.query<{
-      strategy_id: string;
-      name: string;
-      weight: string;
-    }>(
-      `SELECT ecs.strategy_id, s.name, ecs.weight
+  // `type`/`parameters`/`source_code` are included alongside the original
+  // `strategy_id`/`name`/`weight` so a caller can resolve each row's
+  // SearchStrategyType and (for an AI_GENERATED row) its domain and
+  // executable source without a second query per row — see
+  // strategy-search.service.ts's run(), which needs exactly this to build
+  // the per-run generator catalog and to precompute AI signals.
+  async weightsByExperimentId(experimentId: string): Promise<WeightRow[]> {
+    const result = await this.database.query<WeightRow>(
+      `SELECT ecs.strategy_id, s.name, s.type, s.version, s.parameters, s.source_code, ecs.weight
        FROM experiment_config_strategies ecs
        JOIN experiment_configs ec ON ec.id = ecs.experiment_config_id
        JOIN strategies s ON s.id = ecs.strategy_id

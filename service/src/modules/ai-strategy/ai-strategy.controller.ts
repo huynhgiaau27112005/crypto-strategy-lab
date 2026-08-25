@@ -55,8 +55,8 @@ export class AiStrategyController {
   @UseGuards(JwtAuthGuard)
   @Post('save')
   save(@Body() body: unknown, @CurrentUser() user: CurrentUserPayload) {
-    const { name, code } = parseOrThrow(saveStrategySchema, body);
-    return this.aiStrategyService.save(user.id, name, code);
+    const { name, code, domain } = parseOrThrow(saveStrategySchema, body);
+    return this.aiStrategyService.save(user.id, name, code, domain);
   }
 
   // Ownership-scoped list: only AI strategies this account saved. See

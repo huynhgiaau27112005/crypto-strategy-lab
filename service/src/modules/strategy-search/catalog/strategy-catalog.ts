@@ -4,7 +4,7 @@ import {
   StrategyDomain,
 } from '../domain/search.types';
 
-interface CatalogEntry {
+export interface CatalogEntry {
   type: SearchStrategyType;
   domain: StrategyDomain;
   sample: (random: () => number) => CandidateMember;
@@ -71,3 +71,31 @@ export const STRATEGY_CATALOG: Record<StrategyDomain, CatalogEntry> = {
     },
   },
 };
+
+/**
+ * One AI strategy's catalog entry — unlike a built-in's, its "sample" is
+ * fixed (no numeric parameter space to explore; the source code is what
+ * it is for this pinned version), so it always returns the same member
+ * for a given strategyId/version regardless of `random`. `pluginVersion`
+ * carries the AI strategy's own `strategies.version`, so the resulting
+ * candidate stays reproducible even if the user later saves a new version
+ * under the same name (see search.types.ts's strategyTypeKey/AI:<id> doc
+ * comment — `type` itself already pins the exact row).
+ */
+export function aiCatalogEntry(row: {
+  id: string;
+  domain: StrategyDomain;
+  version: number;
+}): CatalogEntry {
+  const type: SearchStrategyType = `AI:${row.id}`;
+  return {
+    type,
+    domain: row.domain,
+    sample: () => ({
+      type,
+      domain: row.domain,
+      pluginVersion: row.version,
+      parameters: {},
+    }),
+  };
+}

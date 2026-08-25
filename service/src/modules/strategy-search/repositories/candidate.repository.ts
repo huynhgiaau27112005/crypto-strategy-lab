@@ -6,7 +6,7 @@ import {
   TradeExitReason,
   TradeSide,
 } from '../../../database/types';
-import { SearchStrategyType } from '../domain/search.types';
+import { SearchStrategyType, strategyTypeKey } from '../domain/search.types';
 
 export interface CandidateStrategyInput {
   strategyId: string;
@@ -71,7 +71,9 @@ interface CandidateHeaderRow {
 }
 
 interface CandidateMemberRow {
-  type: string;
+  strategy_id: string;
+  name: string;
+  strategy_type: 'SYSTEM' | 'USER' | 'AI_GENERATED';
   parameters: Record<string, number>;
   weight: string;
 }
@@ -146,7 +148,7 @@ export class CandidateRepository {
     if (!header) return null;
 
     const membersResult = await this.database.query<CandidateMemberRow>(
-      `SELECT s.name AS type, cs.parameters, ecs.weight
+      `SELECT s.id AS strategy_id, s.name, s.type AS strategy_type, cs.parameters, ecs.weight
        FROM candidate_strategies cs
        JOIN strategies s ON s.id = cs.strategy_id
        JOIN candidates c ON c.id = cs.candidate_id
@@ -184,7 +186,7 @@ export class CandidateRepository {
       experimentId: header.experiment_id,
       iterationNumber: header.iteration_number,
       members: membersResult.rows.map((row) => ({
-        type: row.type as SearchStrategyType,
+        type: strategyTypeKey({ id: row.strategy_id, name: row.name, type: row.strategy_type }),
         parameters: row.parameters,
         weight: Number(row.weight),
       })),
