@@ -36,6 +36,31 @@ describe('StructuredLogger', () => {
     expect(line).not.toContain(secretToken);
   });
 
+  // Regression: stringifyMessage() used to return a string message
+  // verbatim, skipping redactString()/BEARER_PATTERN/JWT_PATTERN entirely
+  // — exactly the template-literal call shape used throughout the
+  // codebase (e.g. openai-compatible.provider.ts logging a raw upstream
+  // error body via `this.logger.error(\`... ${bodyText}\`)`).
+  it('never writes a bearer token embedded in a plain string message', () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation();
+    const logger = new StructuredLogger();
+    logger.error(`LLM provider request failed: 401 Unauthorized Authorization: Bearer ${secretToken}`);
+
+    const line = errorSpy.mock.calls[0][0] as string;
+    expect(line).not.toContain(secretToken);
+    expect(line).toContain('[REDACTED]');
+    errorSpy.mockRestore();
+  });
+
+  it('never writes a bare JWT embedded in a plain string message with no Bearer prefix', () => {
+    const logger = new StructuredLogger();
+    logger.log(`refresh token issued: ${secretToken}`);
+
+    const line = consoleSpy.mock.calls[0][0] as string;
+    expect(line).not.toContain(secretToken);
+    expect(line).toContain('[REDACTED]');
+  });
+
   it('attaches the active correlation id to every log line', () => {
     const logger = new StructuredLogger();
     runWithCorrelationId('test-correlation-id', () => {

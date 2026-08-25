@@ -1,6 +1,6 @@
 import { Injectable, LoggerService } from '@nestjs/common';
 import { getCorrelationId } from '../correlation/correlation-context';
-import { redact } from './redact';
+import { redact, redactString } from './redact';
 
 export type LogFormat = 'json' | 'pretty';
 
@@ -102,7 +102,14 @@ export class StructuredLogger implements LoggerService {
   }
 
   private stringifyMessage(message: unknown): string {
-    if (typeof message === 'string') return message;
+    // A plain string is the most common call shape in this codebase
+    // (template-literal logging, e.g. `this.logger.error(\`... ${body}\`)`)
+    // and must still go through redactString() — BEARER_PATTERN/
+    // JWT_PATTERN exist specifically for a token embedded in a string
+    // message rather than a structured field (see redact.ts). Returning it
+    // verbatim here was the gap: only non-string messages and the `meta`
+    // payload were ever redacted.
+    if (typeof message === 'string') return redactString(message);
     try {
       return JSON.stringify(redact(message));
     } catch {

@@ -49,7 +49,7 @@ const BEARER_PATTERN = /Bearer\s+[A-Za-z0-9\-_.~+/]+=*/gi;
 // "Bearer " prefix — e.g. a refresh token logged as a plain string.
 const JWT_PATTERN = /\b[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g;
 
-function redactString(value: string): string {
+export function redactString(value: string): string {
   return value.replace(BEARER_PATTERN, `Bearer ${REDACTED}`).replace(JWT_PATTERN, REDACTED);
 }
 
