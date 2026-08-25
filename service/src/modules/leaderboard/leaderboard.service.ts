@@ -1,9 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
+import { CacheService } from '../../cache/cache.service';
+import { leaderboardVersionKey } from './leaderboard-cache-keys';
 
 @Injectable()
 export class LeaderboardService {
-  constructor(private readonly database: DatabaseService) {}
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly cache: CacheService,
+  ) {}
 
   async rebuildForExperiment(
     experimentId: string,
@@ -39,5 +44,18 @@ export class LeaderboardService {
         [leaderboardId, experimentId, topK, minimumTrades],
       );
     });
+
+    // Cross-process cache invalidation (task-17): this method runs inside
+    // the WORKER process — StrategySearchService.run() (search.processor.ts)
+    // calls it after every iteration — while the cached "top" response is
+    // read by StrategySearchService.getTop() in the API process. An
+    // in-process event/callback could never reach across that boundary;
+    // an INCR against the shared Redis instance can, and is visible to the
+    // API process's very next read (CacheService is a thin wrapper around
+    // the same Redis this worker is already connected to via CacheModule).
+    // Best-effort: a failed bump only means the next read serves a cached
+    // response for up to LEADERBOARD_TOP_CACHE_TTL_SECONDS longer, not
+    // that the rebuild itself (already committed above) is lost.
+    await this.cache.incr(leaderboardVersionKey(experimentId));
   }
 }

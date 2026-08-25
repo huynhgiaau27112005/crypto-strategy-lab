@@ -16,10 +16,12 @@ import { AiStrategyModule } from './modules/ai-strategy';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { QueueModule } from './queue/queue.module';
+import { CacheModule } from './cache/cache.module';
 
 @Module({
   imports: [
     QueueModule,
+    CacheModule,
     MarketDataModule,
     ChartModule,
     StrategyEngineModule,

@@ -32,7 +32,7 @@ rectangle "**Web SPA**\nReact 19 + Vite + TypeScript\n\nLanding · Auth · Realt
 
 rectangle "**API — Modular Monolith**\nNestJS 11 + raw pg (không ORM)\n\n12 module nghiệp vụ\n29 endpoint REST\nSocket.IO namespace /market\n**Chỉ enqueue** search/crawl,\nkhông tự chạy" as API
 
-queue "**Redis**\nBullMQ\n\nqueue \"search\"\nqueue \"news-crawl\"" as REDIS
+queue "**Redis**\nBullMQ + Cache\n\nqueue \"search\"\nqueue \"news-crawl\"\ncache: candles, leaderboard top\n(CacheService, task-17)" as REDIS
 
 rectangle "**Worker**\nservice/src/worker.ts\nNestJS application context\n(cùng module StrategySearch/News,\nkhông HTTP server)\n\nSearchProcessor · NewsCrawlProcessor" as WORKER
 
@@ -54,9 +54,11 @@ API --> PG : SQL (pg.Pool)
 API --> BINANCE : nến lịch sử + stream
 API --> LLM : sinh code Python
 API --> REDIS : enqueue search job\n(POST .../experiments,\n.../extend) · enqueue\ncrawl job (POST /news/crawl)
+API --> REDIS : cache GET/SET\n(GET /market-data/candles,\nGET .../top) — CacheService
 API --> W_AI : spawn process\n(timeout, giới hạn output)
 
 WORKER --> REDIS : dequeue job\n(BullMQ Worker,\nconcurrency)
+WORKER --> REDIS : cache INCR\n(leaderboard:version:{id}\nsau mỗi rebuild — task-17\ncross-process invalidation)
 WORKER --> PG : SQL — chạy\nStrategySearchService.run()\nthật (không phải bản sao)
 WORKER --> W_NEWS : spawn process\n(job boundary, timeout)
 
@@ -75,6 +77,16 @@ note bottom of REDIS
   đếm depth, worker liveness) sống ở
   đây — API restart không mất trạng
   thái. Xem artifacts/queue.md.
+
+  Cùng Redis instance còn giữ response
+  cache (candles TTL = 1 interval,
+  leaderboard top theo version counter
+  để API đọc thấy ngay khi Worker
+  rebuild — 2 client ioredis riêng,
+  cùng redisConnectionOptions()).
+  Redis down → CacheService fallback
+  thẳng nguồn thật, không throw.
+  Xem artifacts/cache.md.
 end note
 
 note bottom of W_NEWS

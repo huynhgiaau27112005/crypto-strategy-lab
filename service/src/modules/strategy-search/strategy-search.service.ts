@@ -31,6 +31,14 @@ import { CandidateFingerprintService } from './services/candidate-fingerprint.se
 import { createSeededRandom } from './services/seeded-random';
 import { SearchQueueService } from './services/search-queue.service';
 import { DatabaseService } from '../../database/database.service';
+import { CacheService } from '../../cache/cache.service';
+import {
+  LEADERBOARD_TOP_CACHE_MAX_ENTRIES,
+  LEADERBOARD_TOP_CACHE_TTL_SECONDS,
+  leaderboardTopDataKey,
+  leaderboardVersionKey,
+} from '../leaderboard/leaderboard-cache-keys';
+import type { SearchTopRow } from './repositories/experiment.repository';
 
 @Injectable()
 export class StrategySearchService implements OnApplicationBootstrap {
@@ -54,6 +62,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
     private readonly backtestRuns: BacktestRunRepository,
     private readonly leaderboard: LeaderboardService,
     private readonly searchQueue: SearchQueueService,
+    private readonly cache: CacheService,
   ) {}
 
   // Runs in BOTH the API process and the worker process (StrategySearchModule
@@ -182,16 +191,37 @@ export class StrategySearchService implements OnApplicationBootstrap {
     return status;
   }
 
+  // Cached (task-17): re-read constantly by the polling UI while a search
+  // is RUNNING, and identical for every caller who requested a different
+  // `limit` on the same experiment. See leaderboard-cache-keys.ts for the
+  // key shape and LeaderboardService.rebuildForExperiment for the
+  // cross-process invalidation this depends on — the worker process bumps
+  // `leaderboardVersionKey(experimentId)` after every rebuild, and reading
+  // an unbumped (or Redis-down, defaulting to 0) version here just means a
+  // cache miss, never stale data served past LEADERBOARD_TOP_CACHE_TTL_SECONDS.
   async getTop(experimentId: string, userId: string, limit: number) {
     const experiment = await this.experiments.findOwned(experimentId, userId);
     if (!experiment) throw new NotFoundException('Experiment not found.');
     const config = await this.loadConfig(experimentId);
-    return this.experiments.top(
+    const clampedLimit = Math.min(100, Math.max(1, limit));
+
+    const version =
+      (await this.cache.get<number>(leaderboardVersionKey(experimentId))) ?? 0;
+    const dataKey = leaderboardTopDataKey(experimentId, userId, version);
+    const cached = await this.cache.get<SearchTopRow[]>(dataKey);
+    if (cached) return cached.slice(0, clampedLimit);
+
+    // Always fetch (and cache) the top LEADERBOARD_TOP_CACHE_MAX_ENTRIES —
+    // `limit` only slices an already-descending-sorted list, so it does not
+    // need to be part of the cache key (see leaderboard-cache-keys.ts).
+    const top = await this.experiments.top(
       experimentId,
       userId,
-      Math.min(100, Math.max(1, limit)),
+      LEADERBOARD_TOP_CACHE_MAX_ENTRIES,
       config.minimumTrades,
     );
+    await this.cache.set(dataKey, top, LEADERBOARD_TOP_CACHE_TTL_SECONDS);
+    return top.slice(0, clampedLimit);
   }
 
   async cancel(experimentId: string, userId: string) {

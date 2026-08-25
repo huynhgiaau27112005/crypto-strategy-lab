@@ -29,3 +29,38 @@ export function assertAllowedInterval(
     );
   }
 }
+
+const DEFAULT_CACHE_TTL_SECONDS = 30;
+// Safety cap so a huge/unexpected interval string (e.g. "1w") can't pin a
+// cached candle response for an unreasonably long time; every interval this
+// API actually supports (see ALLOWED_INTERVALS) is well under this.
+const MAX_CACHE_TTL_SECONDS = 6 * 60 * 60;
+
+/**
+ * Cache TTL for GET /market-data/candles, reasoned from the interval itself
+ * rather than one global number (task-17 requirement): Binance only ever
+ * closes a new candle for a given interval once per interval, and
+ * MarketDataService already drops the still-forming candle
+ * (see getCandles' doc comment) — so the set of *closed* candles for one
+ * (symbol, interval, limit) is provably unchanged for the entire duration
+ * of the current interval. Caching for exactly one interval's length can
+ * therefore never resurrect a forming candle or serve a response that is
+ * "supposed to have changed by now" — the underlying data genuinely hasn't.
+ * Falls back to DEFAULT_CACHE_TTL_SECONDS for an interval string this
+ * parser doesn't recognise (still deduplicates rapid repeat requests
+ * without guessing how fresh unfamiliar data needs to be).
+ */
+export function candleCacheTtlSeconds(interval: string): number {
+  const match = /^(\d+)([smhdw])$/.exec(interval);
+  if (!match) return DEFAULT_CACHE_TTL_SECONDS;
+  const amount = Number(match[1]);
+  const unitSeconds: Record<string, number> = {
+    s: 1,
+    m: 60,
+    h: 60 * 60,
+    d: 24 * 60 * 60,
+    w: 7 * 24 * 60 * 60,
+  };
+  const seconds = amount * unitSeconds[match[2]];
+  return Math.min(seconds, MAX_CACHE_TTL_SECONDS);
+}

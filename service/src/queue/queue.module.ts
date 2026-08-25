@@ -3,6 +3,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { NEWS_CRAWL_QUEUE, SEARCH_QUEUE } from './queue.constants';
 import { QueueHealthService } from './queue-health.service';
 import { QueueHealthController } from './queue-health.controller';
+import { redisConnectionOptions } from '../cache/redis-connection';
 
 /**
  * Single owner of the BullMQ/Redis connection — no other module constructs
@@ -27,8 +28,7 @@ import { QueueHealthController } from './queue-health.controller';
     BullModule.forRootAsync({
       useFactory: () => ({
         connection: {
-          host: process.env.REDIS_HOST ?? 'localhost',
-          port: Number(process.env.REDIS_PORT ?? 6379),
+          ...redisConnectionOptions(),
           maxRetriesPerRequest: null,
           retryStrategy: (attempts: number) => Math.min(attempts * 500, 5000),
         },

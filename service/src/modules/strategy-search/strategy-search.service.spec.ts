@@ -112,6 +112,12 @@ describe('StrategySearchService', () => {
       enqueue: jest.fn().mockResolvedValue(undefined),
       cancelIfQueued: jest.fn().mockResolvedValue(undefined),
     };
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+      del: jest.fn().mockResolvedValue(undefined),
+      incr: jest.fn().mockResolvedValue(null),
+    };
 
     const mocks = {
       database,
@@ -126,6 +132,7 @@ describe('StrategySearchService', () => {
       backtestRuns,
       leaderboard,
       searchQueue,
+      cache,
       ...overrides,
     };
 
@@ -142,6 +149,7 @@ describe('StrategySearchService', () => {
       mocks.backtestRuns as any,
       mocks.leaderboard as any,
       mocks.searchQueue as any,
+      mocks.cache as any,
     );
 
     return { service, mocks };
@@ -411,6 +419,56 @@ describe('StrategySearchService', () => {
 
       expect(result).toEqual({ id: 'exp-1', cancelled: false });
       expect(mocks.searchQueue.cancelIfQueued).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getTop() caching', () => {
+    function ownedExperiment() {
+      return { id: 'exp-1', user_id: 'user-1' } as ExperimentEntity;
+    }
+
+    it('queries the DB and caches the result on a cache miss', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findOwned.mockResolvedValue(ownedExperiment());
+      mocks.experiments.top.mockResolvedValue([{ rank: 1, candidate_id: 'c1' }]);
+      mocks.cache.get.mockResolvedValue(null); // both version and data lookups miss
+
+      const result = await service.getTop('exp-1', 'user-1', 10);
+
+      expect(mocks.experiments.top).toHaveBeenCalledWith('exp-1', 'user-1', 100, expect.any(Number));
+      expect(mocks.cache.set).toHaveBeenCalledWith(
+        expect.stringContaining('strategy-search:top:exp-1:user-1:v0'),
+        [{ rank: 1, candidate_id: 'c1' }],
+        expect.any(Number),
+      );
+      expect(result).toEqual([{ rank: 1, candidate_id: 'c1' }]);
+    });
+
+    it('returns the cached top list sliced to the requested limit without touching the DB', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findOwned.mockResolvedValue(ownedExperiment());
+      const fullList = Array.from({ length: 20 }, (_, i) => ({ rank: i + 1, candidate_id: `c${i}` }));
+      mocks.cache.get.mockImplementation((key: string) =>
+        key.startsWith('leaderboard:version:') ? Promise.resolve(0) : Promise.resolve(fullList),
+      );
+
+      const result = await service.getTop('exp-1', 'user-1', 5);
+
+      expect(result).toEqual(fullList.slice(0, 5));
+      expect(mocks.experiments.top).not.toHaveBeenCalled();
+    });
+
+    it('reads a different cache key once the leaderboard version has been bumped by a rebuild', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findOwned.mockResolvedValue(ownedExperiment());
+      mocks.experiments.top.mockResolvedValue([]);
+      mocks.cache.get.mockImplementation((key: string) =>
+        key.startsWith('leaderboard:version:') ? Promise.resolve(3) : Promise.resolve(null),
+      );
+
+      await service.getTop('exp-1', 'user-1', 10);
+
+      expect(mocks.cache.get).toHaveBeenCalledWith('strategy-search:top:exp-1:user-1:v3');
     });
   });
 });
