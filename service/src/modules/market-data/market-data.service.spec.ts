@@ -114,6 +114,39 @@ describe('MarketDataService', () => {
             expect(candles).toHaveLength(1);
             expect(binanceClient.getKlines).toHaveBeenCalledTimes(1);
         });
+
+        it('rejects an interval outside the allowed list before calling Binance', async () => {
+            const binanceClient = { getKlines: jest.fn() };
+            const candleRepository = { insertCandles: jest.fn() };
+            const cache = makeCache();
+            const service = new MarketDataService(binanceClient as any, candleRepository as any, cache as any);
+
+            await expect(service.getCandles('BTCUSDT', '1x', 500)).rejects.toThrow();
+            expect(binanceClient.getKlines).not.toHaveBeenCalled();
+        });
+
+        it('rejects a non-numeric limit with a 400 instead of forwarding NaN to Binance', async () => {
+            const binanceClient = { getKlines: jest.fn() };
+            const candleRepository = { insertCandles: jest.fn() };
+            const cache = makeCache();
+            const service = new MarketDataService(binanceClient as any, candleRepository as any, cache as any);
+
+            await expect(service.getCandles('BTCUSDT', '1h', 'abc' as unknown as number)).rejects.toThrow();
+            expect(binanceClient.getKlines).not.toHaveBeenCalled();
+        });
+
+        it.each([0, -1, 1.5, 1001])(
+            'rejects an out-of-range limit %p',
+            async (badLimit) => {
+                const binanceClient = { getKlines: jest.fn() };
+                const candleRepository = { insertCandles: jest.fn() };
+                const cache = makeCache();
+                const service = new MarketDataService(binanceClient as any, candleRepository as any, cache as any);
+
+                await expect(service.getCandles('BTCUSDT', '1h', badLimit)).rejects.toThrow();
+                expect(binanceClient.getKlines).not.toHaveBeenCalled();
+            },
+        );
     });
 
     describe('importCandles (POST /market-data/import — writes to candles table)', () => {
@@ -192,6 +225,16 @@ describe('MarketDataService', () => {
             const service = new MarketDataService(binanceClient as any, candleRepository as any, cache as any);
 
             await expect(service.importCandles('BTCUSDT', '3m', 500)).rejects.toThrow();
+            expect(binanceClient.getKlines).not.toHaveBeenCalled();
+        });
+
+        it('rejects an out-of-range limit before calling Binance', async () => {
+            const binanceClient = { getKlines: jest.fn() };
+            const candleRepository = { insertCandles: jest.fn() };
+            const cache = makeCache();
+            const service = new MarketDataService(binanceClient as any, candleRepository as any, cache as any);
+
+            await expect(service.importCandles('BTCUSDT', '1h', 5000)).rejects.toThrow();
             expect(binanceClient.getKlines).not.toHaveBeenCalled();
         });
     });

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { BinanceClient, BinanceKline } from './clients/binance.client';
 import { CandleRepository } from './repositories/candle.repository';
-import { assertAllowedInterval, candleCacheTtlSeconds } from './config';
+import { assertAllowedInterval, assertValidLimit, candleCacheTtlSeconds } from './config';
 import { CacheService } from '../../cache/cache.service';
 
 export interface MarketCandle {
@@ -49,16 +49,18 @@ export class MarketDataService {
     async getCandles(
         symbol: string,
         interval: string,
-        limit = 500,
+        limit: unknown = 500,
     ): Promise<MarketCandle[]> {
-        const cacheKey = `market-data:candles:${symbol}:${interval}:${limit}`;
+        assertAllowedInterval(interval);
+        const boundedLimit = assertValidLimit(limit);
+        const cacheKey = `market-data:candles:${symbol}:${interval}:${boundedLimit}`;
         const cached = await this.cache.get<MarketCandle[]>(cacheKey);
         if (cached) return cached;
 
         const rows = await this.binanceClient.getKlines(
             symbol,
             interval,
-            limit,
+            boundedLimit,
         );
         const candles = this.onlyClosed(rows).map((row) => this.toCandle(interval, row));
 
@@ -69,13 +71,14 @@ export class MarketDataService {
     async importCandles(
         symbol: string,
         interval: string,
-        limit = 500,
+        limit: unknown = 500,
     ): Promise<CandleImportResult> {
         assertAllowedInterval(interval);
+        const boundedLimit = assertValidLimit(limit);
         const rows = await this.binanceClient.getKlines(
             symbol,
             interval,
-            limit,
+            boundedLimit,
         );
         // Same rule as MarketDataGateway (WebSocket) and seed-candles.ts
         // (backfill script): never persist the still-forming candle. All

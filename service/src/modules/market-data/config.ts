@@ -30,6 +30,31 @@ export function assertAllowedInterval(
   }
 }
 
+// Binance's documented cap for a single klines request; also doubles as
+// the sane upper bound for this API's own `limit` query/body param so a
+// caller cannot request an unbounded response (or an unbounded page for
+// the Redis cache key — see candleCacheTtlSeconds).
+export const MAX_CANDLE_LIMIT = 1000;
+
+/**
+ * Validates and coerces a caller-supplied `limit` (query string or body
+ * value) to a positive integer within Binance's cap, throwing
+ * BadRequestException for anything else — non-numeric ("abc" -> NaN),
+ * zero, negative, non-integer, or above MAX_CANDLE_LIMIT. Used by both
+ * GET /market-data/candles and POST /market-data/import so a bad `limit`
+ * fails fast as a 400 instead of reaching Binance as `String(NaN)` and
+ * surfacing as a 500 (see MarketDataService.getCandles vs importCandles).
+ */
+export function assertValidLimit(limit: unknown): number {
+  const parsed = typeof limit === 'number' ? limit : Number(limit);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_CANDLE_LIMIT) {
+    throw new BadRequestException(
+      `limit must be an integer from 1 to ${MAX_CANDLE_LIMIT}.`,
+    );
+  }
+  return parsed;
+}
+
 const DEFAULT_CACHE_TTL_SECONDS = 30;
 // Safety cap so a huge/unexpected interval string (e.g. "1w") can't pin a
 // cached candle response for an unreasonably long time; every interval this
