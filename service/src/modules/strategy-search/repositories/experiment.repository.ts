@@ -33,10 +33,11 @@ export class ExperimentRepository {
     userId: string,
     name: string | null,
     client?: PoolClient,
+    searchConfig?: Record<string, unknown>,
   ): Promise<ExperimentEntity> {
-    const sql = `INSERT INTO experiments (user_id, name, status)
-       VALUES ($1, $2, 'PENDING') RETURNING *`;
-    const params = [userId, name];
+    const sql = `INSERT INTO experiments (user_id, name, status, search_config)
+       VALUES ($1, $2, 'PENDING', $3) RETURNING *`;
+    const params = [userId, name, JSON.stringify(searchConfig ?? {})];
     const result = client
       ? await client.query<ExperimentEntity>(sql, params)
       : await this.database.query<ExperimentEntity>(sql, params);

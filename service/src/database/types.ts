@@ -63,6 +63,14 @@ export interface ExperimentEntity {
   started_at: Date | null;
   completed_at: Date | null;
   created_at: Date;
+  // Added by migration 002 (`experiments.search_config JSONB NOT NULL
+  // DEFAULT '{}'::jsonb`) but left unused until the cross-process search
+  // config fix (see StrategySearchService.loadConfig): persists the
+  // caller's maxDurationSeconds/maxNoImprovement/topK/minimumTrades so the
+  // worker process (which never runs start()) and any post-restart caller
+  // of getTop() read the same values the user actually submitted, instead
+  // of silently falling back to DEFAULT_SEARCH_CONFIG.
+  search_config: Record<string, unknown>;
 }
 
 export interface ExperimentConfigEntity {

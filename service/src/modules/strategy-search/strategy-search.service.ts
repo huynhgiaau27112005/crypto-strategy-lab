@@ -160,7 +160,12 @@ export class StrategySearchService implements OnApplicationBootstrap {
     const strategyWeights = resolved.map((r) => ({ strategyId: r.strategyId, weight: r.weight }));
 
     const experiment = await this.database.withTransaction(async (client) => {
-      const created = await this.experiments.create(userId, null, client);
+      const created = await this.experiments.create(
+        userId,
+        null,
+        client,
+        this.persistableSearchConfig(config),
+      );
       await this.experimentConfigs.createWithWeights(
         client,
         created.id,
@@ -310,14 +315,28 @@ export class StrategySearchService implements OnApplicationBootstrap {
     return detail;
   }
 
+  // Reconstructs the SearchConfig from the database rather than trusting
+  // `configCache` alone, because `configCache` is only ever populated by
+  // `start()`/`extend()`, both of which run in the API process — while
+  // `run()` (the actual search loop) and job retries execute in the
+  // separate worker process, whose `configCache` is always empty. Every
+  // caller (API's getTop(), the worker's run()) therefore reads the same
+  // source of truth regardless of process or restart, closing the
+  // API/worker divergence described in artifacts/decisions.md.
+  //
+  // maxCandidates comes from experiment_configs.iteration_limit (unchanged
+  // — extend() persists there); enabledDomains is derived from the
+  // persisted experiment_config_strategies weight rows (see
+  // domainsFromWeightRows); maxDurationSeconds/maxNoImprovement/topK/
+  // minimumTrades come from experiments.search_config (JSONB, populated by
+  // start() via persistableSearchConfig — see ExperimentEntity.search_config).
+  // A pre-fix row (or any malformed JSON) falls back to
+  // DEFAULT_SEARCH_CONFIG field-by-field via sanitizeSearchConfig, so this
+  // never throws.
   private async loadConfig(experimentId: string): Promise<SearchConfig> {
     const cached = this.configCache.get(experimentId);
     if (cached) return cached;
-    // Reconstructed defaults if the process restarted; maxCandidates comes
-    // from experiment_configs.iteration_limit, enabledDomains is derived from
-    // the persisted experiment_config_strategies weight rows (see
-    // domainsFromWeightRows), other bounds fall back to DEFAULT_SEARCH_CONFIG
-    // since they are not separately persisted.
+    const experiment = await this.experiments.findByIdOrThrow(experimentId);
     const config = await this.experimentConfigs.findByExperimentId(experimentId);
     const weightRows =
       await this.experimentConfigs.weightsByExperimentId(experimentId);
@@ -330,9 +349,74 @@ export class StrategySearchService implements OnApplicationBootstrap {
       enabledDomains,
       maxCandidates:
         config?.iteration_limit ?? DEFAULT_SEARCH_CONFIG.maxCandidates,
+      ...this.sanitizeSearchConfig(experiment.search_config),
     };
     this.configCache.set(experimentId, resolved);
     return resolved;
+  }
+
+  // The subset of SearchConfig that is not already persisted elsewhere
+  // (maxCandidates -> experiment_configs.iteration_limit, enabledDomains ->
+  // experiment_config_strategies) — written into experiments.search_config
+  // at creation time so loadConfig() can reconstruct it truthfully from
+  // any process.
+  private persistableSearchConfig(
+    config: SearchConfig,
+  ): Record<string, unknown> {
+    return {
+      maxDurationSeconds: config.maxDurationSeconds,
+      maxNoImprovement: config.maxNoImprovement,
+      topK: config.topK,
+      minimumTrades: config.minimumTrades,
+    };
+  }
+
+  // Defensive parse of the JSONB round-trip: each field is validated with
+  // the same bounds `validateRequest()` enforces on the way in, and any
+  // missing/malformed field (pre-fix row, hand-edited data, driver
+  // returning a raw string instead of a parsed object) falls back to
+  // DEFAULT_SEARCH_CONFIG for that field alone rather than throwing.
+  private sanitizeSearchConfig(
+    raw: unknown,
+  ): Pick<
+    SearchConfig,
+    'maxDurationSeconds' | 'maxNoImprovement' | 'topK' | 'minimumTrades'
+  > {
+    const obj =
+      raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+    const boundedOrDefault = (
+      value: unknown,
+      minimum: number,
+      maximum: number,
+      fallback: number,
+    ): number =>
+      typeof value === 'number' &&
+      Number.isInteger(value) &&
+      value >= minimum &&
+      value <= maximum
+        ? value
+        : fallback;
+    return {
+      maxDurationSeconds: boundedOrDefault(
+        obj.maxDurationSeconds,
+        1,
+        86_400,
+        DEFAULT_SEARCH_CONFIG.maxDurationSeconds,
+      ),
+      maxNoImprovement: boundedOrDefault(
+        obj.maxNoImprovement,
+        1,
+        10_000,
+        DEFAULT_SEARCH_CONFIG.maxNoImprovement,
+      ),
+      topK: boundedOrDefault(obj.topK, 1, 100, DEFAULT_SEARCH_CONFIG.topK),
+      minimumTrades: boundedOrDefault(
+        obj.minimumTrades,
+        0,
+        10_000,
+        DEFAULT_SEARCH_CONFIG.minimumTrades,
+      ),
+    };
   }
 
   // Recovers which StrategyDomains are represented by the persisted

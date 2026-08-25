@@ -288,6 +288,85 @@ describe('StrategySearchService', () => {
       expect(mocks.searchQueue.enqueue).toHaveBeenCalledWith('exp-1');
     });
 
+    // Regression for the Critical finding: maxDurationSeconds/
+    // maxNoImprovement/topK/minimumTrades used to live only in the
+    // in-process configCache populated by start() (API process), so the
+    // worker process (which never calls start()) always reconstructed
+    // DEFAULT_SEARCH_CONFIG instead of what the caller submitted. They
+    // must now be persisted on experiments.search_config so any process
+    // reading loadConfig() from a bare DB row (no cache) recovers the
+    // real values.
+    it('persists non-default topK/minimumTrades/maxDurationSeconds/maxNoImprovement on the experiment row so a cache-less process can recover them', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.create.mockResolvedValue({
+        id: 'exp-1',
+        user_id: 'user-1',
+        name: null,
+        status: 'PENDING',
+        started_at: null,
+        completed_at: null,
+        created_at: new Date(),
+        search_config: {},
+      });
+      const request: StartSearchRequest = {
+        ...baseRequest,
+        enabledDomains: ['TREND', 'MOMENTUM', 'VOLATILITY', 'STRUCTURE'],
+        strategyWeights: [
+          { type: 'MA', weight: 0.25 },
+          { type: 'RSI', weight: 0.25 },
+          { type: 'BOLLINGER', weight: 0.2 },
+          { type: 'SUPPORT_RESISTANCE', weight: 0.3 },
+        ],
+        maxDurationSeconds: 60,
+        maxNoImprovement: 5,
+        topK: 3,
+        minimumTrades: 0,
+      };
+
+      await service.start('user-1', request);
+
+      expect(mocks.experiments.create).toHaveBeenCalledWith(
+        'user-1',
+        null,
+        expect.anything(),
+        {
+          maxDurationSeconds: 60,
+          maxNoImprovement: 5,
+          topK: 3,
+          minimumTrades: 0,
+        },
+      );
+
+      // Simulate a *different process* — a fresh service instance with an
+      // empty configCache (i.e. the worker, or the API after a restart) —
+      // whose getTop() -> loadConfig() must recover topK/minimumTrades from
+      // the DB row alone, not from DEFAULT_SEARCH_CONFIG or the first
+      // service's in-memory cache.
+      const worker = buildService();
+      worker.mocks.experiments.findOwned.mockResolvedValue({
+        id: 'exp-1',
+        user_id: 'user-1',
+      } as ExperimentEntity);
+      worker.mocks.experiments.findByIdOrThrow.mockResolvedValue({
+        id: 'exp-1',
+        user_id: 'user-1',
+        name: null,
+        status: 'RUNNING',
+        started_at: new Date(),
+        completed_at: null,
+        created_at: new Date(),
+        search_config: { maxDurationSeconds: 60, maxNoImprovement: 5, topK: 3, minimumTrades: 0 },
+      } satisfies ExperimentEntity);
+      worker.mocks.experiments.top.mockResolvedValue([]);
+      worker.mocks.cache.get.mockResolvedValue(null);
+
+      await worker.service.getTop('exp-1', 'user-1', 10);
+
+      // minimumTrades: 0 (not the default 20) proves the reconstruction
+      // read the real persisted value, not DEFAULT_SEARCH_CONFIG.
+      expect(worker.mocks.experiments.top).toHaveBeenCalledWith('exp-1', 'user-1', 100, 0);
+    });
+
     it('rejects a negative strategyWeight', async () => {
       const { service, mocks } = buildService();
       const request: StartSearchRequest = {
@@ -439,12 +518,13 @@ describe('StrategySearchService', () => {
 
   describe('getTop() caching', () => {
     function ownedExperiment() {
-      return { id: 'exp-1', user_id: 'user-1' } as ExperimentEntity;
+      return { id: 'exp-1', user_id: 'user-1', search_config: {} } as ExperimentEntity;
     }
 
     it('queries the DB and caches the result on a cache miss', async () => {
       const { service, mocks } = buildService();
       mocks.experiments.findOwned.mockResolvedValue(ownedExperiment());
+      mocks.experiments.findByIdOrThrow.mockResolvedValue(ownedExperiment());
       mocks.experiments.top.mockResolvedValue([{ rank: 1, candidate_id: 'c1' }]);
       mocks.cache.get.mockResolvedValue(null); // both version and data lookups miss
 
@@ -462,6 +542,7 @@ describe('StrategySearchService', () => {
     it('returns the cached top list sliced to the requested limit without touching the DB', async () => {
       const { service, mocks } = buildService();
       mocks.experiments.findOwned.mockResolvedValue(ownedExperiment());
+      mocks.experiments.findByIdOrThrow.mockResolvedValue(ownedExperiment());
       const fullList = Array.from({ length: 20 }, (_, i) => ({ rank: i + 1, candidate_id: `c${i}` }));
       mocks.cache.get.mockImplementation((key: string) =>
         key.startsWith('leaderboard:version:') ? Promise.resolve(0) : Promise.resolve(fullList),
@@ -476,6 +557,7 @@ describe('StrategySearchService', () => {
     it('reads a different cache key once the leaderboard version has been bumped by a rebuild', async () => {
       const { service, mocks } = buildService();
       mocks.experiments.findOwned.mockResolvedValue(ownedExperiment());
+      mocks.experiments.findByIdOrThrow.mockResolvedValue(ownedExperiment());
       mocks.experiments.top.mockResolvedValue([]);
       mocks.cache.get.mockImplementation((key: string) =>
         key.startsWith('leaderboard:version:') ? Promise.resolve(3) : Promise.resolve(null),
