@@ -36,7 +36,14 @@ interface Tick {
   time: string
   price: string
   qty: string
-  side: 'Buy' | 'Sell'
+  // Candle direction (close vs open), NOT a trading signal — this is a
+  // price-direction fact about the candle itself, never labelled
+  // Buy/Sell. The Strategy Engine's actual BUY/SELL/HOLD output is
+  // rendered separately via useStrategySignal/SignalBadge above; this
+  // column must never guess or imply one (see commit f5e73c9 and
+  // final-review.md finding #6 — a green candle is the net result of
+  // many trades on both sides, not a buy order).
+  direction: 'up' | 'down'
 }
 
 /**
@@ -116,14 +123,16 @@ export default function RealtimePage() {
   const primaryInterval = useMemo(() => TF_ALL.find((tf) => tfs.includes(tf)) ?? DEFAULT_TFS[0], [tfs])
 
   const handlePrimaryCandle = (candle: Candle) => {
-    const buy = Number(candle.close) >= Number(candle.open)
+    // Candle direction only (close vs open) — a description of the candle,
+    // not a Buy/Sell trading signal. See the Tick.direction doc comment.
+    const up = Number(candle.close) >= Number(candle.open)
     setTicks((prev) => {
       const next: Tick = {
         key: candle.timestamp,
         time: fmtTime(candle.timestamp),
         price: fmtPrice(candle.close),
         qty: fmtQty(candle.volume),
-        side: buy ? 'Buy' : 'Sell',
+        direction: up ? 'up' : 'down',
       }
       return [next, ...prev.filter((t) => t.key !== next.key)].slice(0, 6)
     })
@@ -136,9 +145,13 @@ export default function RealtimePage() {
     { key: 'price', label: 'Giá', render: (t) => <span className="mono">{t.price}</span> },
     { key: 'qty', label: 'KL', render: (t) => <span className="mono">{t.qty}</span> },
     {
-      key: 'side',
-      label: 'Loại',
-      render: (t) => <span className={`mono ${t.side === 'Buy' ? 'text-up' : 'text-down'}`}>{t.side}</span>,
+      key: 'direction',
+      label: 'Biến động nến',
+      render: (t) => (
+        <span className={`mono ${t.direction === 'up' ? 'text-up' : 'text-down'}`}>
+          {t.direction === 'up' ? 'Tăng' : 'Giảm'}
+        </span>
+      ),
     },
   ]
 
