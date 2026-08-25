@@ -4,6 +4,7 @@ import { BinanceClient, BinanceKline } from '../modules/market-data/clients/bina
 import { CandleRepository } from '../modules/market-data/repositories/candle.repository';
 import { DatabaseService } from '../database/database.service';
 import { ALLOWED_INTERVALS } from '../modules/market-data/config';
+import { MetricsService } from '../observability/metrics/metrics.service';
 
 /**
  * Repeatable historical backfill for BTCUSDT candles.
@@ -124,7 +125,7 @@ export async function backfillInterval(
 }
 
 async function main(): Promise<void> {
-    const binanceClient = new BinanceClient();
+    const binanceClient = new BinanceClient(new MetricsService());
     const database = new DatabaseService();
     const candleRepository = new CandleRepository(database);
 

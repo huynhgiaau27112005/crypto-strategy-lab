@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { CandleEntity, ExperimentEntity } from '../../database/types';
 import { CandidateDefinition, StartSearchRequest } from './domain/search.types';
 import { StrategySearchService } from './strategy-search.service';
+import { MetricsService } from '../../observability/metrics/metrics.service';
 
 function makeCandles(count: number): CandleEntity[] {
   return Array.from({ length: count }, (_, index) => ({
@@ -119,6 +120,8 @@ describe('StrategySearchService', () => {
       incr: jest.fn().mockResolvedValue(null),
     };
 
+    const metrics = new MetricsService();
+
     const mocks = {
       database,
       experiments,
@@ -133,6 +136,7 @@ describe('StrategySearchService', () => {
       leaderboard,
       searchQueue,
       cache,
+      metrics,
       ...overrides,
     };
 
@@ -150,6 +154,7 @@ describe('StrategySearchService', () => {
       mocks.leaderboard as any,
       mocks.searchQueue as any,
       mocks.cache as any,
+      mocks.metrics as any,
     );
 
     return { service, mocks };

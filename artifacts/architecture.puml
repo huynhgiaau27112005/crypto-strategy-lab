@@ -225,15 +225,43 @@ SR_S ..> CACHE_S : getTop() cache\n(key theo leaderboard\nversion)
 LB_S ..> CACHE_S : incr(version)\nsau rebuild
 Q_MOD ..> CACHE_CFG : dùng chung config\n(không phải chung client)
 
+package "Observability Module (observability/) — @Global, dùng bởi cả API và Worker (task-18)" as M_OBS {
+  rectangle "correlation-context.ts\nAsyncLocalStorage<{correlationId}>\nrunWithCorrelationId / getCorrelationId" as OBS_CTX
+  rectangle "ObservabilityMiddleware\napp.use('*')\nX-Request-Id in/out +\nhttp_requests_total/duration +\naccess log" as OBS_MW
+  rectangle "StructuredLogger\nimplements LoggerService\nJSON/pretty, redact() mọi field\napp.useLogger() ở main.ts/worker.ts" as OBS_LOG
+  rectangle "redact.ts\nkey-based + Bearer/JWT\npattern redaction" as OBS_REDACT
+  rectangle "MetricsService\nprom-client Registry\nhttp_*, search_*, cache_*,\nqueue_depth, binance_*" as OBS_MET
+  rectangle "MetricsController\nGET /metrics\n(unauthenticated)" as OBS_MC
+  rectangle "HealthService\nreadiness: Postgres + Redis\nliveness: process only" as OBS_HS
+  rectangle "HealthController\nGET /health/live\nGET /health/ready" as OBS_HC
+  OBS_MW --> OBS_CTX
+  OBS_MW --> OBS_MET
+  OBS_LOG --> OBS_CTX
+  OBS_LOG --> OBS_REDACT
+  OBS_MC --> OBS_MET
+  OBS_HC --> OBS_HS
+}
+OBS_HS ..> DB_S : isHealthy()
+OBS_HS ..> CACHE_S : ping()
+CACHE_S ..> OBS_MET : cacheHitsTotal/\ncacheMissesTotal
+SR_Q ..> OBS_CTX : ghi correlationId\nvào job payload
+SR_Q ..> OBS_MET : searchJobsEnqueuedTotal
+MKT_BIN ..> OBS_MET : binanceRequestsTotal/\nDurationSeconds
+
 ' =====================================================================
-package "Worker Process — service/src/worker.ts\n(tiến trình Node riêng, KHÔNG có HTTP server)" as WK {
+package "Worker Process — service/src/worker.ts\n(tiến trình Node riêng, KHÔNG có HTTP server nghiệp vụ)" as WK {
   rectangle "SearchProcessor\n@Processor(\"search\")\nconcurrency 5" as WK_SR
   rectangle "NewsCrawlProcessor\n@Processor(\"news-crawl\")\nconcurrency 1" as WK_NW
+  rectangle "worker-metrics-server.ts\nnode:http riêng :3001\nGET /metrics · /health/live\n(task-18, dùng lại OBS_MET/OBS_HS)" as WK_OBS
 }
 WK_SR ..> Q_MOD : BullMQ Worker\n(pull job)
 WK_NW ..> Q_MOD : BullMQ Worker\n(pull job)
 WK_SR --> SR_S : run(experimentId)\n(cùng 1 class,\nkhông fork logic)
 WK_NW --> NW_X : execute()
+WK_SR ..> OBS_CTX : runWithCorrelationId(\njob.data.correlationId)
+WK_SR ..> OBS_MET : searchDurationSeconds/\nCompleted/Failed
+WK_OBS ..> OBS_MET
+WK_OBS ..> OBS_HS
 
 note bottom of WK
   Worker import CÙNG StrategySearchModule/
@@ -253,6 +281,20 @@ note bottom of WK
   tự nhiên đọc key version mới → cache miss →
   query lại. Không cần event/message riêng.
   Xem artifacts/cache.md mục 4.
+end note
+
+note bottom of M_OBS
+  **Correlation xuyên process (task-18):**
+  SR_Q (SearchQueueService, ở API) đọc
+  correlationId đang active từ OBS_CTX
+  (do OBS_MW gán lúc request HTTP tới)
+  và ghi vào job.data trước khi enqueue.
+  WK_SR (worker) đọc lại đúng field đó,
+  mở 1 context OBS_CTX mới cùng id ấy —
+  StructuredLogger tự đọc context này ở
+  MỌI dòng log, cả 2 process, không cần
+  truyền tham số qua từng hàm.
+  Xem artifacts/observability.md mục 2.
 end note
 
 ' ---- guard áp lên mọi controller nghiệp vụ

@@ -1,11 +1,24 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Job, Queue } from 'bullmq';
 import { SEARCH_QUEUE } from '../../../queue/queue.constants';
 import { withTimeout } from '../../../queue/with-timeout';
+import { getCorrelationId } from '../../../observability/correlation/correlation-context';
+import { MetricsService } from '../../../observability/metrics/metrics.service';
 
 export interface SearchJobData {
   experimentId: string;
+  /**
+   * The HTTP request's correlation id, carried across the process boundary
+   * into the job payload (task-18 requirement #2) — this is what lets
+   * SearchProcessor's log lines in the WORKER process share the same
+   * correlationId as the HTTP request that triggered the search, even
+   * though they run in a different OS process reached only through Redis.
+   * Falls back to a freshly generated id if enqueue() is called outside an
+   * HTTP request context (e.g. a future cron/internal trigger).
+   */
+  correlationId: string;
 }
 
 const IN_FLIGHT_STATES = [
@@ -38,7 +51,10 @@ const IN_FLIGHT_STATES = [
 export class SearchQueueService {
   private readonly logger = new Logger(SearchQueueService.name);
 
-  constructor(@InjectQueue(SEARCH_QUEUE) private readonly queue: Queue<SearchJobData>) {}
+  constructor(
+    @InjectQueue(SEARCH_QUEUE) private readonly queue: Queue<SearchJobData>,
+    private readonly metrics: MetricsService,
+  ) {}
 
   async enqueue(experimentId: string): Promise<void> {
     const existing = await withTimeout(this.findInFlightJob(experimentId));
@@ -49,10 +65,11 @@ export class SearchQueueService {
       return;
     }
 
+    const correlationId = getCorrelationId() ?? randomUUID();
     await withTimeout(
       this.queue.add(
         'run',
-        { experimentId },
+        { experimentId, correlationId },
         {
           jobId: `${experimentId}-run-${Date.now()}`,
           // Retries are safe here: StrategySearchService.run() only
@@ -67,6 +84,7 @@ export class SearchQueueService {
         },
       ),
     );
+    this.metrics.searchJobsEnqueuedTotal.inc();
   }
 
   /**

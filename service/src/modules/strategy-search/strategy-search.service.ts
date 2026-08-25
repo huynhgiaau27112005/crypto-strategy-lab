@@ -39,6 +39,7 @@ import {
   leaderboardVersionKey,
 } from '../leaderboard/leaderboard-cache-keys';
 import type { SearchTopRow } from './repositories/experiment.repository';
+import { MetricsService } from '../../observability/metrics/metrics.service';
 
 @Injectable()
 export class StrategySearchService implements OnApplicationBootstrap {
@@ -63,6 +64,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
     private readonly leaderboard: LeaderboardService,
     private readonly searchQueue: SearchQueueService,
     private readonly cache: CacheService,
+    private readonly metrics: MetricsService,
   ) {}
 
   // Runs in BOTH the API process and the worker process (StrategySearchModule
@@ -433,12 +435,14 @@ export class StrategySearchService implements OnApplicationBootstrap {
               }),
             ),
           );
+          this.metrics.candidatesGeneratedTotal.inc();
 
           const result = this.backtesting.run(
             candidateDefinition,
             candles,
             weightMap,
           );
+          this.metrics.backtestsRunTotal.inc();
           await this.backtestRuns.complete(candidateEntity.id, result);
           await this.iterations.complete(iteration.id);
 

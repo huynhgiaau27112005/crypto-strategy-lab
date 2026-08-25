@@ -3,6 +3,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { NEWS_CRAWL_QUEUE } from '../../../queue/queue.constants';
 import { NewsCrawlResult, NewsCrawlService } from './news-crawl.service';
+import { runWithCorrelationId } from '../../../observability/correlation/correlation-context';
 
 // Only ever instantiated inside WorkerModule (worker.ts), never AppModule —
 // same reasoning as SearchProcessor. concurrency: 1 backstops "one crawl
@@ -19,9 +20,12 @@ export class NewsCrawlProcessor extends WorkerHost {
   }
 
   async process(job: Job): Promise<NewsCrawlResult> {
-    this.logger.log(`[worker] Starting news crawl job ${job.id}`);
-    const result = await this.newsCrawlService.execute();
-    this.logger.log(`[worker] News crawl job ${job.id} finished`);
-    return result;
+    const correlationId = (job.data?.correlationId as string | undefined) ?? String(job.id);
+    return runWithCorrelationId(correlationId, async () => {
+      this.logger.log(`[worker] Starting news crawl job ${job.id}`);
+      const result = await this.newsCrawlService.execute();
+      this.logger.log(`[worker] News crawl job ${job.id} finished`);
+      return result;
+    });
   }
 }

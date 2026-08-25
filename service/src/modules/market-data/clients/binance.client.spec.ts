@@ -1,4 +1,5 @@
 import { BinanceClient, isKlineClosed } from './binance.client';
+import { MetricsService } from '../../../observability/metrics/metrics.service';
 
 /**
  * Minimal fake of the browser/Node `WebSocket` API, just enough to drive
@@ -62,7 +63,7 @@ describe('BinanceClient.streamCandles', () => {
     }
 
     it('parses a Binance kline message into the normalized KlineUpdate shape', () => {
-        const client = new BinanceClient();
+        const client = new BinanceClient(new MetricsService());
         const onUpdate = jest.fn();
 
         client.streamCandles('BTCUSDT', '1m', { onUpdate });
@@ -101,7 +102,7 @@ describe('BinanceClient.streamCandles', () => {
 
     it('does not reconnect once stop() has been called', () => {
         jest.useFakeTimers();
-        const client = new BinanceClient();
+        const client = new BinanceClient(new MetricsService());
 
         const handle = client.streamCandles('BTCUSDT', '1m', { onUpdate: jest.fn() });
         expect(FakeWebSocket.instances).toHaveLength(1);
@@ -118,7 +119,7 @@ describe('BinanceClient.streamCandles', () => {
     it('caps the reconnect backoff at the configured ceiling instead of growing unbounded', () => {
         jest.useFakeTimers();
         const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
-        const client = new BinanceClient();
+        const client = new BinanceClient(new MetricsService());
 
         client.streamCandles('BTCUSDT', '1m', { onUpdate: jest.fn() });
         // Never fires 'open', so the backoff never resets across cycles.
@@ -143,7 +144,7 @@ describe('BinanceClient.streamCandles', () => {
     it('resets the backoff to the initial delay after a successful reconnect', () => {
         jest.useFakeTimers();
         const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
-        const client = new BinanceClient();
+        const client = new BinanceClient(new MetricsService());
 
         client.streamCandles('BTCUSDT', '1m', { onUpdate: jest.fn() });
         latestSocket().emit('close'); // schedules 1_000ms reconnect, delay -> 2_000

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { MarketDataModule } from './modules/market-data';
@@ -17,11 +17,14 @@ import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { QueueModule } from './queue/queue.module';
 import { CacheModule } from './cache/cache.module';
+import { ObservabilityModule } from './observability/observability.module';
+import { ObservabilityMiddleware } from './observability/correlation/observability.middleware';
 
 @Module({
   imports: [
     QueueModule,
     CacheModule,
+    ObservabilityModule,
     MarketDataModule,
     ChartModule,
     StrategyEngineModule,
@@ -41,4 +44,11 @@ import { CacheModule } from './cache/cache.module';
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule { }
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // Applied to every route, including 404s and /metrics itself — see
+    // ObservabilityMiddleware's doc comment for why route templating keeps
+    // that safe from cardinality blowup.
+    consumer.apply(ObservabilityMiddleware).forRoutes('*');
+  }
+}

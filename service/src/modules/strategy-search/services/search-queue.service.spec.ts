@@ -1,4 +1,5 @@
 import { SearchQueueService } from './search-queue.service';
+import { MetricsService } from '../../../observability/metrics/metrics.service';
 
 function makeJob(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -17,8 +18,9 @@ describe('SearchQueueService', () => {
       getJobs: jest.fn().mockResolvedValue([]),
       ...queueOverrides,
     };
-    const service = new SearchQueueService(queue as any);
-    return { service, queue };
+    const metrics = new MetricsService();
+    const service = new SearchQueueService(queue as any, metrics);
+    return { service, queue, metrics };
   }
 
   describe('enqueue()', () => {
@@ -30,8 +32,20 @@ describe('SearchQueueService', () => {
       expect(queue.add).toHaveBeenCalledTimes(1);
       const [name, data, options] = queue.add.mock.calls[0];
       expect(name).toBe('run');
-      expect(data).toEqual({ experimentId: 'exp-1' });
+      expect(data).toMatchObject({ experimentId: 'exp-1' });
+      expect(typeof data.correlationId).toBe('string');
+      expect(data.correlationId.length).toBeGreaterThan(0);
       expect(options.jobId).toContain('exp-1');
+    });
+
+    it('increments the searchJobsEnqueuedTotal metric on a successful enqueue', async () => {
+      const { service, metrics } = buildService({ getJobs: jest.fn().mockResolvedValue([]) });
+
+      await service.enqueue('exp-1');
+
+      expect(await metrics.searchJobsEnqueuedTotal.get()).toMatchObject({
+        values: [expect.objectContaining({ value: 1 })],
+      });
     });
 
     it('coalesces (does not add) when a job for the same experimentId is already in flight', async () => {

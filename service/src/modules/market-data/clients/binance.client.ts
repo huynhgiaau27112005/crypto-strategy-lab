@@ -3,6 +3,7 @@ import {
     InternalServerErrorException,
     Logger,
 } from '@nestjs/common';
+import { MetricsService } from '../../../observability/metrics/metrics.service';
 
 export interface BinanceKline {
     openTime: number;
@@ -76,10 +77,32 @@ export class BinanceClient {
     private readonly streamBaseUrl =
         'wss://stream.binance.com:9443/ws';
 
+    constructor(private readonly metrics: MetricsService) {}
+
     async getKlines(
         symbol: string,
         interval: string,
         limit = 500,
+        endTime?: number,
+    ): Promise<BinanceKline[]> {
+        const endpoint = 'GET /api/v3/klines';
+        const stopTimer = this.metrics.binanceRequestDurationSeconds.startTimer({ endpoint });
+        try {
+            const result = await this.fetchKlines(symbol, interval, limit, endTime);
+            stopTimer();
+            this.metrics.binanceRequestsTotal.inc({ endpoint, outcome: 'success' });
+            return result;
+        } catch (error) {
+            stopTimer();
+            this.metrics.binanceRequestsTotal.inc({ endpoint, outcome: 'failure' });
+            throw error;
+        }
+    }
+
+    private async fetchKlines(
+        symbol: string,
+        interval: string,
+        limit: number,
         endTime?: number,
     ): Promise<BinanceKline[]> {
         const url = new URL(

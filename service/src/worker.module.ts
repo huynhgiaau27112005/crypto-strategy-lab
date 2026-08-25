@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { DatabaseModule } from './database/database.module';
 import { QueueModule } from './queue/queue.module';
 import { CacheModule } from './cache/cache.module';
+import { ObservabilityModule } from './observability/observability.module';
 import { StrategySearchModule } from './modules/strategy-search';
 import { NewsModule } from './modules/news';
 import { SearchProcessor } from './modules/strategy-search/search.processor';
@@ -24,7 +25,14 @@ import { NewsCrawlProcessor } from './modules/news/crawl/news-crawl.processor';
  * see artifacts/cache.md, "cross-process invalidation".
  */
 @Module({
-  imports: [DatabaseModule, QueueModule, CacheModule, StrategySearchModule, NewsModule],
+  imports: [
+    DatabaseModule,
+    QueueModule,
+    CacheModule,
+    ObservabilityModule,
+    StrategySearchModule,
+    NewsModule,
+  ],
   providers: [SearchProcessor, NewsCrawlProcessor],
 })
 export class WorkerModule {}

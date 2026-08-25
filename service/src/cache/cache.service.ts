@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type Redis from 'ioredis';
 import { REDIS_CLIENT } from './cache.constants';
+import { MetricsService } from '../observability/metrics/metrics.service';
 
 /**
  * The one place in the codebase that talks to Redis for response caching
@@ -20,16 +21,36 @@ import { REDIS_CLIENT } from './cache.constants';
 export class CacheService {
   private readonly logger = new Logger(CacheService.name);
 
-  constructor(@Inject(REDIS_CLIENT) private readonly client: Redis) {}
+  constructor(
+    @Inject(REDIS_CLIENT) private readonly client: Redis,
+    private readonly metrics: MetricsService,
+  ) {}
 
   async get<T>(key: string): Promise<T | null> {
+    const namespace = MetricsService.cacheNamespace(key);
     try {
       const raw = await this.client.get(key);
-      return raw === null ? null : (JSON.parse(raw) as T);
+      if (raw === null) {
+        this.metrics.cacheMissesTotal.inc({ namespace });
+        return null;
+      }
+      this.metrics.cacheHitsTotal.inc({ namespace });
+      return JSON.parse(raw) as T;
     } catch (error) {
+      this.metrics.cacheMissesTotal.inc({ namespace });
       this.logger.warn(`cache GET failed for key "${key}": ${this.errorMessage(error)}`);
       return null;
     }
+  }
+
+  /**
+   * Liveness/readiness only (task-18) — HealthService uses this instead of
+   * being handed the raw ioredis client, keeping REDIS_CLIENT private to
+   * this service (see CacheModule/cache.constants.ts doc comments: "Only
+   * CacheService is allowed to depend on this token").
+   */
+  async ping(): Promise<void> {
+    await this.client.ping();
   }
 
   async set(key: string, value: unknown, ttlSeconds: number): Promise<void> {

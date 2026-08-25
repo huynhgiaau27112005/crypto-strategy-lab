@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Job, Queue } from 'bullmq';
 import { NEWS_CRAWL_QUEUE } from '../../../queue/queue.constants';
 import { withTimeout } from '../../../queue/with-timeout';
+import { getCorrelationId } from '../../../observability/correlation/correlation-context';
 
 export type NewsCrawlStatus = 'RUNNING' | 'COMPLETED' | 'FAILED';
 
@@ -43,10 +45,11 @@ export class NewsCrawlQueueService {
     const active = await withTimeout(this.findInFlightJob());
     if (active) return this.toJobStatus(active);
 
+    const correlationId = getCorrelationId() ?? randomUUID();
     const job = await withTimeout(
       this.queue.add(
         'crawl',
-        {},
+        { correlationId },
         {
           jobId: `crawl-${Date.now()}`,
           // A blind retry risks re-crawling the same sources back-to-back
