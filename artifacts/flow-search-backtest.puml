@@ -1,0 +1,133 @@
+@startuml crypto-strategy-lab-flow-search
+' Luồng demo bắt buộc: cấu hình Search → sinh Candidate → Backtest → Leaderboard
+' Mọi tên hàm/bảng trong sơ đồ là tên có thật trong code.
+
+skinparam shadowing false
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 12
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 12
+skinparam BoxPadding 12
+
+actor "Người dùng" as U
+participant "BacktestPage\n+ useExperiment" as FE
+participant "StrategySearch\nController" as C
+participant "StrategySearch\nService" as S
+participant "DomainGuided\nRandomGenerator" as GEN
+participant "Candidate\nFingerprintService" as FP
+participant "Backtesting\nService" as BT
+participant "Composite\nStrategyService" as CS
+participant "StrategyEngine\nService" as ENG
+participant "Strategy\nRegistry" as REG
+participant "Leaderboard\nService" as LB
+database "PostgreSQL" as DB
+
+== 1. Khởi tạo experiment ==
+
+U -> FE : điền config\n(timeframe, khoảng thời gian,\nvốn, phí, slippage, Top-K)
+FE -> C : POST /strategy-search/experiments\nAuthorization: Bearer <JWT>
+activate C
+C -> S : start(userId, request)
+activate S
+
+S -> S : assertWeightsCoverEnabledDomains()\nkiểm tra trọng số ≥ 0, không toàn 0
+note right of S
+  **Không** còn ràng buộc Σ trọng số = 1.
+  Điểm tổng hợp là trung bình có trọng số,
+  tự chuẩn hoá bằng phép chia cho Σ trọng số.
+end note
+
+S -> DB : BEGIN
+S -> DB : INSERT experiments
+S -> DB : INSERT experiment_configs\n+ experiment_config_strategies (trọng số)
+S -> DB : COMMIT
+note right of DB
+  Config **bất biến**: đổi config
+  = tạo Experiment mới, không sửa row cũ.
+end note
+
+S --> C : { experimentId, status: PENDING }
+deactivate S
+C --> FE : 202 Accepted
+deactivate C
+FE -> FE : bắt đầu poll **có giới hạn**\n(interval cố định + số lần tối đa)
+
+== 2. Vòng lặp search (bất đồng bộ, mỗi vòng 1 Candidate) ==
+
+loop mỗi iteration, tới khi đủ số lượng / hết thời gian / bị huỷ
+  S -> DB : INSERT experiment_iterations\n(iteration_number = MAX+1, RUNNING)
+
+  S -> GEN : generate(config)
+  activate GEN
+  GEN -> GEN : chọn domain\n(TREND / MOMENTUM /\nVOLATILITY / STRUCTURE)\nbắt buộc ≥1 directional + ≥1 confirmation
+  GEN -> GEN : sinh tham số ngẫu nhiên\ntrong miền của strategy-catalog
+  GEN --> S : CandidateDefinition
+  deactivate GEN
+
+  S -> FP : fingerprint(candidate)
+  FP --> S : hash định danh tổ hợp
+
+  S -> DB : INSERT candidates\n+ candidate_strategies (tham số)
+
+  S -> BT : run(candidate, candles, weights)
+  activate BT
+
+  loop mỗi cây nến trong khoảng thời gian
+    BT -> CS : analyze(candidate, ctx, weights)
+    activate CS
+    loop mỗi strategy thành viên
+      CS -> ENG : analyze(member, ctx)
+      ENG -> REG : get(member.type)
+      REG --> ENG : StrategyPlugin
+      ENG --> CS : BUY / SELL / HOLD
+    end
+    CS -> CS : score = Σ(w × signal) / Σ w\nso với buyThreshold / sellThreshold
+    CS --> BT : tín hiệu tổng hợp
+    deactivate CS
+
+    BT -> BT : mô phỏng vào/ra lệnh\n(phí, slippage, SL/TP)
+  end
+
+  BT -> BT : tính metrics\n(return, winrate, maxDD,\nprofit factor, Sharpe, score)
+  BT -> DB : 1 transaction:\nbacktest_runs + trades + evaluations
+  BT --> S : BacktestResult
+  deactivate BT
+
+  S -> DB : UPDATE experiment_iterations → COMPLETED
+
+  S -> LB : rebuildForExperiment(id, topK, minimumTrades)
+  activate LB
+  LB -> DB : xếp hạng lại **toàn bộ** candidate\n→ leaderboards + leaderboard_entries
+  deactivate LB
+  note right of LB
+    Rebuild nằm ngoài try/catch của backtest:
+    lỗi rebuild không được lật một
+    backtest_run đã COMPLETED thành FAILED.
+  end note
+end
+
+S -> DB : UPDATE experiments → COMPLETED
+
+== 3. Xem kết quả ==
+
+FE -> C : GET /experiments/:id  (poll)
+C --> FE : status COMPLETED → **dừng poll**
+
+FE -> C : GET /experiments/:id/top?limit=K
+C --> FE : bảng xếp hạng Top-K
+
+U -> FE : bấm 1 dòng → Xem kết quả backtest
+FE -> C : GET /candidates/:id?tradePage=&tradePageSize=
+activate C
+C -> DB : JOIN candidates → iterations → experiments\n**WHERE e.user_id = $2**\n+ trọng số từ experiment_config_strategies\n+ trades phân trang
+note right of C
+  Ràng buộc user_id nằm ngay trong câu SQL:
+  không ai đọc được candidate của người khác
+  dù đoán đúng UUID.
+end note
+C --> FE : metrics + thành phần tổ hợp + danh sách lệnh
+deactivate C
+
+FE --> U : biểu đồ backtest + bảng lệnh
+
+@enduml

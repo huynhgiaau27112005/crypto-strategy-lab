@@ -1,0 +1,73 @@
+@startuml crypto-strategy-lab-container
+' Crypto Strategy Lab — Container view (C4 mức 2)
+' Dùng để MỞ ĐẦU phần trình bày: ai chạy ở đâu, nói chuyện với nhau bằng gì.
+' Bản chi tiết từng component nằm ở architecture.puml.
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 12
+skinparam nodesep 40
+skinparam ranksep 60
+skinparam rectangle {
+  BackgroundColor #FAFAFA
+  BorderColor #597EA3
+}
+skinparam database {
+  BackgroundColor #EEF3F8
+  BorderColor #597EA3
+}
+skinparam cloud {
+  BackgroundColor #F7F3EE
+  BorderColor #A08A6A
+}
+
+actor "Người dùng" as USER
+
+rectangle "**Web SPA**\nReact 19 + Vite + TypeScript\n\nLanding · Auth · Realtime\nStrategy Engine · AI Strategy\nBacktest · Leaderboard\nNews & Sentiment" as SPA
+
+rectangle "**API — Modular Monolith**\nNestJS 11 + raw pg (không ORM)\n\n12 module nghiệp vụ\n28 endpoint REST\nSocket.IO namespace /market" as API
+
+rectangle "**News Worker**\nPython 3.13\n\nCrawl RSS/HTML/API\nFinBERT sentiment\nGhi thẳng Postgres" as W_NEWS
+
+rectangle "**AI Strategy Worker**\nPython 3.13\n\nValidate (AST allowlist)\nThực thi strategy sinh bởi LLM\ntoàn chuỗi nến / 1 lần gọi" as W_AI
+
+database "**PostgreSQL 18 + TimescaleDB**\n\ncandles (hypertable)\nusers · strategies\nexperiments → configs → iterations\n→ candidates → backtest_runs\n→ trades / evaluations\nleaderboards · news" as PG
+
+cloud "**Binance**\nREST klines\nWebSocket kline stream" as BINANCE
+cloud "**LLM API**\nOpenAI-compatible\n(base URL + model qua env)" as LLM
+
+USER --> SPA : HTTPS
+
+SPA --> API : REST /api\n(JWT Bearer)
+SPA <-- API : Socket.IO\nnến realtime
+
+API --> PG : SQL (pg.Pool)
+API --> BINANCE : nến lịch sử + stream
+API --> LLM : sinh code Python
+API --> W_NEWS : spawn process\n(job boundary, timeout)
+API --> W_AI : spawn process\n(timeout, giới hạn output)
+
+W_NEWS --> PG : ON CONFLICT(url)
+W_NEWS --> BINANCE #line:transparent
+W_NEWS -[hidden]-> W_AI
+
+note bottom of SPA
+  SPA **không bao giờ** gọi thẳng Binance
+  hay LLM. Mọi dữ liệu đi qua API.
+  SPA chỉ render — không có business logic.
+end note
+
+note bottom of W_NEWS
+  Crawler và Sentiment là **tiến trình
+  tách biệt** (ADR-005), không nhúng
+  vào API. API chỉ khởi chạy và theo dõi.
+end note
+
+note right of PG
+  Một CSDL quan hệ duy nhất.
+  News nằm cùng đây, không dùng
+  NoSQL riêng (artifacts/decisions.md).
+end note
+
+@enduml

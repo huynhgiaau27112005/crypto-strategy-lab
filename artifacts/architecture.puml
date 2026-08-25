@@ -1,0 +1,272 @@
+@startuml crypto-strategy-lab-architecture
+' Crypto Strategy Lab — Component architecture (AS BUILT)
+' Nguồn sự thật: service/src, web-platform/src, workers/, database/migrations
+' Mọi tên trong sơ đồ là tên class/file có thật trong code.
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam linetype ortho
+skinparam nodesep 30
+skinparam ranksep 55
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 11
+skinparam ArrowColor #444444
+skinparam rectangle {
+  BackgroundColor #FAFAFA
+  BorderColor #999999
+}
+skinparam package {
+  BackgroundColor #FFFFFF
+  BorderColor #666666
+}
+skinparam database {
+  BackgroundColor #EEF3F8
+  BorderColor #597EA3
+}
+skinparam cloud {
+  BackgroundColor #F7F3EE
+  BorderColor #A08A6A
+}
+
+actor "User / Browser" as USER
+
+' =====================================================================
+package "Frontend — React 19 + Vite (web-platform/)" as FE {
+  rectangle "LandingPage\nAuthPage" as FE_AUTH
+  rectangle "WorkspaceLayout\nNavRail" as FE_SHELL
+  rectangle "RealtimePage\n(4 pane, chart nến)" as FE_RT
+  rectangle "StrategyEnginePage\nWeightedVotingTable\nParameterPanel" as FE_STRAT
+  rectangle "AiStrategyPage" as FE_AI
+  rectangle "BacktestPage\nConfirmRerunDialog" as FE_BT
+  rectangle "LeaderboardPage" as FE_LB
+  rectangle "NewsSentimentPage" as FE_NEWS
+
+  rectangle "api/client.ts\n(apiFetch, single-flight refresh)" as FE_API
+  rectangle "auth/AuthContext\nRequireAuth" as FE_AUTHCTX
+  rectangle "lib/marketSocket.ts\n(socket.io-client)" as FE_SOCK
+  rectangle "hooks/\nuseMarketSocket, useExperiment,\nuseTopCandidates, useCandidateDetail,\nuseAiStrategy" as FE_HOOKS
+  rectangle "state/\nStrategySelectionContext\nExperimentContext" as FE_STATE
+}
+
+USER --> FE_AUTH
+USER --> FE_SHELL
+
+FE_AUTH --> FE_AUTHCTX
+FE_SHELL --> FE_RT
+FE_SHELL --> FE_STRAT
+FE_SHELL --> FE_AI
+FE_SHELL --> FE_BT
+FE_SHELL --> FE_LB
+FE_SHELL --> FE_NEWS
+
+FE_RT --> FE_HOOKS
+FE_BT --> FE_HOOKS
+FE_LB --> FE_HOOKS
+FE_AI --> FE_HOOKS
+FE_STRAT --> FE_STATE
+FE_BT --> FE_STATE
+FE_HOOKS --> FE_API
+FE_AUTHCTX --> FE_API
+FE_RT --> FE_SOCK
+
+' =====================================================================
+package "Modular Monolith — NestJS (service/)" as BE {
+
+  package "Auth Module" as M_AUTH {
+    rectangle "AuthController\n/auth/register /login\n/refresh /logout" as AUTH_C
+    rectangle "AuthService\n(bcrypt, JWT 15m,\nrefresh 30d + rotation)" as AUTH_S
+    rectangle "JwtStrategy\nJwtAuthGuard\n@CurrentUser" as AUTH_G
+    rectangle "UserRepository\nRefreshTokenRepository\n(SHA-256 token hash)" as AUTH_R
+    AUTH_C --> AUTH_S
+    AUTH_S --> AUTH_R
+    AUTH_S ..> AUTH_G
+  }
+
+  package "Market Data Module" as M_MKT {
+    rectangle "MarketDataController\n/market-data/candles\n/market-data/import" as MKT_C
+    rectangle "MarketDataService\nassertAllowedInterval" as MKT_S
+    rectangle "MarketDataGateway\nSocket.IO ns /market\n(1 upstream/interval,\nref-counted teardown)" as MKT_GW
+    rectangle "BinanceClient\n(REST klines + WS stream,\nreconnect backoff)" as MKT_BIN
+    rectangle "CandleRepository" as MKT_R
+    rectangle "config.ts\nALLOWED_INTERVALS" as MKT_CFG
+    MKT_C --> MKT_S
+    MKT_S --> MKT_BIN
+    MKT_S --> MKT_R
+    MKT_S --> MKT_CFG
+    MKT_GW --> MKT_BIN
+    MKT_GW --> MKT_R
+    MKT_GW --> MKT_CFG
+  }
+
+  package "Strategy Plugin Module" as M_PLUG {
+    rectangle "StrategyRegistry\nregister / get / list / has" as PLUG_REG
+    rectangle "MaPlugin\nRsiPlugin\nBollingerPlugin\nSupportResistancePlugin" as PLUG_P
+    rectangle "StrategyPluginController\n/strategy-plugin/strategies\n/strategies/:name/versions" as PLUG_C
+    rectangle "StrategyPluginService\nlistCatalog / versioning" as PLUG_S
+    PLUG_P --> PLUG_REG : onModuleInit\nregister()
+    PLUG_C --> PLUG_S
+    PLUG_S --> PLUG_REG
+  }
+
+  package "Strategy Engine Module" as M_ENG {
+    rectangle "StrategyEngineService\nanalyze(member, ctx)\n→ delegate to registry" as ENG_S
+    rectangle "RealtimeSignalController\n/strategy-engine/signal" as ENG_RC
+    rectangle "RealtimeSignalService" as ENG_RS
+    ENG_RC --> ENG_RS
+    ENG_RS --> ENG_S
+  }
+
+  package "Composite Strategy Module" as M_COMP {
+    rectangle "CompositeStrategyService\nscore = Σ(w×signal) / Σw\n→ BUY / SELL / HOLD" as COMP_S
+  }
+
+  package "Strategy Search Module" as M_SEARCH {
+    rectangle "StrategySearchController\nPOST /experiments\nGET /experiments/:id[/top]\nPOST /:id/cancel /:id/extend\nGET /candidates/:id" as SR_C
+    rectangle "StrategySearchService\nstart / run / extend\nloadConfig, weight validation" as SR_S
+    rectangle "DomainGuidedRandomGenerator" as SR_GEN
+    rectangle "strategy-catalog.ts\nTREND / MOMENTUM /\nVOLATILITY / STRUCTURE" as SR_CAT
+    rectangle "CandidateFingerprintService\nSeededRandom" as SR_FP
+    rectangle "ExperimentRepository\nExperimentConfigRepository\nExperimentIterationRepository\nCandidateRepository\nStrategyRepository" as SR_R
+    SR_C --> SR_S
+    SR_S --> SR_GEN
+    SR_GEN --> SR_CAT
+    SR_GEN --> SR_FP
+    SR_S --> SR_R
+  }
+
+  package "Backtesting Module" as M_BT {
+    rectangle "BacktestingService\nrun(candidate, candles, weights)\nfee + slippage, SL/TP,\nevaluation metrics" as BT_S
+    rectangle "BacktestRunRepository\n(1 transaction:\nruns + trades + evaluations)" as BT_R
+    BT_S --> BT_R
+  }
+
+  package "Leaderboard Module" as M_LB {
+    rectangle "LeaderboardService\nrebuildForExperiment\n(topK, minimumTrades)" as LB_S
+  }
+
+  package "News Module" as M_NEWS {
+    rectangle "NewsController\nGET /news\nPOST /news/crawl\nGET /news/crawl/status" as NW_C
+    rectangle "NewsService\n+ crawl job boundary\n(1 job, timeout, exit code)" as NW_S
+    rectangle "NewsRepository" as NW_R
+    NW_C --> NW_S
+    NW_S --> NW_R
+  }
+
+  package "Sentiment Module" as M_SENT {
+    rectangle "SentimentController\nGET /sentiment/summary" as ST_C
+    rectangle "SentimentService\n(tính % ở service,\nkhông ở SQL/frontend)" as ST_S
+    ST_C --> ST_S
+    ST_S --> NW_R
+  }
+
+  package "AI Strategy Module" as M_AI {
+    rectangle "AiStrategyController\nPOST /generate /validate /save\nGET /mine /:id /samples\nPOST /:id/run" as AI_C
+    rectangle "AiStrategyService" as AI_S
+    rectangle "LlmProviderFactory\nOpenAiCompatibleProvider\nFakeProvider (tests, no key)" as AI_P
+    rectangle "AiStrategyValidatorService\n(AST gate)" as AI_V
+    rectangle "AiStrategyRunnerService\npython-process.util\n(timeout, output cap)" as AI_RUN
+    rectangle "contract-prompt.ts\ngenerate_signals(candles)\n→ [BUY|SELL|HOLD]" as AI_CT
+    rectangle "AiStrategyRepository" as AI_R
+    AI_C --> AI_S
+    AI_S --> AI_P
+    AI_S --> AI_V
+    AI_S --> AI_RUN
+    AI_S --> AI_R
+    AI_P --> AI_CT
+  }
+
+  package "Database Module" as M_DB {
+    rectangle "DatabaseService\nraw pg.Pool\nquery / withTransaction\n(KHÔNG dùng ORM)" as DB_S
+  }
+}
+
+' ---- dependency giữa các module (theo imports thật trong *.module.ts)
+ENG_S --> PLUG_REG : registry.get(type)
+COMP_S --> ENG_S
+BT_S --> COMP_S
+SR_S --> BT_S
+SR_S --> LB_S
+SR_S --> PLUG_REG
+SR_FP --> PLUG_REG : displayName
+ENG_RS --> MKT_S
+PLUG_S --> DB_S
+
+AUTH_R --> DB_S
+MKT_R --> DB_S
+SR_R --> DB_S
+BT_R --> DB_S
+LB_S --> DB_S
+NW_R --> DB_S
+AI_R --> DB_S
+
+' ---- guard áp lên mọi controller nghiệp vụ
+' (vẽ thành note thay vì 7 mũi tên cắt ngang sơ đồ)
+note right of AUTH_G
+  **JwtAuthGuard + @CurrentUser** áp lên
+  MỌI controller nghiệp vụ:
+  MarketData · StrategySearch · StrategyPlugin
+  RealtimeSignal · News · Sentiment · AiStrategy
+
+  Dữ liệu thuộc sở hữu user (experiments,
+  candidates, AI strategies) còn scope thêm
+  theo user_id ngay trong câu SQL.
+end note
+
+' =====================================================================
+package "Python Workers (workers/) — tiến trình tách biệt" as PW {
+  package "news/" as PW_NEWS {
+    rectangle "main.py\n(entry point)" as PWN_MAIN
+    rectangle "NewsCrawler\nfetcher / parser factory\nrss | html | api\nnormalizer / validator" as PWN_CRAWL
+    rectangle "SentimentProvider (interface)\nFinbertProvider\nfactory.py" as PWN_SENT
+    rectangle "NewsRepository (psycopg2)\nON CONFLICT(url)" as PWN_DB
+    rectangle "models/finbert\n(local, gitignored)" as PWN_MODEL
+    PWN_MAIN --> PWN_CRAWL
+    PWN_MAIN --> PWN_SENT
+    PWN_MAIN --> PWN_DB
+    PWN_SENT --> PWN_MODEL
+  }
+  package "ai-strategy/" as PW_AI {
+    rectangle "validate.py\n(ast walk, allowlist)" as PWA_VAL
+    rectangle "run.py\nsandbox.py\n(whole-series execution)" as PWA_RUN
+  }
+}
+
+NW_S --> PWN_MAIN : spawn process\n(job boundary, timeout)
+AI_V --> PWA_VAL : spawn
+AI_RUN --> PWA_RUN : spawn\n(candles in → signals out)
+
+' =====================================================================
+package "Infrastructure" as INFRA {
+  database "PostgreSQL 18 + TimescaleDB\n\nusers, refresh_tokens\ncandles (hypertable)\nstrategies\nexperiments, experiment_configs,\nexperiment_config_strategies,\nexperiment_iterations\ncandidates, candidate_strategies\nbacktest_runs, trades, evaluations\nleaderboards, leaderboard_entries\nnews" as PG
+}
+
+cloud "Binance\nREST klines + WebSocket" as EXT_BIN
+cloud "LLM API\n(OpenAI-compatible,\nbase URL + model qua env)" as EXT_LLM
+
+DB_S --> PG
+PWN_DB --> PG
+MKT_BIN --> EXT_BIN
+AI_P --> EXT_LLM
+
+FE_API --> AUTH_C : "/api (vite proxy)"
+FE_SOCK --> MKT_GW : WebSocket
+
+note right of EXT_BIN
+  Frontend KHÔNG BAO GIỜ gọi Binance.
+  Mọi dữ liệu thị trường đi qua service/.
+end note
+
+note bottom of PLUG_REG
+  Thêm strategy mới = đăng ký plugin.
+  StrategyEngineService không có
+  switch/if theo loại strategy.
+end note
+
+note bottom of AI_V
+  Đây là VALIDATION GATE, không phải
+  security sandbox. Chạy code do LLM sinh
+  trong subprocess + timeout không đủ để
+  chặn kẻ tấn công có chủ đích.
+end note
+
+@enduml
