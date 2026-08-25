@@ -1,113 +1,173 @@
 # Crypto Strategy Lab
 
-Nền tảng phân tích, kết hợp và đánh giá chiến lược giao dịch crypto — đồ án **Kiến trúc phần mềm**.
+Nền tảng phân tích, kết hợp, backtest và xếp hạng chiến lược giao dịch BTC — đồ án **Kiến trúc phần mềm**.
 
-Kiến trúc hiện tại: **modular monolithic** (một NestJS backend + React SPA). UI HTML prototype nằm ở `docs/prototype` để approve trước khi port sang Frontend.
-
-## Cấu trúc
-
-| Thư mục | Mô tả |
-|---------|--------|
-| `service/` | NestJS + TypeScript modular monolith (11 module stubs) |
-| `web-platform/` | Vite + React + TypeScript SPA (page stubs) |
-| `database/` | SQL migrations, seed, & check scripts cho PostgreSQL + TimescaleDB |
-| `docs/prototype/` | HTML clickable UI cho stakeholder approve |
-| `docs/superpowers/` | Design specs & implementation plans |
-
-## Yêu cầu
-
-- Node.js **20+** (đã kiểm tra với Node 24)
-- npm
-
-## 🚀 Chạy Docker Compose backend
-
-Xem chi tiết tại [DOCKER_GUIDE.md](file:///home/van/dev/Architecture/crypto-strategy-lab/DOCKER_GUIDE.md).
-
-Khởi động toàn bộ hệ thống (Database TimescaleDB & NestJS API):
-
-```bash
-docker compose up -d --build
-```
-
-- **Backend NestJS API**: `http://localhost:3000`
-- **Database TimescaleDB**: `localhost:6543`
-
-Thử nghiệm nhanh qua `curl`:
-
-```bash
-curl "http://localhost:3000/market-data/candles?symbol=BTCUSDT&interval=5m&limit=5"
-```
+Kiến trúc: **modular monolith** (NestJS) + **worker tách tiến trình** (BullMQ/Redis) + **worker Python** (crawl news, chạy strategy do AI sinh) + React SPA.
 
 ---
 
-## 💻 Chạy Backend cục bộ (`service`)
+## ⚡ Chạy nhanh — 5 tiến trình
+
+Hệ thống cần **5 thứ chạy song song**. Thiếu worker thì search sẽ nằm `PENDING` mãi không chạy.
 
 ```bash
-cd service
-npm install
-npm run start:dev
+# 1. Hạ tầng: Postgres (TimescaleDB) + Redis
+docker compose up -d timescaledb redis
 ```
 
-API mặc định: `http://localhost:3000`
-
-### ⚠️ Bắt buộc: nạp dữ liệu nến lịch sử trước khi chạy search/backtest
-
-Database mới khởi tạo gần như **không có nến** — mọi strategy cần tối thiểu 20–50 nến lookback mới sinh tín hiệu đầu tiên, nên chạy search trên DB rỗng sẽ cho kết quả 0 trade, leaderboard trống. Chạy lệnh sau **một lần** sau khi database đã lên (xem mục Docker Compose ở trên) để nạp lịch sử BTCUSDT thật từ Binance cho cả 5 khung thời gian (`1m, 5m, 15m, 1h, 4h`):
-
 ```bash
-cd service
-npm run seed:candles
+# 2. Tạo file cấu hình (chỉ làm 1 lần)
+cp service/.env.example service/.env
 ```
 
-An toàn chạy lại nhiều lần (idempotent — upsert theo khoá `(timeframe, timestamp)`, không tạo trùng dòng). In tiến độ theo từng khung thời gian và tổng số nến cuối cùng khi chạy xong.
-
-Health stub ví dụ:
-
 ```bash
-curl http://localhost:3000/market-data/health
-# {"status":"ok","module":"market-data"}
+# 3. Migrate + seed 4 strategy hệ thống (chỉ làm 1 lần)
+cd database && npm install && npm run db:migrate && npm run db:seed
 ```
 
-Các module domain (stub): `market-data`, `chart`, `strategy-engine`, `strategy-plugin`, `composite-strategy`, `strategy-search`, `backtesting`, `leaderboard`, `continuous-loop`, `news`, `sentiment`.
-
----
-
-## Chạy Frontend (`web-platform`)
+```bash
+# 4. Nạp nến lịch sử từ Binance (chỉ làm 1 lần, ~13.000 nến)
+cd service && npm install && npm run seed:candles
+```
 
 ```bash
-cd web-platform
-npm install
-npm run dev
+# 5. API (terminal 1)
+cd service && npm run start:dev
+```
+
+```bash
+# 6. Worker — BẮT BUỘC, không có thì search không chạy (terminal 2)
+cd service && npm run start:worker:dev
+```
+
+```bash
+# 7. Frontend (terminal 3)
+cd web-platform && npm install && npm run dev
 ```
 
 Mở URL Vite in ra terminal (thường `http://localhost:5173`).
 
-Routes stub: `/`, `/strategies`, `/search`, `/leaderboard`, `/strategy/:id`, `/news`.
-
-## Xem HTML Prototype
-
-Prototype là app shell TradingView-like, tách 4 workspace HTML (có Dark/Light toggle):
-
-| File | Nội dung |
-|------|----------|
-| `docs/prototype/index.html` | Cổng vào |
-| `docs/prototype/charts.html` | 4 chart · TF `5m/15m/1h/4h` · Lightweight Charts |
-| `docs/prototype/lab.html` | Strategies + Search + Leaderboard |
-| `docs/prototype/strategy.html` | Chi tiết strategy · Buy/Sell overlays |
-| `docs/prototype/news.html` | News + Sentiment |
+### Kiểm tra mọi thứ đã lên
 
 ```bash
-open docs/prototype/index.html
-# hoặc
-npx --yes serve docs/prototype
+curl http://localhost:3000/health/ready && curl http://localhost:3000/queue/health
 ```
 
-Luồng demo đề xuất: Charts → Lab → Strategy → News.
+`/health/ready` phải trả `200` (Postgres + Redis đều sống), và `/queue/health` phải hiện `"workers": 1` cho **cả hai** queue `search` và `news-crawl`. Nếu `workers: 0` → bước 6 chưa chạy.
 
-## Tài liệu thiết kế
+---
 
-- Hướng dẫn Docker & API: `DOCKER_GUIDE.md`
-- Spec scaffold: `docs/superpowers/specs/2026-08-09-project-boilerplate-design.md`
-- Spec prototype redesign: `docs/superpowers/specs/2026-08-09-prototype-redesign-design.md`
-- Plan boilerplate: `docs/superpowers/plans/2026-08-09-project-boilerplate.md`
-- Plan prototype: `docs/superpowers/plans/2026-08-09-prototype-redesign.md`
+## Yêu cầu môi trường
+
+| Thành phần | Phiên bản | Dùng cho |
+|---|---|---|
+| Node.js | **20+** (đã test Node 24) | API, worker, frontend |
+| Docker | bất kỳ | Postgres + Redis |
+| Python | **3.13+** | worker crawl news, chạy AI strategy |
+
+Python < 3.10 sẽ **không chạy được** (code dùng cú pháp `str | bytes`).
+
+### Cài Python worker (cho News & AI Strategy)
+
+```bash
+brew install python@3.13
+cd workers/news && python3.13 -m venv .venv
+.venv/bin/pip install feedparser beautifulsoup4 pydantic requests pyyaml psycopg2-binary torch transformers safetensors
+```
+
+Tải model FinBERT về local (~418MB, đã gitignore):
+
+```bash
+cd workers/news && .venv/bin/python -c "
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+t=AutoTokenizer.from_pretrained('ProsusAI/finbert'); m=AutoModelForSequenceClassification.from_pretrained('ProsusAI/finbert')
+t.save_pretrained('models/finbert'); m.save_pretrained('models/finbert')"
+```
+
+Không có model thì crawl vẫn chạy, chỉ là bài báo lưu với `sentiment = NULL`.
+
+### AI Strategy (tuỳ chọn)
+
+Cần một endpoint LLM tương thích OpenAI. Thêm vào `service/.env`:
+
+```
+OPENAI_BASE_URL=https://models.inference.ai.azure.com
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_API_KEY=...
+```
+
+Không có key thì mọi thứ khác vẫn chạy; chỉ riêng nút *sinh strategy* báo lỗi rõ ràng.
+`service/.env` đã được gitignore — **đừng commit key**.
+
+---
+
+## Cấu trúc
+
+| Thư mục | Nội dung |
+|---|---|
+| `service/` | NestJS modular monolith — 12 module nghiệp vụ, ~30 endpoint, Socket.IO `/market`, raw `pg` (không ORM) |
+| `service/src/worker.ts` | Tiến trình worker tiêu thụ job BullMQ (search, crawl) |
+| `web-platform/` | React 19 + Vite SPA — 8 màn hình theo `docs/ui-prototype/` |
+| `workers/news/` | Python: crawl RSS/HTML/API + sentiment FinBERT, ghi thẳng Postgres |
+| `workers/ai-strategy/` | Python: validate (AST allowlist) + chạy strategy do LLM sinh |
+| `database/` | Migration SQL đánh số + seed + check |
+| `artifacts/` | **Tài liệu thiết kế thực tế đã build** (tiếng Việt) — dùng cho vấn đáp |
+| `docs/ui-prototype/` | UI đã duyệt (nguồn sự thật cho giao diện) |
+| `docs/about-projects/` | Đề bài gốc |
+
+---
+
+## Tài liệu thiết kế (`artifacts/`)
+
+| File | Nội dung |
+|---|---|
+| `architecture-container.puml` → `.png` | Sơ đồ tổng quan C4 mức 2 — **dùng mở đầu vấn đáp** |
+| `architecture.puml` → `.png` | Sơ đồ component chi tiết, mọi tên là class/file có thật |
+| `flow-search-backtest.puml` → `.png` | Sequence luồng demo bắt buộc |
+| `decisions.md` | Nhật ký quyết định kiến trúc kèm lý do |
+| `api-contract.md` | Hợp đồng API thật |
+| `database.md` | Schema thật + giải thích 4 khái niệm Strategy/Experiment/Config/Candidate |
+| `queue.md` | Vì sao dùng queue, topology, retry/cancel |
+| `cache.md` | Cache gì, key, TTL, chiến lược invalidate |
+| `observability.md` | Log có cấu trúc, correlation id xuyên tiến trình, metrics |
+| `ai-strategy.md` | Provider LLM, contract code sinh ra, cổng validate và giới hạn của nó |
+
+Sửa `.puml` rồi render lại:
+
+```bash
+cd artifacts && PLANTUML_LIMIT_SIZE=16384 plantuml -tpng -DPLANTUML_LIMIT_SIZE=16384 *.puml
+```
+
+---
+
+## Luồng demo
+
+1. **Đăng ký / Đăng nhập** → vào workspace
+2. **Realtime** — chọn tối đa 4 khung thời gian, nến đẩy qua WebSocket
+3. **Strategy Engine** — 4 strategy hệ thống, chỉnh trọng số, xem tín hiệu tổng hợp
+4. **Backtest** — cấu hình rồi chạy Search & Backtest thật
+5. **Leaderboard** — Top-K tổ hợp, bấm vào xem chi tiết lệnh
+6. **News & Sentiment** — bấm *Crawl tin tức*, xem bài thật + phân tích FinBERT
+
+---
+
+## Kiểm thử
+
+```bash
+cd service && npm test          # 40 suite / 230 test — không cần Redis hay mạng
+cd web-platform && npm run build && npm run lint
+cd workers/news && .venv/bin/python -m pytest
+```
+
+---
+
+## Sự cố thường gặp
+
+| Triệu chứng | Nguyên nhân |
+|---|---|
+| Search mãi ở `PENDING` | Chưa chạy worker (bước 6) |
+| Leaderboard rỗng, 0 trade | Chưa `npm run seed:candles` |
+| `/health/ready` trả 503 | Postgres hoặc Redis chưa lên |
+| Port 6381/6543 bị chiếm | Đổi port trong `docker-compose.yml` và `service/.env` |
+| Crawl news lỗi | Chưa tạo venv Python 3.13 ở `workers/news/` |
+| Nút sinh AI strategy báo lỗi | Chưa cấu hình `OPENAI_API_KEY` |
