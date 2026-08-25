@@ -388,3 +388,47 @@ export interface NewsCrawlJobDto {
   exitCode: number | null
   error: string | null
 }
+
+// ---------------------------------------------------------------------
+// AI Strategy — /ai-strategy/* (artifacts/api-contract.md, task-14).
+// ---------------------------------------------------------------------
+
+/** One row of the "Kiểm tra & validation" panel — mirrors the backend's ValidationCheck exactly. */
+export interface AiValidationCheckDto {
+  key: 'parses' | 'contract' | 'safety' | 'smoke'
+  passed: boolean
+  message: string
+}
+
+export interface AiValidationResultDto {
+  valid: boolean
+  checks: AiValidationCheckDto[]
+}
+
+/** Response of POST /ai-strategy/generate. */
+export interface GenerateAiStrategyResponse {
+  code: string
+  raw: string
+  providerName: string
+  validation: AiValidationResultDto
+}
+
+/** Response of GET /ai-strategy/mine (one row) — no source_code, for the account's strategy table. */
+export interface AiStrategySummaryDto {
+  id: string
+  name: string
+  version: number
+  createdAt: string
+  isActive: boolean
+}
+
+/** Response of GET /ai-strategy/:id and POST /ai-strategy/save — includes source. */
+export interface AiStrategyDetailDto extends AiStrategySummaryDto {
+  sourceCode: string
+}
+
+/** Response of POST /ai-strategy/:id/run. */
+export interface RunAiStrategyResponse {
+  candleCount: number
+  signals: StrategySignal[]
+}

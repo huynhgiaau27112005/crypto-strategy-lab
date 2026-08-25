@@ -12,6 +12,7 @@ import { LeaderboardModule } from './modules/leaderboard';
 import { ContinuousLoopModule } from './modules/continuous-loop';
 import { NewsModule } from './modules/news';
 import { SentimentModule } from './modules/sentiment';
+import { AiStrategyModule } from './modules/ai-strategy';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
 
@@ -29,6 +30,7 @@ import { AuthModule } from './modules/auth/auth.module';
     ContinuousLoopModule,
     NewsModule,
     SentimentModule,
+    AiStrategyModule,
     DatabaseModule,
     AuthModule,
   ],

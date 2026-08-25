@@ -1,11 +1,11 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { RequireAuth } from './auth/AuthContext'
+import AiStrategyPage from './pages/AiStrategyPage'
 import AuthPage from './pages/AuthPage'
 import BacktestPage from './pages/BacktestPage'
 import LandingPage from './pages/LandingPage'
 import LeaderboardPage from './pages/LeaderboardPage'
 import NewsPage from './pages/NewsPage'
-import PlaceholderPage from './pages/PlaceholderPage'
 import RealtimePage from './pages/RealtimePage'
 import StrategyEnginePage from './pages/StrategyEnginePage'
 import { ExperimentProvider } from './state/ExperimentContext'
@@ -39,7 +39,7 @@ export default function App() {
         <Route index element={<Navigate to="realtime" replace />} />
         <Route path="realtime" element={<RealtimePage />} />
         <Route path="strategy" element={<StrategyEnginePage />} />
-        <Route path="ai" element={<PlaceholderPage />} />
+        <Route path="ai" element={<AiStrategyPage />} />
         <Route path="backtest" element={<BacktestPage />} />
         <Route path="leaderboard" element={<LeaderboardPage />} />
         <Route path="news" element={<NewsPage />} />

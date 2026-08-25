@@ -1,0 +1,199 @@
+import { useCallback, useEffect, useState } from 'react'
+import { apiFetch } from '../api/client'
+import type {
+  AiStrategyDetailDto,
+  AiStrategySummaryDto,
+  AiValidationResultDto,
+  GenerateAiStrategyResponse,
+  RunAiStrategyResponse,
+} from '../api/types'
+
+export type AiGenerateState = 'idle' | 'generating' | 'done' | 'error'
+export type AiSaveState = 'idle' | 'saving' | 'done' | 'error'
+
+/**
+ * Drives the whole AI Strategy tab: samples, generate, validate-as-you-edit,
+ * save (creates a new version row — see AiStrategyRepository.createVersion),
+ * and the "Strategy AI của tài khoản" table (GET /ai-strategy/mine).
+ *
+ * No business logic lives here beyond orchestrating these calls and holding
+ * their results — the validation/version rules themselves live server-side
+ * (docs/about-projects anti-pattern: business logic must not live in the
+ * frontend).
+ */
+export function useAiStrategy() {
+  const [samples, setSamples] = useState<string[]>([])
+  const [prompt, setPrompt] = useState('')
+
+  const [generateState, setGenerateState] = useState<AiGenerateState>('idle')
+  const [generateError, setGenerateError] = useState<string | null>(null)
+  const [code, setCode] = useState('')
+  const [providerName, setProviderName] = useState<string | null>(null)
+  const [validation, setValidation] = useState<AiValidationResultDto | null>(null)
+  const [validating, setValidating] = useState(false)
+
+  const [saveName, setSaveName] = useState('')
+  const [saveState, setSaveState] = useState<AiSaveState>('idle')
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [savedDetail, setSavedDetail] = useState<AiStrategyDetailDto | null>(null)
+
+  const [mine, setMine] = useState<AiStrategySummaryDto[]>([])
+  const [mineLoading, setMineLoading] = useState(true)
+  const [mineError, setMineError] = useState<string | null>(null)
+
+  const [runState, setRunState] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
+  const [runError, setRunError] = useState<string | null>(null)
+  const [runResult, setRunResult] = useState<RunAiStrategyResponse | null>(null)
+
+  const refreshMine = useCallback(async () => {
+    setMineLoading(true)
+    setMineError(null)
+    try {
+      const rows = await apiFetch<AiStrategySummaryDto[]>('/ai-strategy/mine')
+      setMine(rows)
+    } catch (err) {
+      setMineError(err instanceof Error ? err.message : 'Không tải được danh sách strategy AI.')
+    } finally {
+      setMineLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    apiFetch<{ samples: string[] }>('/ai-strategy/samples')
+      .then((res) => setSamples(res.samples))
+      .catch(() => setSamples([]))
+    void refreshMine()
+  }, [refreshMine])
+
+  const setPromptBounded = useCallback((value: string) => {
+    setPrompt(value.slice(0, 1000))
+  }, [])
+
+  const useSample = useCallback((sample: string) => {
+    setPrompt(sample.slice(0, 1000))
+  }, [])
+
+  const clearPrompt = useCallback(() => {
+    setPrompt('')
+  }, [])
+
+  const generate = useCallback(async () => {
+    if (!prompt.trim() || generateState === 'generating') return
+    setGenerateState('generating')
+    setGenerateError(null)
+    setSaveState('idle')
+    setSaveError(null)
+    setSavedDetail(null)
+    setRunState('idle')
+    setRunResult(null)
+    try {
+      const res = await apiFetch<GenerateAiStrategyResponse>('/ai-strategy/generate', {
+        method: 'POST',
+        body: JSON.stringify({ prompt: prompt.trim() }),
+      })
+      setCode(res.code)
+      setProviderName(res.providerName)
+      setValidation(res.validation)
+      setGenerateState('done')
+    } catch (err) {
+      setGenerateError(err instanceof Error ? err.message : 'Sinh strategy thất bại.')
+      setGenerateState('error')
+    }
+  }, [prompt, generateState])
+
+  // Re-validate whenever the code panel is hand-edited, so the checklist
+  // never shows a stale result for code the user has since changed.
+  const editCode = useCallback(async (nextCode: string) => {
+    setCode(nextCode)
+    setSaveState('idle')
+    setSaveError(null)
+    setSavedDetail(null)
+    if (!nextCode.trim()) {
+      setValidation(null)
+      return
+    }
+    setValidating(true)
+    try {
+      const result = await apiFetch<AiValidationResultDto>('/ai-strategy/validate', {
+        method: 'POST',
+        body: JSON.stringify({ code: nextCode }),
+      })
+      setValidation(result)
+    } catch (err) {
+      setValidation({
+        valid: false,
+        checks: [{ key: 'parses', passed: false, message: err instanceof Error ? err.message : 'Validate thất bại.' }],
+      })
+    } finally {
+      setValidating(false)
+    }
+  }, [])
+
+  const save = useCallback(async () => {
+    if (!saveName.trim() || !code.trim() || saveState === 'saving') return
+    setSaveState('saving')
+    setSaveError(null)
+    try {
+      const detail = await apiFetch<AiStrategyDetailDto>('/ai-strategy/save', {
+        method: 'POST',
+        body: JSON.stringify({ name: saveName.trim(), code }),
+      })
+      setSavedDetail(detail)
+      setSaveState('done')
+      await refreshMine()
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Lưu strategy thất bại.')
+      setSaveState('error')
+    }
+  }, [saveName, code, saveState, refreshMine])
+
+  const runSaved = useCallback(async (id: string, timeframe = '1h', limit = 200) => {
+    setRunState('running')
+    setRunError(null)
+    try {
+      const result = await apiFetch<RunAiStrategyResponse>(`/ai-strategy/${id}/run`, {
+        method: 'POST',
+        body: JSON.stringify({ timeframe, limit }),
+      })
+      setRunResult(result)
+      setRunState('done')
+    } catch (err) {
+      setRunError(err instanceof Error ? err.message : 'Chạy strategy thất bại.')
+      setRunState('error')
+    }
+  }, [])
+
+  return {
+    samples,
+    prompt,
+    setPrompt: setPromptBounded,
+    useSample,
+    clearPrompt,
+
+    generateState,
+    generateError,
+    code,
+    providerName,
+    validation,
+    validating,
+    generate,
+    editCode,
+
+    saveName,
+    setSaveName,
+    saveState,
+    saveError,
+    savedDetail,
+    save,
+
+    mine,
+    mineLoading,
+    mineError,
+    refreshMine,
+
+    runState,
+    runError,
+    runResult,
+    runSaved,
+  }
+}
