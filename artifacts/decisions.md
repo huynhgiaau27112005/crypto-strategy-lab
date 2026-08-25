@@ -100,3 +100,20 @@ Kết luận: `docs/database/design.dbml` là bản thiết kế **sau này, ch�
 **Lý do:** Không tốn phí theo lượt gọi, chạy offline nên demo không phụ thuộc mạng hay API key.
 
 **Ràng buộc bắt buộc:** Model phải nằm sau một interface provider. Đề bài cấm "crawler gắn cứng vào 1 model ML" — đổi sang model khác không được phép sửa code crawler.
+
+### 9. Không mô hình hoá phí giao dịch / slippage trong backtest (final-review finding #8 / item 6)
+
+**Phát hiện:** `grep -riE "fee|slippage|commission"` trên `service/src` và `artifacts/` không ra kết quả nào. `BacktestingService` khớp lệnh entry/exit đều tại giá `close`, không trừ phí, không làm xấu giá theo slippage. Trong khi đó `BacktestPage.tsx` gắn nhãn `Net Profit` là "Sau phí và slippage" (sai — chưa hề trừ), và form cấu hình thu thập `Vốn (USD)`, `Transaction cost (%)`, `Slippage (bps)` nhưng không truyền đi đâu cả.
+
+**Hai phương án cân nhắc:**
+- (a) Implement thật: cộng phí vào cả entry/exit, làm xấu giá khớp theo hướng lệnh (mua khớp cao hơn, bán khớp thấp hơn), lưu 3 tham số này vào `experiment_configs`/`experiments.search_config`, viết test khẳng định phí cao hơn → lợi nhuận ròng thấp hơn nghiêm ngặt trên cùng 1 candidate.
+- (b) Bỏ tuyên bố: xoá nhãn "Sau phí và slippage", vô hiệu hoá 3 ô input đúng theo cách các control chưa nối dây khác trong dự án đang làm (ví dụ ô "Coin" đã `readOnly disabled`).
+
+**Chốt: chọn (b).** Đây là một backtest engine dùng cho đồ án Kiến trúc phần mềm — mục tiêu là chứng minh kiến trúc mở rộng được, không phải độ chính xác tài chính. Việc thêm một model phí/slippage đúng đắn (đặc biệt là slippage — cần giả định về thanh khoản/order book mà hệ thống hiện không mô hình hoá) trong đợt sửa cuối trước khi nộp bài, khi không có ngân sách thời gian để viết test kiểm chứng công thức tài chính kỹ lưỡng, rủi ro cao hơn lợi ích: một công thức phí sai còn tệ hơn không có phí, vì nó tạo cảm giác sai về độ tin cậy của con số. Route (b) an toàn hơn và trung thực hơn.
+
+**Đã sửa:**
+- `BacktestPage.tsx`: đổi nhãn metric `Net Profit` thành "Chưa tính phí & slippage" (đúng sự thật hiện tại).
+- 3 field `Vốn (USD)` / `Transaction cost (%)` / `Slippage (bps)` chuyển sang `readOnly disabled`, đúng pattern ô `Coin` đã dùng cho input chưa nối dây.
+- Cập nhật dòng ghi chú dưới form giải thích rõ lý do bị vô hiệu hoá (chưa có model phí/slippage trong `BacktestingService`), trỏ về mục quyết định này.
+
+**Nợ kỹ thuật còn lại:** nếu sau này muốn làm (a), cần: (1) thêm cột lưu 3 tham số này (ví dụ mở rộng `experiments.search_config` JSONB — đã dùng cho mục 1 ở decision liên quan tới search config cross-process), (2) áp dụng trong `BacktestingService` tại điểm khớp entry/exit, (3) viết test pin cứng thứ tự: phí cao hơn ⇒ lợi nhuận ròng thấp hơn nghiêm ngặt trên cùng input.

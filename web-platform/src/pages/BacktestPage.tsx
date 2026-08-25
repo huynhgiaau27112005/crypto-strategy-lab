@@ -55,9 +55,13 @@ export default function BacktestPage() {
   const [cfgTf, setCfgTf] = useState<MarketInterval>('5m')
   const [cfgFrom, setCfgFrom] = useState('2026-08-07')
   const [cfgTo, setCfgTo] = useState('2026-08-24')
-  const [cfgCapital, setCfgCapital] = useState('1000')
-  const [cfgCost, setCfgCost] = useState('0.08')
-  const [cfgSlippage, setCfgSlippage] = useState('5')
+  // Disabled — see decision 6b in artifacts/decisions.md: no fee/slippage
+  // model exists in BacktestingService, so these three fields (like Coin
+  // above) are read-only placeholders rather than state that would imply
+  // they do something.
+  const cfgCapital = '1000'
+  const cfgCost = '0.08'
+  const cfgSlippage = '5'
   const [cfgTopK, setCfgTopK] = useState('8')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -205,7 +209,10 @@ export default function BacktestPage() {
       key: 'netprofit',
       k: 'Net Profit',
       v: evaluation ? fmtUsd(evaluation.profitLoss) : '—',
-      note: 'Sau phí và slippage',
+      // Fees/slippage are not modelled anywhere in BacktestingService (see
+      // artifacts/decisions.md) — the label used to claim otherwise
+      // ("Sau phí và slippage"). This is the raw, frictionless P&L.
+      note: 'Chưa tính phí & slippage',
       tone: evaluation ? (evaluation.profitLoss >= 0 ? 'up' : 'down') : undefined,
     },
     {
@@ -279,15 +286,15 @@ export default function BacktestPage() {
           </div>
           <div className="field">
             <label>Vốn (USD)</label>
-            <input className="input" type="text" value={cfgCapital} onChange={(e) => setCfgCapital(e.target.value)} />
+            <input className="input" type="text" value={cfgCapital} readOnly disabled />
           </div>
           <div className="field">
             <label>Transaction cost (%)</label>
-            <input className="input" type="text" value={cfgCost} onChange={(e) => setCfgCost(e.target.value)} />
+            <input className="input" type="text" value={cfgCost} readOnly disabled />
           </div>
           <div className="field">
             <label>Slippage (bps)</label>
-            <input className="input" type="text" value={cfgSlippage} onChange={(e) => setCfgSlippage(e.target.value)} />
+            <input className="input" type="text" value={cfgSlippage} readOnly disabled />
           </div>
           <div className="field">
             <label>Top-K</label>
@@ -305,8 +312,9 @@ export default function BacktestPage() {
           </button>
         </div>
         <p className="text-muted backtest-inert-note">
-          Vốn, Transaction cost và Slippage chưa có trường tương ứng ở <code>POST /strategy-search/experiments</code> —
-          các giá trị này hiện chưa ảnh hưởng tới kết quả search.
+          Vốn, Transaction cost và Slippage bị vô hiệu hoá: <code>BacktestingService</code> hiện chưa mô hình hoá
+          phí/slippage, nên các trường này không thể ảnh hưởng tới kết quả search (xem
+          artifacts/decisions.md mục 6b).
         </p>
 
         <div className="backtest-run-row">
