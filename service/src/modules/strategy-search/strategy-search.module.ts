@@ -11,7 +11,14 @@ import { ExperimentIterationRepository } from './repositories/experiment-iterati
 import { CandidateRepository } from './repositories/candidate.repository';
 import { StrategyRepository } from './repositories/strategy.repository';
 import { CandidateFingerprintService } from './services/candidate-fingerprint.service';
+import { SearchQueueService } from './services/search-queue.service';
 
+// Deliberately does NOT declare SearchProcessor as a provider here: this
+// module is imported by AppModule (the HTTP process), and instantiating a
+// @Processor()-decorated class starts a BullMQ Worker that pulls and runs
+// jobs. SearchProcessor is only registered in WorkerModule (worker.ts) —
+// see that file's comment for why this is the architectural point of
+// task-16 (API enqueues, worker executes).
 @Module({
   imports: [BacktestingModule, LeaderboardModule, StrategyPluginModule],
   controllers: [StrategySearchController],
@@ -24,6 +31,7 @@ import { CandidateFingerprintService } from './services/candidate-fingerprint.se
     CandidateRepository,
     StrategyRepository,
     CandidateFingerprintService,
+    SearchQueueService,
   ],
   exports: [StrategySearchService],
 })

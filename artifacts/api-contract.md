@@ -11,9 +11,10 @@
 | Auth | 4 endpoint | ✅ Hoạt động, đã smoke test thật |
 | Strategy Search | 5 endpoint + health | ✅ Hoạt động, đã smoke test full vòng |
 | Market Data | 2 endpoint + WebSocket `/market` | ⚠️ Hoạt động nhưng **chưa có auth** trên REST; WebSocket đã push realtime |
-| News | 3 endpoint + health (`GET /news`, `POST /news/crawl`, `GET /news/crawl/status`) | ✅ Hoạt động — crawl thật, chạy như tiến trình Python riêng (ADR-005) |
+| News | 3 endpoint + health (`GET /news`, `POST /news/crawl`, `GET /news/crawl/status`) | ✅ Hoạt động — crawl thật, chạy trong tiến trình **worker** riêng, API chỉ enqueue (task-16, xem `artifacts/queue.md`) |
 | Sentiment | 1 endpoint + health | ✅ Hoạt động |
 | Strategy Engine | `GET /strategy-engine/signal` + health | ✅ Hoạt động — realtime signal, có auth |
+| Queue | `GET /queue/health` | ✅ Hoạt động — không auth, xem mục 2b |
 | Chart / Continuous Loop / Leaderboard / Strategy Plugin / Composite / Backtesting | chỉ có `GET /<module>/health` | ❌ Stub, chưa có API thật |
 
 ## 1. Xác thực
@@ -96,7 +97,7 @@ Mọi truy vấn đều **giới hạn theo chủ sở hữu**: user chỉ thấ
 
 ### `POST /strategy-search/experiments`
 
-Bắt đầu một lần chạy tìm kiếm. Chạy **bất đồng bộ**: trả về ngay `202`, vòng lặp search chạy nền.
+Bắt đầu một lần chạy tìm kiếm. Chạy **bất đồng bộ**: trả về ngay `202` sau khi tạo experiment row và **enqueue** một job lên queue `search` (BullMQ/Redis) — vòng lặp search thật (`StrategySearchService.run()`) chạy trong **tiến trình worker riêng** (`service/src/worker.ts`), không chạy trong tiến trình API xử lý request này. Xem `artifacts/queue.md` để biết chi tiết queue/worker/retry/cancel. Nếu Redis không thể enqueue được (ví dụ Redis đang down), experiment row vẫn được tạo nhưng lỗi enqueue chỉ được log — client cần theo dõi qua `GET /strategy-search/experiments/:id` để biết search có bắt đầu hay không.
 
 **Request**
 ```json
@@ -223,13 +224,15 @@ Dừng vòng lặp đang chạy.
 
 `cancelled: false` nghĩa là experiment đã ở trạng thái kết thúc (không còn gì để huỷ).
 
+**Cơ chế (sau task-16):** đánh dấu `experiments.status = 'CANCELLED'` trong Postgres, sau đó cố gắng xoá job khỏi queue `search` nếu job **chưa** được worker nhận (`waiting`/`delayed`) — huỷ có hiệu lực ngay, không tốn 1 lượt job. Nếu job **đang chạy** trong worker (`active`), job không bị can thiệp trực tiếp: vòng lặp `run()` tự kiểm tra `experiments.status` trước mỗi iteration và tự dừng khi thấy `CANCELLED` — nghĩa là việc huỷ có độ trễ tối đa 1 iteration, không phải tức thời. Chi tiết ở `artifacts/queue.md` mục "Cancellation".
+
 **Lỗi:** `404` / `401` như trên.
 
 ### `POST /strategy-search/experiments/:id/extend`
 
 "Chạy thêm N iteration" — nút **Chạy thêm 10 iteration** ở tab Leaderboard. Tiếp tục vòng lặp search của một experiment **đã `COMPLETED`**, tái sử dụng nguyên config đã lưu (`experiment_configs` + `experiment_config_strategies`: timeframe, khoảng ngày, weights, domains) — **không** tạo experiment mới, **không** dựng lại config, **không** xoá leaderboard hiện có. Đây là điểm khác biệt duy nhất với "Đổi config & tạo lại" (`POST /strategy-search/experiments`), vốn luôn tạo một experiment mới từ đầu.
 
-Chạy **bất đồng bộ** giống `POST /strategy-search/experiments`: trả về ngay `202`, vòng lặp search tiếp tục chạy nền bằng đúng `run()` đã dùng cho lần chạy gốc (không có vòng lặp thứ hai).
+Chạy **bất đồng bộ** giống `POST /strategy-search/experiments`: trả về ngay `202` sau khi enqueue một job **mới** lên queue `search` (task-16) — worker chạy đúng `run()` đã dùng cho lần chạy gốc (không có vòng lặp thứ hai, không có bản sao logic).
 
 **Request**
 ```json
@@ -383,6 +386,29 @@ Validate 2 lớp:
 
 **Lỗi:** `400` nếu tham số sai kiểu/ngoài khoảng/thiếu/thừa key (theo `parameterSchema`); `404` nếu `:name` không khớp plugin nào đã đăng ký; `401` nếu thiếu/sai token.
 
+## 2b. Queue Health
+
+Thêm ở task-16 để làm queue **nhìn thấy được** thay vì chỉ là một khẳng định trong tài liệu — hữu ích khi bảo vệ đồ án (chứng minh worker thật sự đang chạy, không phải chỉ code chết).
+
+### `GET /queue/health`
+
+Không cần auth (giống các endpoint `.../health` khác trong repo — đây là trạng thái vận hành, không phải dữ liệu người dùng).
+
+**Response `200`**
+```json
+{
+  "redis": "up",
+  "queues": [
+    { "name": "search", "counts": { "waiting": 0, "active": 1, "completed": 12, "failed": 0, "delayed": 0 }, "workers": 1 },
+    { "name": "news-crawl", "counts": { "waiting": 0, "active": 0, "completed": 3, "failed": 1, "delayed": 0 }, "workers": 1 }
+  ]
+}
+```
+
+- `counts` đọc trực tiếp từ Redis (`Queue.getJobCounts`) tại thời điểm gọi — không phải số đếm cache trong tiến trình API.
+- `workers` là số tiến trình worker **đang thực sự kết nối** tới queue đó (`Queue.getWorkers()`, đọc danh sách client Redis) — không phải một cờ tự báo cáo có thể sai lệch khi worker treo.
+- Nếu Redis không phản hồi trong 1.5s (không kết nối được, hoặc đang bận reconnect), response vẫn trả `200` với `"redis": "down"` và mọi `counts`/`workers` bằng 0, **không bao giờ trả lỗi 5xx hay treo request** — endpoint này chính là cách "Startup independence" (API vẫn khởi động được khi Redis down) được quan sát từ bên ngoài.
+
 ## 3. Market Data
 
 > ⚠️ **Chưa có auth** — đây là nợ kỹ thuật đã biết, cần bổ sung `JwtAuthGuard` cho nhất quán với phần còn lại.
@@ -515,7 +541,7 @@ Bảng `news` (migration `003_candidate_auth_schema.sql`) chỉ có đúng các 
 
 ### `POST /news/crawl`
 
-Kích hoạt worker crawl tin tức + sentiment (`workers/news/main.py`) như một **tiến trình hệ điều hành riêng** — đúng ADR-005 (`decisions.md` §7): API không tự crawl trong tiến trình Node, chỉ `spawn` process Python rồi trả về ngay lập tức, không block request HTTP trong lúc crawl chạy (có thể mất vài giây tới vài phút).
+Kích hoạt worker crawl tin tức + sentiment (`workers/news/main.py`) như một **tiến trình hệ điều hành riêng** — đúng ADR-005 (`decisions.md` §7): API không tự crawl, không tự `spawn` process Python nữa (từ task-16). API chỉ **enqueue** một job lên queue `news-crawl` (BullMQ/Redis) và trả về ngay lập tức; `spawn` process Python thật diễn ra bên trong **tiến trình worker riêng** (`service/src/worker.ts`), không block request HTTP trong lúc crawl chạy (có thể mất vài giây tới vài phút). Xem `artifacts/queue.md`.
 
 Yêu cầu `Authorization: Bearer <accessToken>` (`JwtAuthGuard`) — không giới hạn theo `user_id` (crawl là hành động dùng chung, giống news).
 
@@ -524,7 +550,7 @@ Yêu cầu `Authorization: Bearer <accessToken>` (`JwtAuthGuard`) — không gi�
 **Response `202`**
 ```json
 {
-  "jobId": "crawl-1787629110884-1",
+  "jobId": "crawl-1787629110884",
   "status": "RUNNING",
   "startedAt": "2026-08-25T03:38:30.884Z",
   "finishedAt": null,
@@ -533,19 +559,19 @@ Yêu cầu `Authorization: Bearer <accessToken>` (`JwtAuthGuard`) — không gi�
 }
 ```
 
-- Nếu đã có 1 crawl đang `RUNNING`, gọi lại endpoint này **không** spawn thêm process song song — trả về **cùng job** đang chạy (coalesce), tránh nhiều crawler cùng đọc/ghi cùng lúc trên cùng nguồn RSS.
-- Worker bị **kill (SIGKILL)** nếu chạy quá `NEWS_WORKER_TIMEOUT_MS` (mặc định 10 phút) — job chuyển sang `FAILED` với `error` giải thích lý do timeout, không treo request/tiến trình vô thời hạn (đúng nguyên tắc chống "uncontrolled infinite loop").
-- Trạng thái job chỉ lưu **trong bộ nhớ tiến trình API** (không có bảng job riêng, không thêm migration) — mất khi API restart. Đủ dùng cho demo 1 instance; không phải thiết kế cho nhiều instance API chạy song song.
+- Nếu đã có 1 crawl đang `RUNNING`/chờ trong queue, gọi lại endpoint này **không** enqueue thêm job song song — trả về **cùng job** đang chạy (coalesce, quét job đang in-flight trước khi `add()`), tránh nhiều crawler cùng đọc/ghi cùng lúc trên cùng nguồn RSS.
+- Worker Python bị **kill (SIGKILL)** nếu chạy quá `NEWS_WORKER_TIMEOUT_MS` (mặc định 10 phút) — job BullMQ chuyển sang `failed` với lý do timeout, không treo tiến trình vô thời hạn (đúng nguyên tắc chống "uncontrolled infinite loop"). Job không tự động retry (`attempts: 1`) — một crawl lỗi giữa chừng không nên âm thầm chạy lại và crawl trùng cùng cửa sổ thời gian; người dùng bấm lại `POST /news/crawl` khi cần.
+- **Trạng thái job lưu trong Redis** (BullMQ), không phải bộ nhớ tiến trình API — API restart giữa lúc crawl đang chạy **không** làm mất trạng thái, `GET /news/crawl/status` sau khi API khởi động lại vẫn đọc đúng job đang chạy trong worker.
 
 ### `GET /news/crawl/status`
 
-Trả về job **gần nhất** (đang chạy hoặc đã kết thúc) của tiến trình API hiện tại — client poll endpoint này sau `POST /news/crawl` để biết khi nào crawl xong.
+Trả về job **gần nhất** (đang chạy/chờ, hoặc đã kết thúc gần nhất) đọc trực tiếp từ queue `news-crawl` trong Redis — client poll endpoint này sau `POST /news/crawl` để biết khi nào crawl xong.
 
 Yêu cầu `Authorization: Bearer <accessToken>`.
 
 **Response `200`** — cùng shape với response của `POST /news/crawl` ở trên. `status` là `RUNNING` / `COMPLETED` / `FAILED`. `exitCode`/`error` chỉ có giá trị sau khi worker kết thúc; `error` chỉ khác `null` khi `status = FAILED` (worker exit code khác 0, timeout, hoặc lỗi spawn process — luôn kèm `stderr` thật của worker, không phải lỗi giả).
 
-**Response khi chưa từng crawl lần nào** (API mới khởi động): trả `null` (không phải `404`) — trạng thái bình thường trước lần crawl đầu tiên.
+**Response khi chưa từng crawl lần nào** (chưa có job nào trong queue): trả `null` (không phải `404`) — trạng thái bình thường trước lần crawl đầu tiên.
 
 **Lỗi:** `401` nếu thiếu/sai token.
 
@@ -651,6 +677,7 @@ Dùng định dạng lỗi mặc định của NestJS:
 
 1. `market-data` chưa có auth guard.
 2. WebSocket `/market` đã push nến realtime (xem mục 3). Push **leaderboard/experiment progress** thì chưa làm; frontend vẫn phải poll `GET /experiments/:id`.
-3. Một phần cấu hình search (`maxDurationSeconds`, `maxNoImprovement`, `topK`, `minimumTrades`) chỉ nằm trong bộ nhớ tiến trình; chỉ `maxCandidates` được lưu xuống DB (cột `experiment_configs.iteration_limit`). Nếu service restart giữa chừng, vòng lặp resume sẽ dùng giá trị mặc định cho các tham số còn lại.
+3. Một phần cấu hình search (`maxDurationSeconds`, `maxNoImprovement`, `topK`, `minimumTrades`) chỉ nằm trong bộ nhớ tiến trình **worker** (từ task-16 — `run()` chạy ở đó, không còn ở API); chỉ `maxCandidates` được lưu xuống DB (cột `experiment_configs.iteration_limit`). Nếu tiến trình worker restart giữa chừng một job đang `active`, BullMQ đánh dấu job đó "stalled" và giao lại cho một worker sống (retry, tối đa `attempts: 3`) — nhưng `configCache` của `StrategySearchService` reset theo tiến trình mới, nên lần retry đó dùng giá trị mặc định cho các tham số còn lại thay vì giá trị gốc người dùng truyền vào lúc `POST /strategy-search/experiments`. `maxCandidates` không bị ảnh hưởng vì nó đọc lại từ DB.
 4. Chưa có validation pipe khai báo (dùng `class-validator`); hiện việc kiểm tra dữ liệu vào làm thủ công trong service (endpoint mới `news`/`sentiment` dùng `zod`, giống `auth`, thay vì `class-validator`).
 5. `SentimentModule` phụ thuộc `NewsRepository` (export từ `NewsModule`) thay vì có repository sentiment riêng — hợp lý vì cả hai đọc cùng bảng `news`, nhưng nghĩa là ranh giới module "Sentiment" hiện chỉ là ranh giới đọc/tổng hợp, không có bảng riêng của nó.
+6. (task-16) `POST /news/crawl` không tự động retry khi worker Python lỗi (`attempts: 1`, xem mục 4). Người dùng phải tự bấm lại. Đây là lựa chọn có chủ đích (một crawl thất bại retry mù có thể crawl trùng cùng cửa sổ thời gian), không phải thiếu sót — nhưng nghĩa là một lỗi thoáng qua (mất mạng RSS tạm thời) cần thao tác thủ công thay vì tự phục hồi.

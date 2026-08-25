@@ -29,6 +29,7 @@ import { ExperimentRepository } from './repositories/experiment.repository';
 import { StrategyRepository } from './repositories/strategy.repository';
 import { CandidateFingerprintService } from './services/candidate-fingerprint.service';
 import { createSeededRandom } from './services/seeded-random';
+import { SearchQueueService } from './services/search-queue.service';
 import { DatabaseService } from '../../database/database.service';
 
 @Injectable()
@@ -52,12 +53,23 @@ export class StrategySearchService implements OnApplicationBootstrap {
     private readonly backtesting: BacktestingService,
     private readonly backtestRuns: BacktestRunRepository,
     private readonly leaderboard: LeaderboardService,
+    private readonly searchQueue: SearchQueueService,
   ) {}
 
+  // Runs in BOTH the API process and the worker process (StrategySearchModule
+  // is imported by both AppModule and WorkerModule) — deliberately: a
+  // PENDING/RUNNING row left behind by a process that died before its job
+  // ever reached the queue (e.g. crashed between experiments.create() and
+  // the enqueue call) would otherwise poll forever with no job backing it.
+  // enqueue() coalesces (SearchQueueService dedupes by experimentId among
+  // in-flight jobs), so both processes calling this on boot is harmless —
+  // at most one job per experiment ends up queued. Wrapped in try/catch so
+  // a Redis outage at boot degrades this to a logged warning rather than
+  // failing application startup (task-16 "Startup independence").
   async onApplicationBootstrap(): Promise<void> {
     try {
       const resumable = await this.experiments.findResumable();
-      for (const experiment of resumable) this.schedule(experiment.id);
+      for (const experiment of resumable) await this.schedule(experiment.id);
     } catch (error) {
       this.logger.warn(
         `Could not resume search experiments: ${this.errorMessage(error)}`,
@@ -110,7 +122,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
       return created;
     });
     this.configCache.set(experiment.id, config);
-    this.schedule(experiment.id);
+    await this.schedule(experiment.id);
     return experiment;
   }
 
@@ -160,7 +172,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
     // run() invocation instead of serving a stale cached value.
     this.configCache.delete(experimentId);
 
-    this.schedule(experimentId);
+    await this.schedule(experimentId);
     return { id: experimentId, status: 'PENDING' as const };
   }
 
@@ -186,6 +198,19 @@ export class StrategySearchService implements OnApplicationBootstrap {
     const experiment = await this.experiments.findOwned(experimentId, userId);
     if (!experiment) throw new NotFoundException('Experiment not found.');
     const cancelled = await this.experiments.cancel(experimentId, userId);
+    if (cancelled) {
+      // Best-effort: drop the job from the queue if it never started
+      // (see SearchQueueService.cancelIfQueued's doc comment). If the job
+      // is already active in a worker, this is a no-op — the running
+      // loop notices the CANCELLED status itself on its next iteration.
+      try {
+        await this.searchQueue.cancelIfQueued(experimentId);
+      } catch (error) {
+        this.logger.warn(
+          `Could not remove queued job for cancelled experiment ${experimentId}: ${this.errorMessage(error)}`,
+        );
+      }
+    }
     return { id: experimentId, cancelled };
   }
 
@@ -260,18 +285,29 @@ export class StrategySearchService implements OnApplicationBootstrap {
     return domains.length > 0 ? domains : DEFAULT_SEARCH_CONFIG.enabledDomains;
   }
 
-  private schedule(experimentId: string): void {
-    if (this.activeRuns.has(experimentId)) return;
-    setImmediate(() => {
-      void this.run(experimentId).catch((error) => {
-        this.logger.error(
-          `Search ${experimentId} failed: ${this.errorMessage(error)}`,
-        );
-      });
-    });
+  // Enqueues the search onto the "search" BullMQ queue instead of running
+  // it inline (task-16: the API/bootstrap process only ever enqueues; only
+  // SearchProcessor, running inside the separate worker process, calls
+  // run()). Errors are logged rather than thrown so a Redis hiccup here
+  // never turns into a 500 for start()/extend() after the experiment row
+  // has already been created/reopened.
+  private async schedule(experimentId: string): Promise<void> {
+    try {
+      await this.searchQueue.enqueue(experimentId);
+    } catch (error) {
+      this.logger.error(
+        `Could not enqueue search job for experiment ${experimentId}: ${this.errorMessage(error)}`,
+      );
+    }
   }
 
-  private async run(experimentId: string): Promise<void> {
+  // Called by SearchProcessor (worker process only) — the actual search
+  // loop, unchanged from before this task except for how it gets invoked.
+  // `activeRuns` is a same-process guard, kept as defense-in-depth against
+  // the same experimentId's job being dispatched twice concurrently within
+  // one worker (e.g. a scheduling race); it is not how cross-experiment or
+  // cross-process concurrency is bounded — see SearchQueueService for that.
+  async run(experimentId: string): Promise<void> {
     if (this.activeRuns.has(experimentId)) return;
     this.activeRuns.add(experimentId);
     try {

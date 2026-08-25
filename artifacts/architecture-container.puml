@@ -21,12 +21,20 @@ skinparam cloud {
   BackgroundColor #F7F3EE
   BorderColor #A08A6A
 }
+skinparam queue {
+  BackgroundColor #FCEFE3
+  BorderColor #B5772E
+}
 
 actor "Người dùng" as USER
 
 rectangle "**Web SPA**\nReact 19 + Vite + TypeScript\n\nLanding · Auth · Realtime\nStrategy Engine · AI Strategy\nBacktest · Leaderboard\nNews & Sentiment" as SPA
 
-rectangle "**API — Modular Monolith**\nNestJS 11 + raw pg (không ORM)\n\n12 module nghiệp vụ\n28 endpoint REST\nSocket.IO namespace /market" as API
+rectangle "**API — Modular Monolith**\nNestJS 11 + raw pg (không ORM)\n\n12 module nghiệp vụ\n29 endpoint REST\nSocket.IO namespace /market\n**Chỉ enqueue** search/crawl,\nkhông tự chạy" as API
+
+queue "**Redis**\nBullMQ\n\nqueue \"search\"\nqueue \"news-crawl\"" as REDIS
+
+rectangle "**Worker**\nservice/src/worker.ts\nNestJS application context\n(cùng module StrategySearch/News,\nkhông HTTP server)\n\nSearchProcessor · NewsCrawlProcessor" as WORKER
 
 rectangle "**News Worker**\nPython 3.13\n\nCrawl RSS/HTML/API\nFinBERT sentiment\nGhi thẳng Postgres" as W_NEWS
 
@@ -45,8 +53,12 @@ SPA <-- API : Socket.IO\nnến realtime
 API --> PG : SQL (pg.Pool)
 API --> BINANCE : nến lịch sử + stream
 API --> LLM : sinh code Python
-API --> W_NEWS : spawn process\n(job boundary, timeout)
+API --> REDIS : enqueue search job\n(POST .../experiments,\n.../extend) · enqueue\ncrawl job (POST /news/crawl)
 API --> W_AI : spawn process\n(timeout, giới hạn output)
+
+WORKER --> REDIS : dequeue job\n(BullMQ Worker,\nconcurrency)
+WORKER --> PG : SQL — chạy\nStrategySearchService.run()\nthật (không phải bản sao)
+WORKER --> W_NEWS : spawn process\n(job boundary, timeout)
 
 W_NEWS --> PG : ON CONFLICT(url)
 W_NEWS --> BINANCE #line:transparent
@@ -58,10 +70,18 @@ note bottom of SPA
   SPA chỉ render — không có business logic.
 end note
 
+note bottom of REDIS
+  Job state (RUNNING/COMPLETED/FAILED,
+  đếm depth, worker liveness) sống ở
+  đây — API restart không mất trạng
+  thái. Xem artifacts/queue.md.
+end note
+
 note bottom of W_NEWS
   Crawler và Sentiment là **tiến trình
   tách biệt** (ADR-005), không nhúng
-  vào API. API chỉ khởi chạy và theo dõi.
+  vào API/Worker. Worker chỉ khởi chạy
+  và theo dõi.
 end note
 
 note right of PG

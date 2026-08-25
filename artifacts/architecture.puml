@@ -122,12 +122,14 @@ package "Modular Monolith — NestJS (service/)" as BE {
 
   package "Strategy Search Module" as M_SEARCH {
     rectangle "StrategySearchController\nPOST /experiments\nGET /experiments/:id[/top]\nPOST /:id/cancel /:id/extend\nGET /candidates/:id" as SR_C
-    rectangle "StrategySearchService\nstart / run / extend\nloadConfig, weight validation" as SR_S
+    rectangle "StrategySearchService\nstart/extend → schedule()\n= enqueue only.\nrun() = search loop thật,\nchỉ được gọi bởi SearchProcessor" as SR_S
+    rectangle "SearchQueueService\nenqueue (scan+coalesce\nby experimentId)\ncancelIfQueued" as SR_Q
     rectangle "DomainGuidedRandomGenerator" as SR_GEN
     rectangle "strategy-catalog.ts\nTREND / MOMENTUM /\nVOLATILITY / STRUCTURE" as SR_CAT
     rectangle "CandidateFingerprintService\nSeededRandom" as SR_FP
     rectangle "ExperimentRepository\nExperimentConfigRepository\nExperimentIterationRepository\nCandidateRepository\nStrategyRepository" as SR_R
     SR_C --> SR_S
+    SR_S --> SR_Q : enqueue(experimentId)\ncancelIfQueued(experimentId)
     SR_S --> SR_GEN
     SR_GEN --> SR_CAT
     SR_GEN --> SR_FP
@@ -146,9 +148,12 @@ package "Modular Monolith — NestJS (service/)" as BE {
 
   package "News Module" as M_NEWS {
     rectangle "NewsController\nGET /news\nPOST /news/crawl\nGET /news/crawl/status" as NW_C
-    rectangle "NewsService\n+ crawl job boundary\n(1 job, timeout, exit code)" as NW_S
+    rectangle "NewsService" as NW_S
+    rectangle "NewsCrawlQueueService\ntrigger (scan+coalesce)\ngetStatus (đọc job Redis)" as NW_Q
+    rectangle "NewsCrawlService.execute()\nspawn + await 1 job\n(timeout, exit code)\n— chỉ được gọi bởi\nNewsCrawlProcessor" as NW_X
     rectangle "NewsRepository" as NW_R
     NW_C --> NW_S
+    NW_C --> NW_Q : trigger() / getStatus()
     NW_S --> NW_R
   }
 
@@ -199,6 +204,34 @@ LB_S --> DB_S
 NW_R --> DB_S
 AI_R --> DB_S
 
+package "Queue Module (queue/) — @Global, dùng bởi cả API và Worker" as M_QUEUE {
+  rectangle "QueueModule\nBullModule.forRootAsync\n(1 nơi duy nhất tạo\nkết nối Redis)" as Q_MOD
+  rectangle "QueueHealthController\nGET /queue/health" as Q_HC
+  rectangle "QueueHealthService\ngetJobCounts + getWorkers\n(mỗi lần gọi, không cache)" as Q_HS
+  Q_HC --> Q_HS
+}
+SR_Q ..> Q_MOD : @InjectQueue("search")
+NW_Q ..> Q_MOD : @InjectQueue("news-crawl")
+
+' =====================================================================
+package "Worker Process — service/src/worker.ts\n(tiến trình Node riêng, KHÔNG có HTTP server)" as WK {
+  rectangle "SearchProcessor\n@Processor(\"search\")\nconcurrency 5" as WK_SR
+  rectangle "NewsCrawlProcessor\n@Processor(\"news-crawl\")\nconcurrency 1" as WK_NW
+}
+WK_SR ..> Q_MOD : BullMQ Worker\n(pull job)
+WK_NW ..> Q_MOD : BullMQ Worker\n(pull job)
+WK_SR --> SR_S : run(experimentId)\n(cùng 1 class,\nkhông fork logic)
+WK_NW --> NW_X : execute()
+
+note bottom of WK
+  Worker import CÙNG StrategySearchModule/
+  NewsModule với API (không có module thứ 2).
+  Chỉ khác: Worker có thêm 2 @Processor()
+  làm provider — thứ khiến @nestjs/bullmq
+  khởi động BullMQ Worker thật. AppModule
+  (API) không bao giờ khai báo 2 class này.
+end note
+
 ' ---- guard áp lên mọi controller nghiệp vụ
 ' (vẽ thành note thay vì 7 mũi tên cắt ngang sơ đồ)
 note right of AUTH_G
@@ -231,22 +264,25 @@ package "Python Workers (workers/) — tiến trình tách biệt" as PW {
   }
 }
 
-NW_S --> PWN_MAIN : spawn process\n(job boundary, timeout)
+NW_X --> PWN_MAIN : spawn process\n(job boundary, timeout)
 AI_V --> PWA_VAL : spawn
 AI_RUN --> PWA_RUN : spawn\n(candles in → signals out)
 
 ' =====================================================================
 package "Infrastructure" as INFRA {
   database "PostgreSQL 18 + TimescaleDB\n\nusers, refresh_tokens\ncandles (hypertable)\nstrategies\nexperiments, experiment_configs,\nexperiment_config_strategies,\nexperiment_iterations\ncandidates, candidate_strategies\nbacktest_runs, trades, evaluations\nleaderboards, leaderboard_entries\nnews" as PG
+  queue "Redis\nBullMQ\n\nqueue \"search\"\nqueue \"news-crawl\"" as REDIS
 }
 
 cloud "Binance\nREST klines + WebSocket" as EXT_BIN
 cloud "LLM API\n(OpenAI-compatible,\nbase URL + model qua env)" as EXT_LLM
 
 DB_S --> PG
+WK_SR --> PG : SQL (search loop\nghi trực tiếp, xem\nStrategySearchService.run())
 PWN_DB --> PG
 MKT_BIN --> EXT_BIN
 AI_P --> EXT_LLM
+Q_MOD --> REDIS : ioredis\n(maxRetriesPerRequest: null)
 
 FE_API --> AUTH_C : "/api (vite proxy)"
 FE_SOCK --> MKT_GW : WebSocket

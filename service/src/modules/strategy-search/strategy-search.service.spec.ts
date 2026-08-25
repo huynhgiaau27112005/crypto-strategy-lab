@@ -108,6 +108,10 @@ describe('StrategySearchService', () => {
     const leaderboard = {
       rebuildForExperiment: jest.fn().mockResolvedValue(undefined),
     };
+    const searchQueue = {
+      enqueue: jest.fn().mockResolvedValue(undefined),
+      cancelIfQueued: jest.fn().mockResolvedValue(undefined),
+    };
 
     const mocks = {
       database,
@@ -121,6 +125,7 @@ describe('StrategySearchService', () => {
       backtesting,
       backtestRuns,
       leaderboard,
+      searchQueue,
       ...overrides,
     };
 
@@ -136,6 +141,7 @@ describe('StrategySearchService', () => {
       mocks.backtesting as any,
       mocks.backtestRuns as any,
       mocks.leaderboard as any,
+      mocks.searchQueue as any,
     );
 
     return { service, mocks };
@@ -237,18 +243,6 @@ describe('StrategySearchService', () => {
         completed_at: null,
         created_at: new Date(),
       });
-      // start() fires the run loop in the background via setImmediate; give
-      // it just enough to resolve findByIdOrThrow so it exits cleanly on
-      // CANCELLED instead of logging an unrelated background error.
-      mocks.experiments.findByIdOrThrow.mockResolvedValue({
-        id: 'exp-1',
-        user_id: 'user-1',
-        name: null,
-        status: 'CANCELLED',
-        started_at: null,
-        completed_at: null,
-        created_at: new Date(),
-      });
       const request: StartSearchRequest = {
         ...baseRequest,
         enabledDomains: ['TREND', 'MOMENTUM', 'VOLATILITY', 'STRUCTURE'],
@@ -266,6 +260,9 @@ describe('StrategySearchService', () => {
 
       expect(mocks.experiments.create).toHaveBeenCalled();
       expect(mocks.experimentConfigs.createWithWeights).toHaveBeenCalled();
+      // start() enqueues the search onto the queue instead of running it
+      // inline — this is the API-as-enqueuer behavior task-16 requires.
+      expect(mocks.searchQueue.enqueue).toHaveBeenCalledWith('exp-1');
     });
 
     it('rejects a negative strategyWeight', async () => {
@@ -360,12 +357,6 @@ describe('StrategySearchService', () => {
       const { service, mocks } = buildService();
       mocks.experiments.findOwned.mockResolvedValue(ownedExperiment);
       mocks.experiments.reopen.mockResolvedValue(true);
-      // Let the background run() exit quickly via CANCELLED so the test
-      // doesn't wait on a real search loop.
-      mocks.experiments.findByIdOrThrow.mockResolvedValue({
-        ...ownedExperiment,
-        status: 'CANCELLED',
-      });
 
       const result = await service.extend('exp-1', 'user-1', 10);
 
@@ -375,15 +366,14 @@ describe('StrategySearchService', () => {
         'exp-1',
         10,
       );
+      // extend() routes through the same queue as start(), not a second
+      // inline run loop.
+      expect(mocks.searchQueue.enqueue).toHaveBeenCalledWith('exp-1');
     });
 
     it('defaults to 10 iterations when the caller omits the count', async () => {
       const { service, mocks } = buildService();
       mocks.experiments.findOwned.mockResolvedValue(ownedExperiment);
-      mocks.experiments.findByIdOrThrow.mockResolvedValue({
-        ...ownedExperiment,
-        status: 'CANCELLED',
-      });
 
       await service.extend('exp-1', 'user-1', undefined);
 
@@ -391,6 +381,36 @@ describe('StrategySearchService', () => {
         'exp-1',
         10,
       );
+    });
+  });
+
+  describe('cancel()', () => {
+    it('removes a still-queued job from the search queue when the cancel takes effect', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findOwned.mockResolvedValue({
+        id: 'exp-1',
+        user_id: 'user-1',
+      } as ExperimentEntity);
+      mocks.experiments.cancel.mockResolvedValue(true);
+
+      const result = await service.cancel('exp-1', 'user-1');
+
+      expect(result).toEqual({ id: 'exp-1', cancelled: true });
+      expect(mocks.searchQueue.cancelIfQueued).toHaveBeenCalledWith('exp-1');
+    });
+
+    it('does not touch the queue when the DB cancel does not take effect', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findOwned.mockResolvedValue({
+        id: 'exp-1',
+        user_id: 'user-1',
+      } as ExperimentEntity);
+      mocks.experiments.cancel.mockResolvedValue(false);
+
+      const result = await service.cancel('exp-1', 'user-1');
+
+      expect(result).toEqual({ id: 'exp-1', cancelled: false });
+      expect(mocks.searchQueue.cancelIfQueued).not.toHaveBeenCalled();
     });
   });
 });

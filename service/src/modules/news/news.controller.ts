@@ -3,13 +3,13 @@ import { ZodError } from 'zod';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { NewsService } from './news.service';
 import { newsQuerySchema } from './dto/news-query.dto';
-import { NewsCrawlService } from './crawl/news-crawl.service';
+import { NewsCrawlQueueService } from './crawl/news-crawl-queue.service';
 
 @Controller('news')
 export class NewsController {
   constructor(
     private readonly newsService: NewsService,
-    private readonly newsCrawlService: NewsCrawlService,
+    private readonly newsCrawlQueueService: NewsCrawlQueueService,
   ) {}
 
   @Get('health')
@@ -18,24 +18,27 @@ export class NewsController {
   }
 
   // ADR-005 (artifacts/decisions.md §7): the crawler is a separate OS
-  // process (workers/news/main.py), never crawled in-process here. This
-  // launches it and returns immediately with a job id — it never blocks
-  // the HTTP request for the crawl's duration. A second call while a crawl
-  // is already running returns that same in-flight job instead of spawning
-  // a parallel crawler over the same sources.
+  // process (workers/news/main.py), launched by the worker process — never
+  // crawled in-process here (task-16: the API only enqueues onto the
+  // "news-crawl" BullMQ queue and returns immediately with a job id, it
+  // never blocks the HTTP request for the crawl's duration). A second call
+  // while a crawl is already queued/running returns that same in-flight
+  // job instead of spawning a parallel crawler over the same sources.
   @UseGuards(JwtAuthGuard)
   @Post('crawl')
   @HttpCode(HttpStatus.ACCEPTED)
   triggerCrawl() {
-    return this.newsCrawlService.trigger();
+    return this.newsCrawlQueueService.trigger();
   }
 
   // Polled by the client after triggerCrawl() — null before the first
-  // crawl of this process's lifetime has ever been triggered.
+  // crawl has ever been triggered. Reads real BullMQ/Redis job state, so a
+  // restarted API process reports the same status a still-running worker
+  // is updating (task-16).
   @UseGuards(JwtAuthGuard)
   @Get('crawl/status')
   getCrawlStatus() {
-    return this.newsCrawlService.getStatus();
+    return this.newsCrawlQueueService.getStatus();
   }
 
   // Shared data, not user-owned: any authenticated user sees all news, so
