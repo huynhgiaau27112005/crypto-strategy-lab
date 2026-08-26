@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import BlueprintCorners from '../components/BlueprintCorners'
+import { useStrategySelection } from '../state/StrategySelectionContext'
 import { useAiStrategy } from '../hooks/useAiStrategy'
 import type { AiValidationCheckDto, StrategyDomain } from '../api/types'
 
@@ -30,6 +31,7 @@ export default function AiStrategyPage() {
   const ai = useAiStrategy()
 
   const generating = ai.generateState === 'generating'
+  const { refreshStrategies } = useStrategySelection()
   const saving = ai.saveState === 'saving'
   const canSave = !!ai.validation?.valid && ai.saveName.trim().length > 0 && !!ai.domain && !saving
 
@@ -280,7 +282,13 @@ export default function AiStrategyPage() {
                 className="btn btn-primary blueprint"
                 style={{ height: 40 }}
                 disabled={!canSave}
-                onClick={() => void ai.save()}
+                onClick={() => {
+                  // Refresh the shared strategy catalog after a successful
+                  // save so the new strategy shows up under "Strategy do AI
+                  // generate" on the Strategy Engine tab immediately,
+                  // instead of only after a full page reload.
+                  void ai.save().then(() => refreshStrategies())
+                }}
               >
                 <BlueprintCorners />
                 {saving ? 'Đang lưu…' : 'Lưu strategy'}

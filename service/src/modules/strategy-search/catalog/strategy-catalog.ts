@@ -60,6 +60,17 @@ export const STRATEGY_CATALOG: Record<StrategyDomain, CatalogEntry> = {
       });
     },
   },
+  INFORMATION: {
+    type: 'NEWS_SENTIMENT',
+    domain: 'INFORMATION',
+    sample(random) {
+      return member('NEWS_SENTIMENT', 'INFORMATION', {
+        lookbackHours: pick([6, 12, 24, 48], random),
+        buyThreshold: pick([0.2, 0.3, 0.5], random),
+        sellThreshold: pick([-0.2, -0.3, -0.5], random),
+      });
+    },
+  },
   STRUCTURE: {
     type: 'SUPPORT_RESISTANCE',
     domain: 'STRUCTURE',
@@ -71,6 +82,36 @@ export const STRATEGY_CATALOG: Record<StrategyDomain, CatalogEntry> = {
     },
   },
 };
+
+/**
+ * One built-in strategy VERSION as a catalog entry — the unit the
+ * generator now samples over (see StrategySearchService.buildRunCatalog).
+ *
+ * `sample` ignores `random` on purpose: a version IS a fixed parameter
+ * set, so there is nothing left to randomise once the version is chosen.
+ * The randomness lives one level up, in which version gets picked. That is
+ * what keeps "which version" and "which parameters" the same fact, instead
+ * of two independently-decided things that can disagree.
+ */
+export function versionCatalogEntry(row: {
+  id: string;
+  type: SearchStrategyType;
+  domain: StrategyDomain;
+  version: number;
+  parameters: Record<string, number>;
+}): CatalogEntry {
+  return {
+    type: row.type,
+    domain: row.domain,
+    sample: () => ({
+      type: row.type,
+      domain: row.domain,
+      pluginVersion: row.version,
+      strategyId: row.id,
+      parameters: row.parameters,
+    }),
+  };
+}
 
 /**
  * One AI strategy's catalog entry — unlike a built-in's, its "sample" is

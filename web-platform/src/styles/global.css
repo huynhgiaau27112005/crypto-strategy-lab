@@ -901,3 +901,51 @@ img { display: block; max-width: 100%; }
   padding-top: 12px;
 }
 .news-summary-stat-row { display: flex; justify-content: space-between; gap: 10px; }
+
+/* --- News crawl controls + article link (issue 5) --------------------- */
+
+/* "Dừng Crawl" — deliberately a different colour from the primary action
+   so that "start" and "stop" can never be confused at a glance. */
+.btn-danger {
+  background: var(--color-down, #b3261e);
+  color: #fff;
+  border: 1px solid var(--color-down, #b3261e);
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-danger:hover:not(:disabled) { filter: brightness(1.08); }
+.btn-danger:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Visible proof that a crawl is in progress, not just a disabled button. */
+.news-crawl-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--color-text-muted, #666);
+}
+.news-crawl-spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: news-crawl-spin 0.7s linear infinite;
+  flex: none;
+}
+@keyframes news-crawl-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .news-crawl-spinner { animation: none; }
+}
+
+.news-item-link {
+  margin-left: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--color-accent, #3d6a99);
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+}
+.news-item-link:hover { filter: brightness(1.2); }

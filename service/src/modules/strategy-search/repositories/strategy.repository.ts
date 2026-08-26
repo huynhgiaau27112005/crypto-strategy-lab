@@ -23,6 +23,37 @@ export class StrategyRepository {
     return result.rows[0];
   }
 
+  /**
+   * Every version of `names` that this user may use AS A PARAMETER SET:
+   * the shared SYSTEM lineage plus their own saved versions, restricted to
+   * rows that actually carry parameters.
+   *
+   * The `parameters <> '{}'` filter is the important part. A bare
+   * definition row (the original seed, `parameters = {}`) names the
+   * algorithm but specifies no parameters, so it can never be a usable
+   * search input — selecting it would produce a member with no parameters
+   * at all. The rows WITH parameters are exactly the brief's "parameter
+   * variants" (04-examples-in-the-brief.md #87), materialised by
+   * database/seeds/003_system_parameter_versions.sql, plus whatever the
+   * user has saved themselves.
+   */
+  async listSelectableVersions(
+    names: string[],
+    userId: string,
+  ): Promise<StrategyEntity[]> {
+    if (names.length === 0) return [];
+    const result = await this.database.query<StrategyEntity>(
+      `SELECT * FROM strategies
+       WHERE name = ANY($1)
+         AND is_active = true
+         AND (type = 'SYSTEM' OR owner_user_id = $2)
+         AND parameters <> '{}'::jsonb
+       ORDER BY name, version ASC`,
+      [names, userId],
+    );
+    return result.rows;
+  }
+
   async listSystemStrategies(): Promise<StrategyEntity[]> {
     const result = await this.database.query<StrategyEntity>(
       `SELECT * FROM strategies WHERE type = 'SYSTEM' AND is_active = true ORDER BY name`,

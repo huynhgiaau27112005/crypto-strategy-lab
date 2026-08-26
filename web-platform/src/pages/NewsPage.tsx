@@ -12,9 +12,9 @@ const SUMMARY_HOURS = 24
 
 const SENTIMENT_FILTERS: { value: SentimentLabel | null; label: string }[] = [
   { value: null, label: 'Tất cả' },
-  { value: 'POSITIVE', label: 'Pos' },
-  { value: 'NEUTRAL', label: 'Neu' },
-  { value: 'NEGATIVE', label: 'Neg' },
+  { value: 'POSITIVE', label: 'Positive' },
+  { value: 'NEUTRAL', label: 'Neutral' },
+  { value: 'NEGATIVE', label: 'Negative' },
 ]
 
 function sentimentKind(sentiment: SentimentLabel | null): SignalKind {
@@ -46,7 +46,18 @@ export default function NewsPage() {
     loading: summaryLoading,
     error: summaryError,
   } = useSentimentSummary(SUMMARY_HOURS, refreshToken)
-  const { job: crawlJob, state: crawlState, error: crawlError, triggerCrawl } = useNewsCrawl()
+  const {
+    job: crawlJob,
+    state: crawlState,
+    error: crawlError,
+    triggerCrawl,
+    stopCrawl,
+    stopping: crawlStopping,
+  } = useNewsCrawl()
+
+  const handleCrawlStop = () => {
+    void stopCrawl()
+  }
 
   const pages = Math.max(1, Math.ceil(total / NEWS_PAGE_SIZE))
   const crawlRunning = crawlState === 'polling'
@@ -102,15 +113,36 @@ export default function NewsPage() {
           <div style={{ flex: 1 }} />
           <div>
             <div className="news-toolbar-group-label">Crawl tin tức</div>
-            <button
-              type="button"
-              className="chip"
-              disabled={crawlRunning}
-              title="Kích hoạt worker crawl tin tức + phân tích sentiment (chạy tiến trình riêng)."
-              onClick={handleCrawlClick}
-            >
-              {crawlRunning ? 'Đang crawl…' : 'Crawl tin tức'}
-            </button>
+            {crawlRunning ? (
+              <button
+                type="button"
+                className="btn btn-danger btn-block blueprint"
+                style={{ height: 36 }}
+                disabled={crawlStopping}
+                title="Dừng crawl — worker sẽ kết thúc lô hiện tại rồi dừng cập nhật."
+                onClick={handleCrawlStop}
+              >
+                <BlueprintCorners />
+                {crawlStopping ? 'Đang dừng…' : 'Dừng Crawl'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-primary btn-block blueprint"
+                style={{ height: 36 }}
+                title="Kích hoạt worker crawl tin tức + phân tích sentiment (chạy tiến trình riêng)."
+                onClick={handleCrawlClick}
+              >
+                <BlueprintCorners />
+                Crawl tin tức
+              </button>
+            )}
+            {crawlRunning && (
+              <div className="news-crawl-progress" aria-live="polite">
+                <span className="news-crawl-spinner" aria-hidden="true" />
+                <span>Đang crawl &amp; phân tích sentiment…</span>
+              </div>
+            )}
             <p className="news-crawl-note">{crawlStatusText()}</p>
           </div>
         </div>
@@ -141,7 +173,20 @@ export default function NewsPage() {
                 {items.map((n) => (
                   <article key={n.id} className="news-item">
                     <div>
-                      <div className="news-item-title">{n.title}</div>
+                      <div className="news-item-title">
+                        {n.title}
+                        {n.url && (
+                          <a
+                            className="news-item-link"
+                            href={n.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="Mở bài báo gốc trong tab mới"
+                          >
+                            Đọc bài gốc ↗
+                          </a>
+                        )}
+                      </div>
                       <p className="text-muted news-item-summary">{n.summary}</p>
                       <div className="news-item-meta">
                         <span className="news-item-tag">Coin: {n.coin}</span>

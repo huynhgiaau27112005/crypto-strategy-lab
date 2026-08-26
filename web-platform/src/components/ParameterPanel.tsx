@@ -102,12 +102,6 @@ export default function ParameterPanel({ strategy }: { strategy: StrategyCatalog
     }
   }
 
-  function reuseVersion(v: StrategyVersionSummary) {
-    if (!strategy) return
-    setFormValues({ ...defaultValues(strategy.parameterSchema), ...v.parameters })
-    setSelectedVersionId(latest?.strategyId ?? null)
-    setSavedNotice(null)
-  }
 
   async function handleSave() {
     if (!strategy || hasErrors) return
@@ -254,15 +248,16 @@ export default function ParameterPanel({ strategy }: { strategy: StrategyCatalog
         ))}
       </div>
 
+      {/* No "Dùng lại tham số version này" button: every saved version is
+          already an input to Search on its own (see
+          StrategyRepository.listSelectableVersions), so copying an old
+          version's numbers forward would only mint a duplicate version of
+          something Search can already reach. Old versions stay viewable,
+          read-only, for traceability. */}
       {isViewingOld && selectedVersion ? (
-        <button
-          type="button"
-          className="btn btn-secondary btn-block"
-          style={{ height: 38, marginTop: 12 }}
-          onClick={() => reuseVersion(selectedVersion)}
-        >
-          Dùng lại tham số version này
-        </button>
+        <p className="text-muted parameter-note" style={{ marginTop: 12 }}>
+          Version này đã nằm sẵn trong không gian tìm kiếm — Search tự thử nó cùng mọi version khác.
+        </p>
       ) : (
         <button
           type="button"

@@ -5,6 +5,7 @@ import { BacktestingModule } from '../backtesting/backtesting.module';
 import { LeaderboardModule } from '../leaderboard/leaderboard.module';
 import { StrategyPluginModule } from '../strategy-plugin/strategy-plugin.module';
 import { AiStrategyModule } from '../ai-strategy/ai-strategy.module';
+import { NewsModule } from '../news/news.module';
 import { DomainGuidedRandomGenerator } from './generators/domain-guided-random.generator';
 import { ExperimentRepository } from './repositories/experiment.repository';
 import { ExperimentConfigRepository } from './repositories/experiment-config.repository';
@@ -21,7 +22,13 @@ import { SearchQueueService } from './services/search-queue.service';
 // see that file's comment for why this is the architectural point of
 // task-16 (API enqueues, worker executes).
 @Module({
-  imports: [BacktestingModule, LeaderboardModule, StrategyPluginModule, AiStrategyModule],
+  imports: [
+    BacktestingModule,
+    LeaderboardModule,
+    StrategyPluginModule,
+    AiStrategyModule,
+    NewsModule,
+  ],
   controllers: [StrategySearchController],
   providers: [
     StrategySearchService,

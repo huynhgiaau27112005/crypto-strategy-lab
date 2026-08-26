@@ -41,6 +41,17 @@ export class NewsController {
     return this.newsCrawlQueueService.getStatus();
   }
 
+  // "Dừng Crawl" — the crawl is user-driven and open-ended, so the user
+  // must be able to end it rather than wait for it to decide it is done.
+  // See NewsCrawlQueueService.cancel() for why an already-running job is
+  // stopped cooperatively instead of being killed mid-write.
+  @UseGuards(JwtAuthGuard)
+  @Post('crawl/cancel')
+  @HttpCode(HttpStatus.ACCEPTED)
+  cancelCrawl() {
+    return this.newsCrawlQueueService.cancel();
+  }
+
   // Shared data, not user-owned: any authenticated user sees all news, so
   // this is guarded but never scoped by user_id.
   @UseGuards(JwtAuthGuard)

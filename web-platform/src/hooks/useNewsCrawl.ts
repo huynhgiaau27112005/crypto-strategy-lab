@@ -20,6 +20,9 @@ export interface UseNewsCrawlResult {
   error: string | null
   /** POST /news/crawl, then starts the bounded poll of /news/crawl/status. */
   triggerCrawl: () => Promise<void>
+  /** POST /news/crawl/cancel — see NewsCrawlQueueService.cancel(). */
+  stopCrawl: () => Promise<void>
+  stopping: boolean
 }
 
 /**
@@ -32,6 +35,7 @@ export interface UseNewsCrawlResult {
  * useExperiment.
  */
 export function useNewsCrawl(): UseNewsCrawlResult {
+  const [stopping, setStopping] = useState(false)
   const [job, setJob] = useState<NewsCrawlJobDto | null>(null)
   const [state, setState] = useState<NewsCrawlPollState>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -100,5 +104,21 @@ export function useNewsCrawl(): UseNewsCrawlResult {
     }
   }
 
-  return { job, state, error, triggerCrawl }
+  const stopCrawl = async (): Promise<void> => {
+    setStopping(true)
+    try {
+      await apiFetch('/news/crawl/cancel', { method: 'POST' })
+      // Deliberately does NOT flip `state` to terminal here: an already-
+      // running worker finishes its current batch first, so the poller
+      // stays the single source of truth for when the crawl has actually
+      // stopped. Claiming it stopped instantly would be a lie the UI
+      // would then have to walk back.
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không dừng được crawl.')
+    } finally {
+      setStopping(false)
+    }
+  }
+
+  return { job, state, error, triggerCrawl, stopCrawl, stopping }
 }

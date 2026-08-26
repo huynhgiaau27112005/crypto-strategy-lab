@@ -19,6 +19,18 @@ export interface SignalContext {
   // contexts that never involve an AI member (e.g. the live realtime
   // signal, which only evaluates built-in plugins).
   aiSignals?: Map<SearchStrategyType, StrategySignal[]>;
+  /**
+   * Signed aggregate news sentiment aligned 1:1 with `candles`, precomputed
+   * ONCE per run by NewsSentimentPrecomputeService (same amortization point
+   * as `aiSignals`: the whole series shares one DB read instead of one
+   * query per candle per candidate).
+   *
+   * `null` at an index means "no news in this candle's lookback window" —
+   * NOT "neutral". NewsSentimentPlugin returns HOLD for those rather than
+   * inventing a 0.0 reading, so a period with no coverage abstains instead
+   * of voting. Absent entirely for contexts with no sentiment member.
+   */
+  sentimentScores?: Array<number | null>;
 }
 
 export interface CompositeSignalResult {

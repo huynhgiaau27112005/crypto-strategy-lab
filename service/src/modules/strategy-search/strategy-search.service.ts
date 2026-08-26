@@ -21,9 +21,15 @@ import {
   strategyTypeKey,
   StrategyDomain,
   StrategyWeight,
+  BuiltInStrategyType,
+  BUILTIN_DOMAIN_BY_NAME,
   defaultEqualWeights,
 } from './domain/search.types';
-import { aiCatalogEntry, STRATEGY_CATALOG } from './catalog/strategy-catalog';
+import {
+  aiCatalogEntry,
+  STRATEGY_CATALOG,
+  versionCatalogEntry,
+} from './catalog/strategy-catalog';
 import {
   DomainGuidedRandomGenerator,
   RunCatalog,
@@ -56,9 +62,10 @@ import { MetricsService } from '../../observability/metrics/metrics.service';
 import { AiStrategyRepository } from '../ai-strategy/repositories/ai-strategy.repository';
 import { AiStrategySignalPrecomputeService } from '../ai-strategy/ai-strategy-signal-precompute.service';
 import { CandleInput } from '../ai-strategy/ai-strategy.types';
-import { CandleEntity } from '../../database/types';
+import { CandleEntity, StrategyEntity } from '../../database/types';
 import { StrategySignal } from '../strategy-engine/strategy.types';
 import { StrategyPluginService } from '../strategy-plugin/strategy-plugin.service';
+import { NewsSentimentPrecomputeService } from '../news/news-sentiment-precompute.service';
 import { CandidateDefinition } from './domain/search.types';
 
 @Injectable()
@@ -88,6 +95,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
     private readonly aiStrategies: AiStrategyRepository,
     private readonly aiPrecompute: AiStrategySignalPrecomputeService,
     private readonly strategyPlugin: StrategyPluginService,
+    private readonly sentimentPrecompute: NewsSentimentPrecomputeService,
   ) {}
 
   // Runs in BOTH the API process and the worker process (StrategySearchModule
@@ -512,6 +520,29 @@ export class StrategySearchService implements OnApplicationBootstrap {
     return { regenerated: created.length, skipped, candidateIds: created };
   }
 
+
+  // The sentiment series depends on `lookbackHours`, which is a per-member
+  // parameter the generator varies. Precomputing per candidate would undo
+  // the whole point of precomputing, so one series is built per run at the
+  // WIDEST lookback the catalog can sample. Narrower windows are a subset
+  // of a wider one and, on this data density (a handful of articles a day),
+  // resolve to the same sign — documented in artifacts/decisions.md as an
+  // accepted approximation rather than left as a silent inaccuracy.
+  private static readonly SENTIMENT_LOOKBACK_HOURS = 48;
+
+  // Empty (and therefore always-abstaining) unless the run actually
+  // contains a sentiment member — no reason to touch `news` otherwise.
+  private async sentimentSeriesFor(
+    candles: CandleEntity[],
+    hasSentimentMember: boolean,
+  ): Promise<Array<number | null> | undefined> {
+    if (!hasSentimentMember) return undefined;
+    return this.sentimentPrecompute.precompute(
+      candles,
+      StrategySearchService.SENTIMENT_LOOKBACK_HOURS,
+    );
+  }
+
   // Loads the Python source for each AI member being regenerated, keyed the
   // same way AiStrategySignalPrecomputeService expects.
   private async aiSourceCodeByKey(
@@ -855,7 +886,28 @@ export class StrategySearchService implements OnApplicationBootstrap {
         StrategySignal[]
       >;
 
-      const runCatalog = this.buildRunCatalog(keyedRows, aiSignalsByType);
+      // Required-flow #17: a sentiment member reads this series, built once
+      // for the whole run exactly like the AI signals above.
+      const sentimentScores = await this.sentimentSeriesFor(
+        candles,
+        keyedRows.some(({ row }) => row.name === 'NEWS_SENTIMENT'),
+      );
+
+      // Every selectable parameter version for the built-ins this
+      // experiment was configured with — the generator samples over these
+      // rather than an in-code tuple list, so a candidate's version label
+      // always matches the parameters it actually ran (decisions.md §11).
+      const versionRows = await this.strategies.listSelectableVersions(
+        keyedRows
+          .filter(({ row }) => row.type !== 'AI_GENERATED')
+          .map(({ row }) => row.name),
+        experiment.user_id,
+      );
+      const runCatalog = this.buildRunCatalog(
+        keyedRows,
+        aiSignalsByType,
+        versionRows,
+      );
       const usableDomains = config.enabledDomains.filter(
         (domain) => runCatalog[domain].length > 0,
       );
@@ -910,7 +962,11 @@ export class StrategySearchService implements OnApplicationBootstrap {
               client,
               iteration.id,
               candidateDefinition.members.map((member) => {
-                const strategyId = strategyIdByType.get(member.type);
+                // Prefer the member's OWN version row: it is the row whose
+                // parameters this member is actually running. Falling back
+                // to the experiment's configured row (strategyIdByType) is
+                // only for the un-seeded in-code-sampler path.
+                const strategyId = member.strategyId ?? strategyIdByType.get(member.type);
                 if (!strategyId) {
                   throw new Error(
                     `No strategyId resolved for generated member type "${member.type}"; ` +
@@ -928,6 +984,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
             candles,
             weightMap,
             aiSignals,
+            sentimentScores,
           );
           this.metrics.backtestsRunTotal.inc();
           await this.backtestRuns.complete(candidateEntity.id, result);
@@ -980,7 +1037,9 @@ export class StrategySearchService implements OnApplicationBootstrap {
       this.logger.log(`Search ${experimentId} stopped: ${stopReason}`);
 
       if (!(await this.experiments.isCancelled(experimentId))) {
-        await this.experiments.finish(experimentId, 'COMPLETED');
+        // Persist WHY the loop ended so the UI can explain a run that
+        // stopped short of maxCandidates instead of just showing "51/100".
+        await this.experiments.finish(experimentId, 'COMPLETED', stopReason);
       }
     } catch (error) {
       if (!(await this.experiments.isCancelled(experimentId))) {
@@ -997,14 +1056,13 @@ export class StrategySearchService implements OnApplicationBootstrap {
   // strategyWeights entirely (a caller that wants an AI strategy included
   // must say so explicitly via strategyWeights; the default never reaches
   // into "the user's AI strategies" on its own).
-  private builtinTypeForDomain(
-    domain: StrategyDomain,
-  ): 'MA' | 'RSI' | 'BOLLINGER' | 'SUPPORT_RESISTANCE' {
-    const map: Record<StrategyDomain, 'MA' | 'RSI' | 'BOLLINGER' | 'SUPPORT_RESISTANCE'> = {
+  private builtinTypeForDomain(domain: StrategyDomain): BuiltInStrategyType {
+    const map: Record<StrategyDomain, BuiltInStrategyType> = {
       TREND: 'MA',
       MOMENTUM: 'RSI',
       VOLATILITY: 'BOLLINGER',
       STRUCTURE: 'SUPPORT_RESISTANCE',
+      INFORMATION: 'NEWS_SENTIMENT',
     };
     return map[domain];
   }
@@ -1034,18 +1092,50 @@ export class StrategySearchService implements OnApplicationBootstrap {
   // participating in candidate generation for this run — see run()'s
   // "Precompute" comment.
   //
-  // Deliberately does NOT read a built-in row's `parameters` column — a
-  // built-in `strategies` row never carries a meaningful custom parameter
-  // set (see artifacts/decisions.md §10): the Strategy/Candidate split
-  // means "which numeric parameters to try" is Candidate's job, generated
-  // fresh per iteration, never baked into the Strategy row itself. A
-  // deliberately-chosen parameter set for one specific combo is instead a
-  // manual Candidate (see createManualCandidate()), not a Search input.
+  /**
+   * Builds this run's per-domain sampler catalog. ONE ENTRY PER SELECTABLE
+   * VERSION — this is the fix for the "the label lies" bug
+   * (artifacts/decisions.md §11).
+   *
+   * Previously a built-in contributed a single entry whose `sample()` drew
+   * parameters at random from a table in code, while the candidate was
+   * separately pinned to whatever `strategies` row `start()` had chosen.
+   * The two were unrelated, so a candidate could read "MA v7" and run
+   * parameters v7 never contained — reproduced on live data (v7 stores
+   * {11,30}; a candidate pinned to it ran {50,200}).
+   *
+   * Now every parameter set the generator can pick IS a version's stored
+   * parameters, and the member carries that version's row id. Randomness is
+   * unchanged in kind — the generator still picks uniformly, just over
+   * versions rather than over an in-code tuple list — so Random Search
+   * still explores the parameter space the brief describes
+   * (04-examples-in-the-brief.md #16/#87), and every point it explores is
+   * now nameable and reproducible.
+   *
+   * `versionRows` covers the SYSTEM parameter variants plus the user's own
+   * saved versions (StrategyRepository.listSelectableVersions). A built-in
+   * with no selectable version at all falls back to the in-code sampler, so
+   * a database that has not been seeded still searches rather than failing.
+   */
   private buildRunCatalog(
     keyedRows: Array<{ row: WeightRow; key: SearchStrategyType }>,
     aiSignalsByType: Map<string, StrategySignal[]>,
+    versionRows: StrategyEntity[] = [],
   ): RunCatalog {
-    const catalog: RunCatalog = { TREND: [], MOMENTUM: [], VOLATILITY: [], STRUCTURE: [] };
+    const catalog: RunCatalog = {
+      TREND: [],
+      MOMENTUM: [],
+      VOLATILITY: [],
+      STRUCTURE: [],
+      INFORMATION: [],
+    };
+    const versionsByName = new Map<string, StrategyEntity[]>();
+    for (const row of versionRows) {
+      const list = versionsByName.get(row.name);
+      if (list) list.push(row);
+      else versionsByName.set(row.name, [row]);
+    }
+
     for (const { row, key } of keyedRows) {
       let domain: StrategyDomain;
       try {
@@ -1061,9 +1151,36 @@ export class StrategySearchService implements OnApplicationBootstrap {
         catalog[domain].push(
           aiCatalogEntry({ id: row.strategy_id, domain, version: row.version }),
         );
-      } else {
-        const entry = STRATEGY_CATALOG[domain];
-        if (entry.type === row.name) catalog[domain].push(entry);
+        continue;
+      }
+
+      const versions = versionsByName.get(row.name) ?? [];
+      if (versions.length > 0) {
+        for (const version of versions) {
+          catalog[domain].push(
+            versionCatalogEntry({
+              id: version.id,
+              type: row.name as SearchStrategyType,
+              domain,
+              version: version.version,
+              parameters: version.parameters as Record<string, number>,
+            }),
+          );
+        }
+        continue;
+      }
+
+      // Un-seeded database: keep searching using the in-code variant list
+      // rather than refusing to run. Logged, because in this state the
+      // version label is the base row's and the parameters are sampled —
+      // the exact inconsistency this design removes.
+      const entry = STRATEGY_CATALOG[domain];
+      if (entry.type === row.name) {
+        this.logger.warn(
+          `No selectable parameter version found for "${row.name}"; falling back to the in-code sampler. ` +
+            'Run database/seeds/003_system_parameter_versions.sql to materialise the parameter variants.',
+        );
+        catalog[domain].push(entry);
       }
     }
     return catalog;
@@ -1188,13 +1305,15 @@ export class StrategySearchService implements OnApplicationBootstrap {
     }
     const enabledDomains =
       request.enabledDomains ?? DEFAULT_SEARCH_CONFIG.enabledDomains;
-    const allowedDomains: StrategyDomain[] = [
-      'TREND',
-      'MOMENTUM',
-      'VOLATILITY',
-      'STRUCTURE',
-    ];
-    if (enabledDomains.some((domain) => !allowedDomains.includes(domain))) {
+    // Derived from BUILTIN_DOMAIN_BY_NAME rather than re-listed here: a
+    // second hard-coded copy is exactly what made INFORMATION (News
+    // Sentiment) get rejected as "unsupported" after it had already been
+    // added everywhere else. Adding a domain must not require remembering
+    // to update a literal in request validation.
+    const allowedDomains = new Set<StrategyDomain>(
+      Object.values(BUILTIN_DOMAIN_BY_NAME),
+    );
+    if (enabledDomains.some((domain) => !allowedDomains.has(domain))) {
       throw new BadRequestException(
         'enabledDomains contains an unsupported domain.',
       );
@@ -1272,6 +1391,9 @@ export class StrategySearchService implements OnApplicationBootstrap {
       MOMENTUM: 23,
       VOLATILITY: 31,
       STRUCTURE: 102,
+      // A sentiment member needs no candle history of its own — it reads a
+      // precomputed per-candle series, so it imposes no extra minimum.
+      INFORMATION: 2,
     };
     return Math.max(...domains.map((domain) => requirements[domain]));
   }

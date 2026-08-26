@@ -9,6 +9,7 @@ import { useTopCandidates } from '../hooks/useTopCandidates'
 import { useExperimentContext } from '../state/ExperimentContext'
 import { useStrategySelection } from '../state/StrategySelectionContext'
 import type { ExtendSearchResponse, StrategySignal } from '../api/types'
+import { STOP_REASON_LABEL } from '../api/types'
 
 /** Fixed count the "Chạy thêm 10 iteration" button always requests — matches the approved UI's fixed label. */
 const EXTEND_ITERATIONS = 10
@@ -111,16 +112,67 @@ export default function LeaderboardPage() {
   const selectedRow = rows.find((r) => r.candidate_id === selectedId) ?? null
   const selectedDetail = selectedId ? details[selectedId] : undefined
 
-  // No per-candidate "combo version" concept exists in the real API (a
-  // candidate has no version field of its own — only its member strategies'
-  // global plugin version does, via GET /strategy-plugin/strategies). The
-  // real, stable per-candidate identifier the backend does expose is its
-  // search iteration number (candidates/:id -> iterationNumber), already
-  // used the same way by the Backtest tab's candidate picker — reused here
-  // instead of inventing a "vN.0" combo-version label.
+  /**
+   * Combo Version — "instance thứ mấy của cùng một tổ hợp".
+   *
+   * Two candidates can carry the same name (e.g. MA + BOLLINGER +
+   * SUPPORT_RESISTANCE) yet be genuinely different things, because each
+   * member is pinned to a specific strategy VERSION. Version 1 might be
+   * built from v1/v1/v1 and Version 2 from v10/v1/v1. That distinction is
+   * exactly what this column exists to show, and it is derived — never
+   * stored — from the member versions the API already returns, matching
+   * the approved prototype's own rule:
+   *
+   *   comboVer = 1 + Σ (version of each member − 1)   [+ combo revision]
+   *
+   * We compute it as a dense ordinal instead of that raw sum so the
+   * numbers stay small and gap-free: within one combo name, every distinct
+   * member-version tuple gets the next Version number, ordered by the
+   * tuple itself so the labelling is stable no matter what order the
+   * leaderboard happens to return rows in.
+   *
+   * (Previously this column showed the search ITERATION number, which is
+   * not a version at all — two identical-looking rows differed only by a
+   * number that said nothing about what made them different.)
+   */
+  const comboVersionByCandidate = useMemo(() => {
+    const tupleOf = (candidateId: string): string | null => {
+      const detail = details[candidateId]
+      if (!detail) return null
+      return [...detail.members]
+        .sort((a, b) => a.type.localeCompare(b.type))
+        .map((m) => `${m.type}@${m.version}`)
+        .join('|')
+    }
+
+    // comboName -> sorted list of distinct member-version tuples
+    const tuplesByName = new Map<string, string[]>()
+    for (const row of rows) {
+      const detail = details[row.candidate_id]
+      const tuple = tupleOf(row.candidate_id)
+      if (!detail || !tuple) continue
+      const name = [...detail.members].map((m) => m.type).sort().join(' + ')
+      const list = tuplesByName.get(name) ?? []
+      if (!list.includes(tuple)) list.push(tuple)
+      tuplesByName.set(name, list)
+    }
+    for (const list of tuplesByName.values()) list.sort()
+
+    const out: Record<string, number> = {}
+    for (const row of rows) {
+      const detail = details[row.candidate_id]
+      const tuple = tupleOf(row.candidate_id)
+      if (!detail || !tuple) continue
+      const name = [...detail.members].map((m) => m.type).sort().join(' + ')
+      const index = (tuplesByName.get(name) ?? []).indexOf(tuple)
+      if (index >= 0) out[row.candidate_id] = index + 1
+    }
+    return out
+  }, [rows, details])
+
   const versionLabel = (candidateId: string): string => {
-    const detail = details[candidateId]
-    return detail ? `Iter ${detail.iterationNumber}` : '…'
+    const version = comboVersionByCandidate[candidateId]
+    return version ? `Version ${version}` : '…'
   }
 
   // The candidate's specific parameter version has no per-member signal
@@ -134,6 +186,13 @@ export default function LeaderboardPage() {
     liveSignal?.perStrategy.find((p) => p.type === type)?.signal ?? null
 
   const strategyByType = useMemo(() => new Map(strategies.map((s) => [s.type, s])), [strategies])
+
+  // A run that ends below maxCandidates is almost always one of the
+  // brief's own stop conditions firing, not a failure — say which one
+  // instead of leaving the user staring at "51 / 100".
+  const stopReason = expStatus?.search_config?.stopReason ?? null
+  const stopReasonText =
+    expStatus?.status === 'COMPLETED' && stopReason ? STOP_REASON_LABEL[stopReason] : null
 
   const iteration = expStatus?.generated ?? 0
   const maxCandidates = lastConfig?.maxCandidates ?? 100
@@ -346,6 +405,11 @@ export default function LeaderboardPage() {
           <div className="algo-progress-track">
             <div className="algo-progress-fill" style={{ width: `${progressPct}%` }} />
           </div>
+          {stopReasonText && (
+            <p className="text-muted" style={{ fontSize: 11, margin: '8px 0 0', lineHeight: 1.5 }}>
+              {stopReasonText}
+            </p>
+          )}
           <div className="algo-stats">
             <div className="algo-stat-row">
               <span className="text-muted">Strategy đầu vào</span>

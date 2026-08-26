@@ -1,6 +1,25 @@
-export type StrategyDomain = 'TREND' | 'MOMENTUM' | 'VOLATILITY' | 'STRUCTURE';
+// INFORMATION is the "Information (News Sentiment)" group the brief lists
+// alongside Trend/Momentum/Volatility/Structure
+// (docs/about-projects/04-examples-in-the-brief.md #17). It is deliberately
+// NEITHER directional nor confirmation in the generator's sense: a
+// composite still needs one directional + one confirmation domain, and a
+// sentiment member can only ever join as a supplementary voice — which is
+// exactly what required-flow #17 describes ("Sentiment combinations
+// participate in the same composite, backtest, evaluation, and ranking
+// lifecycle").
+export type StrategyDomain =
+  | 'TREND'
+  | 'MOMENTUM'
+  | 'VOLATILITY'
+  | 'STRUCTURE'
+  | 'INFORMATION';
 
-export type BuiltInStrategyType = 'MA' | 'RSI' | 'BOLLINGER' | 'SUPPORT_RESISTANCE';
+export type BuiltInStrategyType =
+  | 'MA'
+  | 'RSI'
+  | 'BOLLINGER'
+  | 'SUPPORT_RESISTANCE'
+  | 'NEWS_SENTIMENT';
 
 // An AI-generated strategy is identified by the `AI:<strategyId>` namespace
 // instead of a fixed literal — it is a per-user row in `strategies`
@@ -36,9 +55,16 @@ export const BUILTIN_DOMAIN_BY_NAME: Record<BuiltInStrategyType, StrategyDomain>
   RSI: 'MOMENTUM',
   BOLLINGER: 'VOLATILITY',
   SUPPORT_RESISTANCE: 'STRUCTURE',
+  NEWS_SENTIMENT: 'INFORMATION',
 };
 
-const VALID_DOMAINS: readonly StrategyDomain[] = ['TREND', 'MOMENTUM', 'VOLATILITY', 'STRUCTURE'];
+const VALID_DOMAINS: readonly StrategyDomain[] = [
+  'TREND',
+  'MOMENTUM',
+  'VOLATILITY',
+  'STRUCTURE',
+  'INFORMATION',
+];
 
 // Resolves the StrategyDomain for one `strategies` row, built-in or AI.
 // A built-in's domain comes from its fixed name; an AI strategy's domain
@@ -87,6 +113,18 @@ export interface CandidateMember {
   type: SearchStrategyType;
   domain: StrategyDomain;
   pluginVersion: number;
+  /**
+   * The exact `strategies` row this member's parameters came from.
+   *
+   * Present for every member the search generates, because a member's
+   * parameters are now always ONE version's stored parameters rather than
+   * a fresh random draw (artifacts/decisions.md §11). Carrying the row id
+   * on the member is what lets `run()` persist
+   * `candidate_strategies.strategy_id` pointing at that same version, so
+   * "which version" and "which parameters" can never drift apart.
+   * Optional only for hand-built members in older tests.
+   */
+  strategyId?: string;
   parameters: Record<string, number>;
 }
 

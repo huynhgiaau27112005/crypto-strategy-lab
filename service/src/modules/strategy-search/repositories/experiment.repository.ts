@@ -80,10 +80,34 @@ export class ExperimentRepository {
     return (result.rowCount ?? 0) > 0;
   }
 
-  async finish(experimentId: string, status: string): Promise<void> {
+  /**
+   * `stopReason` records WHY the loop ended — MAX_CANDIDATES,
+   * MAX_DURATION, NO_IMPROVEMENT or SEARCH_SPACE_EXHAUSTED.
+   *
+   * Without it the UI could only show "51 / 100", which looks like a
+   * crashed search when it is actually the brief's own
+   * no-improvement-for-N-iterations stop condition firing
+   * (docs/about-projects/04-examples-in-the-brief.md #23). An explicit
+   * stop condition is required (anti-pattern #8 forbids an unbounded
+   * loop), so the honest fix is to SHOW which one fired, not to remove it.
+   *
+   * Merged into the existing `search_config` JSONB rather than added as a
+   * column, so this needs no migration on a schema several teammates'
+   * branches also build on.
+   */
+  async finish(
+    experimentId: string,
+    status: string,
+    stopReason?: string,
+  ): Promise<void> {
     await this.database.query(
-      `UPDATE experiments SET status = $2, completed_at = NOW() WHERE id = $1`,
-      [experimentId, status],
+      `UPDATE experiments
+       SET status = $2,
+           completed_at = NOW(),
+           search_config = COALESCE(search_config, '{}'::jsonb)
+                           || jsonb_build_object('stopReason', $3::text)
+       WHERE id = $1`,
+      [experimentId, status, stopReason ?? null],
     );
   }
 

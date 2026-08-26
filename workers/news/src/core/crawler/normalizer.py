@@ -30,7 +30,9 @@ class NewsNormalizer:
         canonical_url = self.canonicalize_url(raw_url, base_url)
 
         title = self._clean_string(raw_record.get("title"))
-        content = self._clean_string(raw_record.get("content") or raw_record.get("summary"))
+        content = self._clean_string(
+            self._strip_html(raw_record.get("content") or raw_record.get("summary"))
+        )
         published_at = self._clean_string(raw_record.get("publishedAt") or raw_record.get("published"))
 
         article_id = self._generate_id(source_id, canonical_url)
@@ -80,6 +82,30 @@ class NewsNormalizer:
     def _generate_crawled_at(self) -> str:
         """Generate timezone-aware UTC ISO 8601 timestamp."""
         return datetime.now(timezone.utc).isoformat()
+
+    def _strip_html(self, text: Optional[str]) -> Optional[str]:
+        """Reduce an RSS ``description``/``content`` payload to plain text.
+
+        Most feeds (cointelegraph included) put a full HTML fragment in
+        ``description`` — a floated ``<img>`` wrapper followed by the real
+        prose. Storing that verbatim is why article subtitles rendered as
+        a wall of ``<p style="float: right..."><img ...>`` markup in the UI.
+        Stripping here, at the point the record is normalised, keeps the
+        rest of the pipeline (sentiment input, database, API, UI) working
+        on the same clean text instead of each layer re-deriving it.
+        """
+        if not text or not isinstance(text, str):
+            return text
+        if "<" not in text:
+            return text
+        try:
+            from bs4 import BeautifulSoup
+
+            return BeautifulSoup(text, "html.parser").get_text(" ", strip=True)
+        except Exception:
+            # Never let presentation cleanup break ingestion — fall back to
+            # a conservative tag strip.
+            return re.sub(r"<[^>]+>", " ", text)
 
     def _clean_string(self, text: Optional[str]) -> Optional[str]:
         """Strip and normalize whitespace in a string."""

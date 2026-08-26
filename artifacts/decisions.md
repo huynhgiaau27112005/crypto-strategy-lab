@@ -163,3 +163,67 @@ Cụ thể đã build:
 
 **Bằng chứng verify live (API + psql thật):** experiment 12 candidate → lưu MA v8 → cascade `regenerated:1` → candidate mới rank #1 (74.494 > 74.357 cũ), members = `MA v8 {12,60}` + `RSI v1` giữ nguyên; candidate cũ vẫn `MA v1 {20,50}` không đổi; cascade lại 2 lần → `regenerated:0`; lưu MA v9 → cascade → `regenerated:1`. Leaderboard cuối chứa đồng thời candidate ở v1, v8, v9.
 
+### 11. Version tham số = đầu vào của Search; thêm NewsSentimentStrategy (7 lỗi người dùng báo)
+
+Người dùng báo 7 lỗi sau khi tự bấm thử. Điều tra cho thấy **5 lỗi đúng, 2 hiểu nhầm** — ghi lại cả hai để chuẩn bị vấn đáp.
+
+#### Hai điểm KHÔNG phải bug
+
+**(1) "Search không chạy đủ 100 iteration" (dừng ở 51/100).** Đúng spec, không phải lỗi. `04-examples-in-the-brief.md` #23 ghi rõ 3 điều kiện dừng ví dụ: *"100 candidates, one hour, or **no improvement for 50 iterations**"*, và anti-pattern #8 **cấm** vòng lặp không có điều kiện dừng. `maxNoImprovement = 50` chính là điều kiện thứ 3. Lỗi thật là **UI không nói lý do dừng** nên nhìn như hỏng → nay lưu `stopReason` (MAX_CANDIDATES / MAX_DURATION / NO_IMPROVEMENT / SEARCH_SPACE_EXHAUSTED) vào `experiments.search_config` và hiển thị câu giải thích dưới thanh tiến trình.
+
+**(2) "Tin tức là mock".** Không phải. Kiểm tra DB: 55 bài từ cointelegraph.com, có URL thật, `crawled_at` cập nhật theo từng lần crawl. Cái *trông giống* mock là `content` lưu nguyên HTML của RSS `description` — lỗi thật, nhưng ở crawler chứ không phải dữ liệu giả.
+
+#### Lỗi 2+3 (cùng gốc): nhãn version nói dối — nghiêm trọng nhất
+
+**Bằng chứng:** `strategies` MA v7 có `parameters = {11,30}`, nhưng candidate ghim v7 lại chạy `{50,200}`. Trên UI: candidate ghi "v10" kèm `fastPeriod 10 · slowPeriod 50`, trong khi MA v10 thật sự là `{22,30}`.
+
+**Nguyên nhân:** `start()` ghim một *version row*, nhưng `DomainGuidedRandomGenerator` lại **random tham số** từ một bảng hằng trong code. Hai thứ hoàn toàn không liên quan nhau, nên nhãn và số luôn có thể lệch.
+
+**Chốt (người dùng chọn phương án C):** biến các biến thể tham số của đề bài thành **version thật** trong bảng `strategies` (`database/seeds/003_system_parameter_versions.sql`, lấy đúng ví dụ #87: MA 10/30, 10/50, 20/50, 20/100, 50/100, 50/200; RSI 14/30/70, 14/25/75, 21/30/70...). Search nay **random trên tập version** thay vì trên tuple trong code:
+
+- Mỗi `CatalogEntry` = **một version**, `sample()` trả đúng `parameters` của version đó và mang theo `strategyId` của chính row đó.
+- `CandidateMember.strategyId` mới thêm → `run()` lưu `candidate_strategies.strategy_id` trỏ đúng version đã sinh ra tham số.
+- Tính ngẫu nhiên **không mất** (vẫn đúng #16/#87) — chỉ đổi đơn vị random từ "tuple trong code" sang "version trong DB", nên mọi điểm đã thử đều gọi tên và tái lập được.
+- Seed idempotent + chống trùng: version = `MAX(version) + row_number()` theo từng tên, nên chạy lại là no-op và không bao giờ đè version người dùng đã lưu.
+- DB chưa seed → fallback về sampler cũ kèm cảnh báo log, để hệ thống vẫn chạy thay vì từ chối.
+
+**Cột Version ở Leaderboard:** trước hiển thị số *iteration* (không phải version). Nay là **combo version** dẫn xuất từ bộ version thành phần, đúng công thức prototype `comboVer = 1 + Σ(version thành phần − 1)` — cài dưới dạng ordinal dày đặc trong từng tên tổ hợp để số nhỏ và không nhảy cóc. Bỏ nút *"Dùng lại tham số version này"*: mọi version đã là đầu vào Search rồi, chép ngược lại chỉ tạo bản trùng.
+
+**Bằng chứng đã sửa (chạy thật):** experiment 20 candidate → **50/50 member có `strategies.parameters = candidate_strategies.parameters`**, 0 lệch. Cùng tên `MA + RSI` xuất hiện 4 lần với 4 bộ version khác nhau (v13/v7, v12/v7, v14/v5, v15/v5) → 4 Version phân biệt được.
+
+#### Lỗi 6: thiếu NewsSentimentStrategy — vi phạm required-flow
+
+`05-required-flows.md` (**file binding**, mở đầu ghi *"behavior the brief **requires**"*) có hẳn **#17 Sentiment-as-strategy flow**, và demo flow bắt buộc gồm bước *"add SentimentStrategy → rerun search"*. Code trước đó **không có gì**. Đã bổ sung:
+
+- Domain thứ 5 `INFORMATION` (đúng phân nhóm #17), **không** phải directional cũng không phải confirmation — sentiment chỉ là phiếu bổ sung, tổ hợp vẫn phải có 1 định hướng + 1 xác nhận.
+- `NewsSentimentPlugin` theo đúng luật #30 (trung bình sentiment vượt ngưỡng → BUY/SELL), ngưỡng và cửa sổ là **tham số** để Search dò được.
+- `NewsSentimentPrecomputeService` dựng chuỗi sentiment theo từng nến **một lần mỗi run** (cùng điểm khấu hao với AI signals) — plugin **không** chạm DB, đúng anti-pattern "strategy không được nối thẳng vào database".
+- Nến không có tin trong cửa sổ → `null` → plugin trả **HOLD** (phiếu trắng), **không** quy về 0. "Không có dữ liệu" khác "dữ liệu trung hoà"; quy về 0 sẽ biến một lỗ hổng dữ liệu thành một lá phiếu tự tin.
+- Chống lookahead bias: mỗi nến chỉ thấy tin đăng **trước hoặc bằng** thời điểm nó — có test riêng khoá chặt.
+
+**Hạn chế trung thực:** RSS chỉ giữ tin ~1–2 ngày, nên backtest trên khoảng xa trong quá khứ sẽ có phần lớn nến không có tin → sentiment member phần lớn HOLD. Cần nói rõ khi vấn đáp; muốn khắc phục phải có nguồn tin lịch sử.
+
+#### Lỗi 4: `fetch failed` khi sinh AI Strategy
+
+**Không phải lỗi code.** GitHub Models đang bị khai tử: `models.inference.ai.azure.com` trả **NXDOMAIN**, endpoint mới trả `github_models_retirement_brownout`. Lỗi code phụ đã sửa: `fetch()` không có try/catch, nên Node ném `TypeError: fetch failed` — không nêu host, không nêu nguyên nhân. Nay bắt lỗi và dịch `error.cause.code` (ENOTFOUND / ECONNREFUSED / TLS / timeout) thành câu tiếng Việt chỉ rõ phải sửa biến môi trường nào; lỗi 4xx cũng kèm luôn body của provider.
+
+#### Lỗi 5: trang News
+
+- `content` lưu HTML thô → sửa **tận gốc** ở `normalizer.py._strip_html` (BeautifulSoup, fallback regex). Thêm phòng vệ ở `NewsService.toSummary` cho 55 dòng đã crawl trước đó, tránh phải migrate dữ liệu lịch sử.
+- Thiếu nút mở bài gốc → `url` vốn đã có sẵn trong DB *và* API, chỉ là FE chưa render. Thêm link mở tab mới (`rel="noopener noreferrer"`).
+- `Pos/Neu/Neg` → `Positive/Neutral/Negative`.
+- Nút Crawl: đổi sang cùng kiểu nút primary/blueprint như *"Chạy thêm 10 iteration"*; đang chạy thì đổi thành **"Dừng Crawl"** màu đỏ + spinner. Thêm `POST /news/crawl/cancel`. Job đang chờ thì xoá khỏi queue; job **đang chạy** thì đánh dấu huỷ hợp tác và để nó kết thúc lô hiện tại — báo "đang dừng" là trung thực, còn giả vờ dừng ngay sẽ là nói dối UI phải rút lại sau.
+
+#### Lỗi 7: AI strategy không hiện sau khi lưu
+
+Backend vốn đúng (`listLatestPerName` scope theo owner + active). Gap ở FE: catalog chỉ fetch **một lần** lúc mount. Thêm `refreshStrategies()` gọi sau khi lưu. Quan trọng: lần refresh **không** reset tick/trọng số người dùng đã chỉnh — chỉ default cho strategy *mới xuất hiện*.
+
+#### Bug phát sinh, chỉ lộ khi verify chạy thật (unit test không bắt được)
+
+1. `listLatestForUser` sắp xếp bằng `owner_user_id = $1 DESC`; row SYSTEM có owner NULL → biểu thức ra **NULL**, mà Postgres `DESC` mặc định **NULLS FIRST** → row SYSTEM luôn thắng version của chính user. Lưu MA v8 xong catalog vẫn báo v1. Sửa bằng `COALESCE(..., false)`.
+2. Cascade sinh lại tổ hợp **không idempotent** — bấm lưu lần 2 đẻ candidate trùng, vì skip theo *candidate* thay vì theo *tổ hợp*.
+3. `validateRequest` còn một **bản sao hard-code** danh sách 4 domain → `INFORMATION` bị từ chối là "unsupported" dù đã thêm ở mọi nơi khác. Sửa bằng cách suy ra từ `BUILTIN_DOMAIN_BY_NAME` để thêm domain không còn phải nhớ sửa literal thứ hai.
+4. `stripHtml` early-return khi chuỗi không chứa `<` → entity (`&amp;`) không được decode. Chính test tôi vừa viết bắt được.
+
+**Bài học lớn nhất của đợt này:** tôi từng tuyên bố "hoàn thành 100%" dựa trên **test xanh**, trong khi người dùng phát hiện 5 lỗi thật chỉ bằng cách bấm thử từng màn hình. Test xanh chứng minh code làm đúng điều test mô tả — **không** chứng minh sản phẩm dùng được. Cả 4 bug ở mục trên đều lọt qua toàn bộ suite và chỉ lộ ra khi gọi API thật trên Postgres thật.
+

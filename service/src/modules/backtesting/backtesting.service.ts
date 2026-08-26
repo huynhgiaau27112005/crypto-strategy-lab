@@ -28,6 +28,11 @@ export class BacktestingService {
     // any candidate with no AI members, and for every existing caller/test
     // that predates AI strategies.
     aiSignals?: Map<SearchStrategyType, StrategySignal[]>,
+    // Precomputed per-candle news sentiment (see
+    // NewsSentimentPrecomputeService) — same once-per-run threading as
+    // `aiSignals`, and likewise omittable for any candidate with no
+    // sentiment member.
+    sentimentScores?: Array<number | null>,
   ): BacktestResult {
     if (candles.length < 2)
       throw new Error('At least two candles are required.');
@@ -50,6 +55,7 @@ export class BacktestingService {
           candles,
           index,
           aiSignals,
+          sentimentScores,
         },
         weights,
       );

@@ -123,14 +123,27 @@ export interface RealtimeSignalDto {
  * service/src/modules/strategy-search/domain/search.types.ts and
  * artifacts/api-contract.md §2 (`enabledDomains`).
  */
-export type StrategyDomain = 'TREND' | 'MOMENTUM' | 'VOLATILITY' | 'STRUCTURE'
+export type StrategyDomain =
+  | 'TREND'
+  | 'MOMENTUM'
+  | 'VOLATILITY'
+  | 'STRUCTURE'
+  /** "Information (News Sentiment)" — the brief's fifth strategy group
+   *  (04-examples-in-the-brief.md #17), backing required-flow #17. */
+  | 'INFORMATION'
 
 /**
  * The four built-in plugin types (service/src/modules/strategy-plugin/plugins/*)
  * plus the "AI:<strategyId>" namespace for a user's own saved AI-generated
  * strategy — see service/src/modules/strategy-search/domain/search.types.ts.
  */
-export type SearchStrategyType = 'MA' | 'RSI' | 'BOLLINGER' | 'SUPPORT_RESISTANCE' | `AI:${string}`
+export type SearchStrategyType =
+  | 'MA'
+  | 'RSI'
+  | 'BOLLINGER'
+  | 'SUPPORT_RESISTANCE'
+  | 'NEWS_SENTIMENT'
+  | `AI:${string}`
 
 /** True for a catalog/weight entry that is a user's own AI-generated strategy rather than a built-in plugin. */
 export function isAiStrategyType(type: string): type is `AI:${string}` {
@@ -270,6 +283,35 @@ export interface ExperimentStatusDto {
   running: number
   best_score: string | null
   current_candidate_id: string | null
+  /** Persisted search settings, plus `stopReason` once the run ends. */
+  search_config: {
+    topK?: number
+    minimumTrades?: number
+    maxNoImprovement?: number
+    maxDurationSeconds?: number
+    /**
+     * Why the loop ended. Shown in the UI so a run that stops before
+     * `maxCandidates` reads as a stop condition firing rather than as a
+     * failure — the brief lists no-improvement-for-N as one of the three
+     * example stop conditions (04-examples-in-the-brief.md #23).
+     */
+    stopReason?: SearchStopReason | null
+  } | null
+}
+
+/** The four ways the search loop can end — see StrategySearchService.run(). */
+export type SearchStopReason =
+  | 'MAX_CANDIDATES'
+  | 'MAX_DURATION'
+  | 'NO_IMPROVEMENT'
+  | 'SEARCH_SPACE_EXHAUSTED'
+
+/** Vietnamese explanation shown next to the iteration counter. */
+export const STOP_REASON_LABEL: Record<SearchStopReason, string> = {
+  MAX_CANDIDATES: 'Đã chạy đủ số iteration tối đa.',
+  MAX_DURATION: 'Dừng do chạm giới hạn thời gian.',
+  NO_IMPROVEMENT: 'Dừng sớm: nhiều vòng liên tiếp không cải thiện được điểm tốt nhất.',
+  SEARCH_SPACE_EXHAUSTED: 'Dừng sớm: đã thử hết không gian tổ hợp khả dĩ.',
 }
 
 /**

@@ -20,6 +20,9 @@ import type { SearchStrategyType, StrategyCatalogItem, StrategyWeight } from '..
  * correct if the plugin registry grows within the same two domain roles.
  */
 const DIRECTIONAL_DOMAINS = new Set(['TREND', 'STRUCTURE'])
+// INFORMATION (News Sentiment) is deliberately in NEITHER set: it is a
+// supplementary voice, so it can join a composite but can never be the
+// thing that makes one valid on its own — mirrors the backend generator.
 const CONFIRMATION_DOMAINS = new Set(['MOMENTUM', 'VOLATILITY'])
 
 export interface StrategyWeightValidation {
@@ -40,6 +43,16 @@ interface StrategySelectionContextValue {
   setWeight: (type: SearchStrategyType, weight: number) => void
   /** The exact shape `POST /strategy-search/experiments` expects for `strategyWeights` — selected strategies only. */
   strategyWeights: StrategyWeight[]
+  /**
+   * Re-fetches `GET /strategy-plugin/strategies`.
+   *
+   * The catalog used to load once on mount, so a strategy saved in the AI
+   * Strategy tab did not appear under "Strategy do AI generate" until the
+   * whole page was reloaded — the row existed server-side the entire time
+   * (AiStrategyRepository.listLatestPerName returns it), the client simply
+   * never asked again.
+   */
+  refreshStrategies: () => void
   validation: StrategyWeightValidation
   /**
    * True once the user has confirmed the current, valid selection via
@@ -113,6 +126,8 @@ export function StrategySelectionProvider({ children }: { children: ReactNode })
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [weights, setWeights] = useState<Record<string, number>>({})
   const [confirmed, setConfirmed] = useState(false)
+  const [catalogRev, setCatalogRev] = useState(0)
+  const refreshStrategies = useCallback(() => setCatalogRev((n) => n + 1), [])
 
   useEffect(() => {
     let cancelled = false
@@ -128,15 +143,21 @@ export function StrategySelectionProvider({ children }: { children: ReactNode })
         // Default: every strategy included, equal weight — mirrors the
         // backend's own default when `strategyWeights` is omitted
         // (artifacts/api-contract.md §2: "chia đều").
+        // Default only what is NEW. A refresh (e.g. after saving an AI
+        // strategy) must not silently reset ticks and weights the user has
+        // already adjusted — it should just make the new strategy appear,
+        // selected, alongside them.
         const equalWeight = catalog.length > 0 ? 1 / catalog.length : 0
-        const nextSelected: Record<string, boolean> = {}
-        const nextWeights: Record<string, number> = {}
-        for (const item of catalog) {
-          nextSelected[item.type] = true
-          nextWeights[item.type] = equalWeight
-        }
-        setSelected(nextSelected)
-        setWeights(nextWeights)
+        setSelected((prev) => {
+          const next = { ...prev }
+          for (const item of catalog) if (!(item.type in next)) next[item.type] = true
+          return next
+        })
+        setWeights((prev) => {
+          const next = { ...prev }
+          for (const item of catalog) if (!(item.type in next)) next[item.type] = equalWeight
+          return next
+        })
       })
       .catch((err: unknown) => {
         if (cancelled || controller.signal.aborted) return
@@ -150,7 +171,9 @@ export function StrategySelectionProvider({ children }: { children: ReactNode })
       cancelled = true
       controller.abort()
     }
-  }, [])
+    // Re-runs when refreshStrategies() bumps catalogRev — e.g. right after
+    // the AI Strategy tab saves a new strategy.
+  }, [catalogRev])
 
   const toggleSelected = useCallback((type: SearchStrategyType) => {
     setSelected((prev) => ({ ...prev, [type]: !prev[type] }))
@@ -186,11 +209,12 @@ export function StrategySelectionProvider({ children }: { children: ReactNode })
       toggleSelected,
       setWeight,
       strategyWeights,
+      refreshStrategies,
       validation,
       confirmed,
       confirmSelection,
     }),
-    [strategies, loading, error, selected, weights, toggleSelected, setWeight, strategyWeights, validation, confirmed, confirmSelection],
+    [strategies, loading, error, selected, weights, toggleSelected, setWeight, strategyWeights, refreshStrategies, validation, confirmed, confirmSelection],
   )
 
   return <StrategySelectionContext.Provider value={value}>{children}</StrategySelectionContext.Provider>

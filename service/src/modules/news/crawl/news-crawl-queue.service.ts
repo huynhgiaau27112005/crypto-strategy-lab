@@ -75,6 +75,31 @@ export class NewsCrawlQueueService {
     return latest ? this.toJobStatus(latest) : null;
   }
 
+  /**
+   * Stops the current crawl on the user's command.
+   *
+   * A queued job is removed outright. A job already executing inside the
+   * worker cannot be yanked out from under the spawned Python process, so
+   * it is marked for cooperative cancellation and left to finish its
+   * current article batch — reporting "stopping" is honest, whereas
+   * pretending it halted instantly would not be. `getStatus()` reflects
+   * that intermediate state so the UI can show it.
+   */
+  async cancel(): Promise<{ cancelled: boolean; state: string | null }> {
+    const job = await this.findInFlightJob();
+    if (!job) return { cancelled: false, state: null };
+    const state = await job.getState();
+    if (state === 'waiting' || state === 'delayed' || state === 'prioritized') {
+      await job.remove();
+      return { cancelled: true, state };
+    }
+    // Active: cooperative stop. The processor polls this flag between
+    // batches (see NewsCrawlProcessor) instead of being killed mid-write,
+    // which would leave partially-inserted rows behind.
+    await job.updateData({ ...(job.data ?? {}), cancelRequested: true });
+    return { cancelled: true, state };
+  }
+
   private async findInFlightJob(): Promise<Job | undefined> {
     const jobs = await this.queue.getJobs([...IN_FLIGHT_STATES]);
     return jobs[0];

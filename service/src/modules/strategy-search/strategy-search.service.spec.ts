@@ -87,6 +87,7 @@ describe('StrategySearchService', () => {
     };
     const strategies = {
       findByName: jest.fn(),
+      listSelectableVersions: jest.fn().mockResolvedValue([]),
       listSystemStrategies: jest.fn().mockResolvedValue([
         { id: 'strategy-ma', name: 'MA' },
         { id: 'strategy-rsi', name: 'RSI' },
@@ -137,6 +138,9 @@ describe('StrategySearchService', () => {
     const strategyPlugin = {
       validateParametersForType: jest.fn(),
     };
+    const sentimentPrecompute = {
+      precompute: jest.fn().mockResolvedValue([]),
+    };
 
     const mocks = {
       database,
@@ -156,6 +160,7 @@ describe('StrategySearchService', () => {
       aiStrategies,
       aiPrecompute,
       strategyPlugin,
+      sentimentPrecompute,
       ...overrides,
     };
 
@@ -177,6 +182,7 @@ describe('StrategySearchService', () => {
       mocks.aiStrategies as any,
       mocks.aiPrecompute as any,
       mocks.strategyPlugin as any,
+      mocks.sentimentPrecompute as any,
     );
 
     return { service, mocks };
@@ -302,6 +308,75 @@ describe('StrategySearchService', () => {
         new Map(),
       );
       expect(catalog.TREND).toHaveLength(1);
+    });
+  });
+
+  describe('buildRunCatalog() — version/parameter consistency', () => {
+    const maRow = {
+      strategy_id: 's-ma', name: 'MA', type: 'SYSTEM', version: 1,
+      parameters: {}, source_code: null, weight: '1',
+    };
+
+    // THE regression guard for the "label lies" bug. Before this, a
+    // built-in contributed one entry whose sample() drew parameters at
+    // random, while the candidate was pinned to an unrelated version row —
+    // so a candidate could read "MA v7" and run parameters v7 never held
+    // (reproduced live: v7 stores {11,30}, the candidate ran {50,200}).
+    // Every entry must now yield exactly its own version's parameters and
+    // carry that version's row id.
+    it('emits one entry per selectable version, each sampling exactly that version\'s stored parameters', () => {
+      const { service } = buildService();
+      const catalog = (service as any).buildRunCatalog(
+        [{ row: maRow, key: 'MA' }],
+        new Map(),
+        [
+          { id: 'ma-v11', name: 'MA', version: 11, parameters: { fastPeriod: 10, slowPeriod: 30 } },
+          { id: 'ma-v12', name: 'MA', version: 12, parameters: { fastPeriod: 50, slowPeriod: 200 } },
+        ],
+      );
+
+      expect(catalog.TREND).toHaveLength(2);
+      for (const entry of catalog.TREND) {
+        // sample() must ignore `random` entirely — a version IS a fixed
+        // parameter set, so repeated draws cannot differ.
+        const a = entry.sample(() => 0);
+        const b = entry.sample(() => 0.99);
+        expect(a).toEqual(b);
+      }
+      const members = catalog.TREND.map((e: any) => e.sample(() => 0));
+      expect(members).toEqual([
+        { type: 'MA', domain: 'TREND', pluginVersion: 11, strategyId: 'ma-v11', parameters: { fastPeriod: 10, slowPeriod: 30 } },
+        { type: 'MA', domain: 'TREND', pluginVersion: 12, strategyId: 'ma-v12', parameters: { fastPeriod: 50, slowPeriod: 200 } },
+      ]);
+    });
+
+    it('falls back to the in-code sampler when the database has no selectable version, rather than refusing to search', () => {
+      const { service } = buildService();
+      const catalog = (service as any).buildRunCatalog(
+        [{ row: maRow, key: 'MA' }],
+        new Map(),
+        [],
+      );
+      expect(catalog.TREND).toHaveLength(1);
+    });
+
+    it('places a NEWS_SENTIMENT row in the INFORMATION domain (required-flow #17)', () => {
+      const { service } = buildService();
+      const catalog = (service as any).buildRunCatalog(
+        [{
+          row: { strategy_id: 's-ns', name: 'NEWS_SENTIMENT', type: 'SYSTEM', version: 1, parameters: {}, source_code: null, weight: '1' },
+          key: 'NEWS_SENTIMENT',
+        }],
+        new Map(),
+        [{ id: 'ns-v2', name: 'NEWS_SENTIMENT', version: 2, parameters: { lookbackHours: 24, buyThreshold: 0.3, sellThreshold: -0.3 } }],
+      );
+      expect(catalog.INFORMATION).toHaveLength(1);
+      expect(catalog.INFORMATION[0].sample(() => 0)).toMatchObject({
+        type: 'NEWS_SENTIMENT',
+        domain: 'INFORMATION',
+        pluginVersion: 2,
+        strategyId: 'ns-v2',
+      });
     });
   });
 

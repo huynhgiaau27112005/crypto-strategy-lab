@@ -100,7 +100,7 @@ package "Modular Monolith — NestJS (service/)" as BE {
 
   package "Strategy Plugin Module" as M_PLUG {
     rectangle "StrategyRegistry\nregister/get/list/has\n(built-ins) +\nresolve(type) (task-15:\nbuilt-in hoặc AI adapter)" as PLUG_REG
-    rectangle "MaPlugin\nRsiPlugin\nBollingerPlugin\nSupportResistancePlugin" as PLUG_P
+    rectangle "MaPlugin\nRsiPlugin\nBollingerPlugin\nSupportResistancePlugin\nNewsSentimentPlugin\n(INFORMATION — required-flow #17)" as PLUG_P
     rectangle "AiStrategyPluginAdapter\n(task-15) 1 instance dùng\nchung cho MỌI \"AI:<id>\";\nanalyze() = tra bảng\nSignalContext.aiSignals" as PLUG_AI
     rectangle "StrategyPluginController\nGET /strategy-plugin/strategies\nGET|POST /strategies/:name/versions" as PLUG_C
     rectangle "StrategyPluginService\nlistCatalog(userId)\n= built-ins + AI rows\ncủa user (task-15)" as PLUG_S
@@ -149,11 +149,12 @@ package "Modular Monolith — NestJS (service/)" as BE {
   }
 
   package "News Module" as M_NEWS {
-    rectangle "NewsController\nGET /news\nPOST /news/crawl\nGET /news/crawl/status" as NW_C
+    rectangle "NewsController\nGET /news\nPOST /news/crawl\nPOST /news/crawl/cancel\nGET /news/crawl/status" as NW_C
     rectangle "NewsService" as NW_S
     rectangle "NewsCrawlQueueService\ntrigger (scan+coalesce)\ngetStatus (đọc job Redis)" as NW_Q
     rectangle "NewsCrawlService.execute()\nspawn + await 1 job\n(timeout, exit code)\n— chỉ được gọi bởi\nNewsCrawlProcessor" as NW_X
     rectangle "NewsRepository" as NW_R
+    rectangle "NewsSentimentPrecomputeService\nchuỗi sentiment/nến,\n1 lần mỗi run" as NW_PC
     NW_C --> NW_S
     NW_C --> NW_Q : trigger() / getStatus()
     NW_S --> NW_R
