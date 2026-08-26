@@ -44,18 +44,46 @@ function StrategyRow({
     strategy.version != null ? `${strategy.type} · v${strategy.version}` : `${strategy.type} · chưa có bản ghi trong DB`
 
   return (
-    <div className={`strategy-row${checked ? ' strategy-row-on' : ''}${focused ? ' strategy-row-focus' : ''}`}>
-      <label className="radio radio-square" style={{ alignItems: 'flex-start', gap: 0, marginTop: 2 }} title="Đưa vào Search">
+    <div
+      className={`strategy-row${checked ? ' strategy-row-on' : ''}${focused ? ' strategy-row-focus' : ''}`}
+      role="button"
+      tabIndex={0}
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onToggle()
+        }
+      }}
+    >
+      <label
+        className="radio radio-square"
+        style={{ alignItems: 'flex-start', gap: 0, marginTop: 2 }}
+        title="Đưa vào Search"
+        onClick={(e) => e.stopPropagation()}
+      >
         <input type="checkbox" checked={checked} onChange={onToggle} />
         <span className="dot" />
       </label>
-      <button type="button" className="strategy-row-btn" onClick={onSelect}>
+      <div className="strategy-row-btn">
         <span className="strategy-row-head">
           <strong className="strategy-name">{strategy.displayName}</strong>
           <SignalBadge label={label} kind={signalKind(signal)} />
         </span>
         <span className="text-muted strategy-desc">{strategy.description}</span>
         <span className="text-muted mono strategy-version">{versionText}</span>
+      </div>
+      <button
+        type="button"
+        className="strategy-row-detail-btn"
+        title="Xem tham số"
+        aria-label="Xem tham số"
+        onClick={(e) => {
+          e.stopPropagation()
+          onSelect()
+        }}
+      >
+        ⚙
       </button>
     </div>
   )
@@ -93,7 +121,7 @@ export default function StrategyEnginePage() {
           <div className="kicker">Strategy đơn · nhóm 1</div>
           <h4 style={{ fontSize: 17, margin: '4px 0 2px' }}>Strategy hệ thống</h4>
           <p className="text-muted" style={{ fontSize: 12, margin: '0 0 12px' }}>
-            Tick để đưa strategy vào Search; bấm vào dòng để xem tham số.
+            Bấm vào thẻ để check/uncheck đưa strategy vào Search; bấm ⚙ để xem tham số.
           </p>
           {loading ? (
             <p className="text-muted">Đang tải danh sách strategy…</p>

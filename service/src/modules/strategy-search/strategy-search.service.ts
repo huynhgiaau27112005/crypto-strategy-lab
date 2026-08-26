@@ -23,7 +23,7 @@ import {
   StrategyWeight,
   defaultEqualWeights,
 } from './domain/search.types';
-import { aiCatalogEntry, STRATEGY_CATALOG } from './catalog/strategy-catalog';
+import { aiCatalogEntry, builtinPinnedEntry, STRATEGY_CATALOG } from './catalog/strategy-catalog';
 import {
   DomainGuidedRandomGenerator,
   RunCatalog,
@@ -711,7 +711,15 @@ export class StrategySearchService implements OnApplicationBootstrap {
 
   // Builds this run's per-domain sampler catalog from the experiment's
   // actual weight rows: a built-in row contributes the fixed
-  // STRATEGY_CATALOG entry for its domain, an AI row contributes a fixed
+  // STRATEGY_CATALOG entry for its domain (the static discrete parameter
+  // pool the generator has always explored), PLUS — when the pinned
+  // `strategies` row carries a user-saved parameter version (non-empty
+  // `parameters`, i.e. someone used ParameterPanel's "Lưu tham số → tạo
+  // version mới") — a second, fixed entry that always samples exactly
+  // those saved values. Without this second entry a saved version was
+  // pure metadata: it changed which row got pinned/displayed but the
+  // generator never actually tried its parameters, so it could never
+  // appear on the Leaderboard. An AI row contributes a fixed
   // (non-randomized) member pinned to its exact strategyId/version — but
   // ONLY if its signals were successfully precomputed (aiSignalsByType has
   // its key). This is where a failed/excluded AI strategy actually stops
@@ -739,7 +747,14 @@ export class StrategySearchService implements OnApplicationBootstrap {
         );
       } else {
         const entry = STRATEGY_CATALOG[domain];
-        if (entry.type === row.name) catalog[domain].push(entry);
+        if (entry.type !== row.name) continue;
+        catalog[domain].push(entry);
+        const savedParameters = row.parameters as Record<string, number>;
+        if (savedParameters && Object.keys(savedParameters).length > 0) {
+          catalog[domain].push(
+            builtinPinnedEntry(entry.type, domain, savedParameters),
+          );
+        }
       }
     }
     return catalog;

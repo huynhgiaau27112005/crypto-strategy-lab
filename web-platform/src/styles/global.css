@@ -615,6 +615,7 @@ img { display: block; max-width: 100%; }
   gap: 10px;
   padding: 10px;
   border: 1px solid var(--color-divider);
+  cursor: pointer;
 }
 .strategy-row-on { background: color-mix(in srgb, var(--color-accent) 7%, transparent); }
 .strategy-row-focus { border-color: var(--color-accent); }
@@ -622,13 +623,25 @@ img { display: block; max-width: 100%; }
   flex: 1;
   min-width: 0;
   text-align: left;
-  cursor: pointer;
   font: inherit;
   color: var(--color-text);
   background: transparent;
   border: 0;
   padding: 0;
 }
+.strategy-row-detail-btn {
+  flex: none;
+  align-self: flex-start;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--color-divider);
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+.strategy-row-detail-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
 .strategy-row-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .strategy-name { font-family: var(--font-heading); font-size: 15px; }
 .strategy-desc { display: block; font-size: 12px; margin-top: 2px; }

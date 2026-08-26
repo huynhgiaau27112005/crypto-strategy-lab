@@ -225,6 +225,41 @@ describe('StrategySearchService', () => {
     });
   });
 
+  describe('buildRunCatalog()', () => {
+    it('only contributes the static discrete entry for a built-in row with no saved parameters', () => {
+      const { service } = buildService();
+      const catalog = (service as any).buildRunCatalog(
+        [{ row: { strategy_id: 's-ma', name: 'MA', type: 'SYSTEM', version: 1, parameters: {}, source_code: null, weight: '1' }, key: 'MA' }],
+        new Map(),
+      );
+      expect(catalog.TREND).toHaveLength(1);
+    });
+
+    it('adds a second, pinned entry sampling the exact saved parameters for a built-in row with a saved version', () => {
+      const { service } = buildService();
+      const catalog = (service as any).buildRunCatalog(
+        [
+          {
+            row: {
+              strategy_id: 's-ma',
+              name: 'MA',
+              type: 'SYSTEM',
+              version: 2,
+              parameters: { fastPeriod: 7, slowPeriod: 77 },
+              source_code: null,
+              weight: '1',
+            },
+            key: 'MA',
+          },
+        ],
+        new Map(),
+      );
+      expect(catalog.TREND).toHaveLength(2);
+      const pinnedMember = catalog.TREND[1].sample(() => 0);
+      expect(pinnedMember.parameters).toEqual({ fastPeriod: 7, slowPeriod: 77 });
+    });
+  });
+
   describe('start()', () => {
     const baseRequest: StartSearchRequest = {
       timeframe: '5m',

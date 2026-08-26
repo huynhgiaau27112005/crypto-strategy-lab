@@ -232,8 +232,9 @@ export default function ParameterPanel({ strategy }: { strategy: StrategyCatalog
       {savedNotice && <p className="text-muted parameter-note">{savedNotice}</p>}
       {saveError && <p className="text-muted parameter-note">Lỗi: {saveError}</p>}
       <p className="text-muted parameter-note">
-        Lưu tạo một version mới (không ghi đè version cũ) — chỉ áp dụng cho strategy đơn này; không
-        tự sinh lại các tổ hợp trong Leaderboard đang tham chiếu strategy này.
+        Lưu tạo một version mới (không ghi đè version cũ) — các tổ hợp đã có trên Leaderboard vẫn giữ
+        nguyên version cũ chúng đã chạy. Version mới này chỉ được đưa vào Search ở lần chạy tiếp theo
+        (tab Backtest), lúc đó nó mới được thử, backtest và so sánh lại để có thể lên Leaderboard.
       </p>
     </Panel>
   )
