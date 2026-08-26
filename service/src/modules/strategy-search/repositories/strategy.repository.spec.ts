@@ -61,6 +61,41 @@ describe('StrategyRepository', () => {
     });
   });
 
+  describe('listLatestForUser', () => {
+    it('queries DISTINCT ON (name) scoped to SYSTEM rows plus the caller\'s own rows, preferring the caller\'s row', async () => {
+      const query = jest.fn().mockResolvedValue({ rows: [] });
+      const database = { query } as unknown as DatabaseService;
+      const repository = new StrategyRepository(database);
+
+      await repository.listLatestForUser('user-1');
+
+      expect(query).toHaveBeenCalledTimes(1);
+      const [sql, params] = query.mock.calls[0];
+      expect(sql).toMatch(/DISTINCT ON \(name\)/);
+      expect(sql).toMatch(/type\s*=\s*'SYSTEM'/);
+      expect(sql).toMatch(/owner_user_id\s*=\s*\$1/);
+      expect(params).toEqual(['user-1']);
+    });
+
+    it("returns the caller's own latest saved version for a name instead of the shared SYSTEM row", async () => {
+      // Mirrors the real ORDER BY: caller's own row first (highest
+      // version), SYSTEM row last — DISTINCT ON (name) keeps only the
+      // first row per group, so this fixture asserts the repository
+      // hands back exactly that first row per name, unchanged.
+      const rows = [
+        { id: 'mine-ma-v5', name: 'MA', type: 'USER', owner_user_id: 'user-1', version: 5 },
+        { id: 'other-rsi-sys', name: 'RSI', type: 'SYSTEM', owner_user_id: null, version: 1 },
+      ];
+      const query = jest.fn().mockResolvedValue({ rows });
+      const database = { query } as unknown as DatabaseService;
+      const repository = new StrategyRepository(database);
+
+      const result = await repository.listLatestForUser('user-1');
+      expect(result).toEqual(rows);
+      expect(result.find((r) => r.name === 'MA')?.version).toBe(5);
+    });
+  });
+
   describe('createVersion', () => {
     it('inserts a new USER-owned row rather than updating the existing one', async () => {
       const clientQuery = jest

@@ -14,7 +14,7 @@ describe('StrategyPluginService', () => {
       ],
     } as never;
     const repo = {
-      listSystemStrategies: jest
+      listLatestForUser: jest
         .fn()
         .mockResolvedValue([{ id: 'uuid-ma', name: 'MA', version: 3 }]),
     } as never;
@@ -40,7 +40,7 @@ describe('StrategyPluginService', () => {
         { type: 'RSI', domain: 'MOMENTUM', displayName: 'RSI', description: 'd', parameterSchema: [] },
       ],
     } as never;
-    const repo = { listSystemStrategies: jest.fn().mockResolvedValue([]) } as never;
+    const repo = { listLatestForUser: jest.fn().mockResolvedValue([]) } as never;
 
     const aiRepo = { listLatestPerName: jest.fn().mockResolvedValue([]) } as never;
     const service = new StrategyPluginService(registry, repo, aiRepo);

@@ -23,7 +23,11 @@ export class StrategyPluginService {
   // *resolve* an "AI:<id>" type at analyze() time (see
   // strategy-registry.ts), it does not enumerate individual AI strategies.
   async listCatalog(userId: string): Promise<StrategyCatalogItem[]> {
-    const rows = await this.strategies.listSystemStrategies();
+    // This user's own latest saved version per built-in name, falling back
+    // to the shared SYSTEM row — never the bare SYSTEM-only list, or a
+    // saved version would never show up here (see
+    // StrategyRepository.listLatestForUser's doc comment).
+    const rows = await this.strategies.listLatestForUser(userId);
     const byName = new Map(rows.map((row) => [row.name, row]));
     const builtIns = this.registry.list().map((plugin) => {
       const row = byName.get(plugin.type) ?? null;

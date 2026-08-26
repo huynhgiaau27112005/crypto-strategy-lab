@@ -121,7 +121,11 @@ export class StrategySearchService implements OnApplicationBootstrap {
       );
     }
 
-    const systemStrategies = await this.strategies.listSystemStrategies();
+    // This user's own latest saved version per built-in name, falling back
+    // to the shared SYSTEM row when they have never saved one — otherwise
+    // a saved version could never be pinned by a new search of theirs (see
+    // StrategyRepository.listLatestForUser's doc comment).
+    const systemStrategies = await this.strategies.listLatestForUser(userId);
     const byName = new Map(systemStrategies.map((s) => [s.name, s]));
     const weights: StrategyWeight[] =
       request.strategyWeights ??
@@ -483,6 +487,25 @@ export class StrategySearchService implements OnApplicationBootstrap {
       if (experiment.status === 'CANCELLED') return;
       if (!(await this.experiments.setRunning(experimentId))) return;
 
+      // Force a fresh DB read here, every time: `run()` is invoked once per
+      // schedule() dispatch (a brand-new experiment via start(), or a
+      // resumed one via extend()), never a hot/polling path — so the
+      // process-local `configCache` buys nothing here and actively causes
+      // a bug across processes. extend() persists a raised iteration_limit
+      // and clears ITS OWN (API-process) configCache entry, but run() only
+      // ever executes in the separate worker process — a different
+      // in-memory Map. Once this worker's loadConfig() had cached this
+      // experimentId's config from the FIRST run, that cached entry (with
+      // the original, lower maxCandidates) would live for the rest of the
+      // worker process's uptime: extend() would raise iteration_limit in
+      // the DB, but this cached read would keep returning the stale value,
+      // so `generated < config.maxCandidates` would already be false and
+      // the loop below would never run a single extra iteration — exactly
+      // reproduced live: iteration_limit raised to 120 in the DB, but the
+      // experiment_iterations count stayed frozen at 100 and the run
+      // immediately re-completed. Deleting the cache entry first makes
+      // every run() invocation read the true, currently-persisted config.
+      this.configCache.delete(experimentId);
       const config = await this.loadConfig(experimentId);
       const experimentConfig =
         await this.experimentConfigs.findByExperimentId(experimentId);

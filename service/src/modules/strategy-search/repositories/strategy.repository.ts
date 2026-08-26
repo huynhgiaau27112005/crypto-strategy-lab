@@ -31,6 +31,32 @@ export class StrategyRepository {
   }
 
   /**
+   * One row per built-in strategy name, preferring `userId`'s own latest
+   * saved version (`type = 'USER'`, `owner_user_id = userId` — see
+   * `createVersion`'s doc comment: saving a version is always USER-owned
+   * and private, never mutates the shared SYSTEM row) and falling back to
+   * the shared SYSTEM row when this user has never saved a custom version
+   * for that name.
+   *
+   * This is the built-in counterpart of `AiStrategyRepository
+   * .listLatestPerName` — without it, a user's saved parameter version was
+   * pure metadata that nothing (the catalog display, or a new Search's
+   * pinned strategyId) ever actually picked up: `listSystemStrategies()`
+   * only ever sees `type = 'SYSTEM'` rows, so it always returns the
+   * original seed row (version 1) regardless of what the user saved.
+   */
+  async listLatestForUser(userId: string): Promise<StrategyEntity[]> {
+    const result = await this.database.query<StrategyEntity>(
+      `SELECT DISTINCT ON (name) *
+       FROM strategies
+       WHERE is_active = true AND (type = 'SYSTEM' OR owner_user_id = $1)
+       ORDER BY name, (owner_user_id = $1) DESC, version DESC`,
+      [userId],
+    );
+    return result.rows;
+  }
+
+  /**
    * Every version row for a given strategy name that `userId` is entitled to
    * see: the shared SYSTEM lineage plus any USER-owned versions this user
    * personally saved. Another user's USER-owned versions of the same name

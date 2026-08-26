@@ -92,6 +92,12 @@ describe('StrategySearchService', () => {
         { id: 'strategy-bollinger', name: 'BOLLINGER' },
         { id: 'strategy-sr', name: 'SUPPORT_RESISTANCE' },
       ]),
+      listLatestForUser: jest.fn().mockResolvedValue([
+        { id: 'strategy-ma', name: 'MA' },
+        { id: 'strategy-rsi', name: 'RSI' },
+        { id: 'strategy-bollinger', name: 'BOLLINGER' },
+        { id: 'strategy-sr', name: 'SUPPORT_RESISTANCE' },
+      ]),
     };
     const generator = {
       generate: jest.fn().mockReturnValue(candidateDefinition),
@@ -223,6 +229,63 @@ describe('StrategySearchService', () => {
       expect(mocks.backtestRuns.fail).not.toHaveBeenCalled();
       expect(mocks.backtestRuns.complete).not.toHaveBeenCalled();
     });
+
+    // Regression: reproduced live — extend() raises experiment_configs
+    // .iteration_limit in the DB (100 -> 120) and re-enqueues the job, but
+    // the SAME worker process's run() kept using a config it had cached
+    // in-process from the experiment's FIRST run (maxCandidates: 100).
+    // `generated(100) < maxCandidates(100)` was already false, so the loop
+    // body never executed a single extra iteration and the experiment
+    // immediately re-completed at the old count — exactly what the user
+    // saw ("100/110 sau khi bấm chạy thêm"). run() must always read the
+    // true, currently-persisted config, regardless of what an earlier
+    // run() call for the same experimentId cached in this same process.
+    it("reflects a raised iteration_limit on a second run() call in the same process, instead of serving the first call's cached config", async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findByIdOrThrow.mockResolvedValue({
+        id: 'exp-1',
+        user_id: 'user-1',
+        name: null,
+        status: 'PENDING',
+        started_at: null,
+        completed_at: null,
+        created_at: new Date(),
+      } as ExperimentEntity);
+
+      // First run(): experiment_configs.iteration_limit = 1, nothing
+      // generated yet -> loop runs exactly once, then completes.
+      mocks.experimentConfigs.findByExperimentId.mockResolvedValue({
+        id: 'config-1',
+        experiment_id: 'exp-1',
+        timeframe: '5m',
+        start_time: new Date(),
+        end_time: new Date(),
+        iteration_limit: 1,
+        created_at: new Date(),
+      });
+      mocks.iterations.countByExperimentId.mockResolvedValue(0);
+      await (service as any).run('exp-1');
+      expect(mocks.candidates.createForIteration).toHaveBeenCalledTimes(1);
+
+      // extend(): iteration_limit raised to 2 in the DB, one iteration
+      // already persisted — same service instance, same in-process cache
+      // as the first call.
+      mocks.experimentConfigs.findByExperimentId.mockResolvedValue({
+        id: 'config-1',
+        experiment_id: 'exp-1',
+        timeframe: '5m',
+        start_time: new Date(),
+        end_time: new Date(),
+        iteration_limit: 2,
+        created_at: new Date(),
+      });
+      mocks.iterations.countByExperimentId.mockResolvedValue(1);
+      await (service as any).run('exp-1');
+
+      // A second candidate must have been generated — proving this call
+      // read iteration_limit = 2 fresh, not the first call's cached 1.
+      expect(mocks.candidates.createForIteration).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('buildRunCatalog()', () => {
@@ -321,6 +384,51 @@ describe('StrategySearchService', () => {
       // start() enqueues the search onto the queue instead of running it
       // inline — this is the API-as-enqueuer behavior task-16 requires.
       expect(mocks.searchQueue.enqueue).toHaveBeenCalledWith('exp-1');
+    });
+
+    // Regression: listSystemStrategies() only ever returns type='SYSTEM'
+    // rows (the original seed row), so a saved parameter version — always
+    // inserted as type='USER' (StrategyRepository.createVersion's doc
+    // comment) — could never be pinned by a new search, even the saving
+    // user's own. start() must resolve built-ins via listLatestForUser(),
+    // which prefers this caller's own latest saved row.
+    it("pins the caller's own latest saved version of a built-in strategy, not the bare SYSTEM row", async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.create.mockResolvedValue({
+        id: 'exp-1',
+        user_id: 'user-1',
+        name: null,
+        status: 'PENDING',
+        started_at: null,
+        completed_at: null,
+        created_at: new Date(),
+      });
+      mocks.strategies.listLatestForUser.mockResolvedValue([
+        { id: 'strategy-ma-v5-mine', name: 'MA', type: 'USER', version: 5 },
+        { id: 'strategy-rsi', name: 'RSI', type: 'SYSTEM', version: 1 },
+        { id: 'strategy-bollinger', name: 'BOLLINGER', type: 'SYSTEM', version: 1 },
+        { id: 'strategy-sr', name: 'SUPPORT_RESISTANCE', type: 'SYSTEM', version: 1 },
+      ]);
+      const request: StartSearchRequest = {
+        ...baseRequest,
+        enabledDomains: ['TREND', 'MOMENTUM', 'VOLATILITY', 'STRUCTURE'],
+        strategyWeights: [
+          { type: 'MA', weight: 0.25 },
+          { type: 'RSI', weight: 0.25 },
+          { type: 'BOLLINGER', weight: 0.2 },
+          { type: 'SUPPORT_RESISTANCE', weight: 0.3 },
+        ],
+      };
+
+      await service.start('user-1', request);
+
+      expect(mocks.strategies.listLatestForUser).toHaveBeenCalledWith('user-1');
+      const [, , , , , , strategyWeightsArg] =
+        mocks.experimentConfigs.createWithWeights.mock.calls[0];
+      const pinnedForMa = strategyWeightsArg.find(
+        (w: { strategyId: string }) => w.strategyId === 'strategy-ma-v5-mine',
+      );
+      expect(pinnedForMa).toBeDefined();
     });
 
     // Regression for the Critical finding: maxDurationSeconds/
