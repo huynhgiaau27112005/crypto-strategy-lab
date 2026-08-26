@@ -333,7 +333,7 @@ Không cần auth. Trả `{ "status": "ok", "module": "strategy-search" }`.
 
 ### `GET /strategy-plugin/strategies`
 
-Yêu cầu `Authorization: Bearer <accessToken>` (`JwtAuthGuard`). Trả danh mục strategy — nguồn dữ liệu cho bảng weighted-voting ở frontend (`StrategySelectionContext`) và cho việc dựng `strategyWeights` khi gọi `POST /strategy-search/experiments`. `StrategyPluginService.listCatalog(userId)` **trộn 3 nguồn** (task-15 thêm nguồn thứ 3): metadata tĩnh từ từng `StrategyPlugin` đã đăng ký trong `StrategyRegistry` (`MA`, `RSI`, `BOLLINGER`, `SUPPORT_RESISTANCE`) với `id`/`version` thật đọc từ bảng `strategies` qua `StrategyRepository.listSystemStrategies()`, cộng với **danh sách strategy AI của chính user gọi request này** (`AiStrategyRepository.listLatestPerName`, chỉ version mới nhất mỗi tên, chỉ `is_active`). Một strategy AI hiển thị với `type = "AI:<strategyId>"`, `domain` đọc từ `parameters.domain` — một dòng AI lưu trước khi có domain bắt buộc (không có `parameters.domain` hợp lệ) bị **loại khỏi danh mục này** (log warning) chứ không làm hỏng cả response, vì nó không combinable trong search nếu chưa có domain.
+Yêu cầu `Authorization: Bearer <accessToken>` (`JwtAuthGuard`). Trả danh mục strategy — nguồn dữ liệu cho bảng weighted-voting ở frontend (`StrategySelectionContext`) và cho việc dựng `strategyWeights` khi gọi `POST /strategy-search/experiments`. `StrategyPluginService.listCatalog(userId)` **trộn 2 nguồn**: metadata tĩnh từ từng `StrategyPlugin` đã đăng ký trong `StrategyRegistry` (`MA`, `RSI`, `BOLLINGER`, `SUPPORT_RESISTANCE`) với `id`/`version` thật đọc từ bảng `strategies` qua `StrategyRepository.listLatestForUser(userId)` — **ưu tiên version tham số mà chính user này đã lưu** (`type='USER'`, `owner_user_id=userId`), rơi về row `SYSTEM` gốc nếu user chưa từng lưu — cộng với **danh sách strategy AI của chính user gọi request này** (`AiStrategyRepository.listLatestPerName`, chỉ version mới nhất mỗi tên, chỉ `is_active`). Một strategy AI hiển thị với `type = "AI:<strategyId>"`, `domain` đọc từ `parameters.domain` — một dòng AI lưu trước khi có domain bắt buộc (không có `parameters.domain` hợp lệ) bị **loại khỏi danh mục này** (log warning) chứ không làm hỏng cả response, vì nó không combinable trong search nếu chưa có domain.
 
 **Response `200`**
 ```json
@@ -368,43 +368,56 @@ Yêu cầu `Authorization: Bearer <accessToken>` (`JwtAuthGuard`). Trả danh m�
 
 ### `GET /strategy-plugin/strategies/:name/versions`
 
-Yêu cầu `Authorization: Bearer <accessToken>`. Trả **mọi version** của strategy `:name` (vd. `MA`) mà user hiện tại được phép xem: dòng SYSTEM dùng chung cho mọi user, cộng với các dòng USER do chính user này lưu — **không bao giờ trả về dòng USER của user khác** (`StrategyRepository.listVersions` lọc bằng `owner_user_id = $2` ngay trong WHERE, không lọc lại ở tầng service). Sắp theo `version ASC`.
+Yêu cầu `Authorization: Bearer <accessToken>`. Trả **mọi version** của strategy `:name` mà user hiện tại được phép xem: dòng SYSTEM dùng chung, cộng các dòng USER do **chính user này** lưu — không bao giờ trả dòng USER của user khác (`StrategyRepository.listVersions` lọc bằng `owner_user_id = $2` ngay trong WHERE). Sắp theo `version ASC`.
 
 **Response `200`**
 ```json
 [
   { "strategyId": "0d14...", "name": "MA", "version": 1, "type": "SYSTEM", "parameters": {}, "isMine": false, "createdAt": "2026-08-23T17:06:44.145Z" },
-  { "strategyId": "e314...", "name": "MA", "version": 2, "type": "USER", "parameters": { "fastPeriod": 15, "slowPeriod": 40 }, "isMine": true, "createdAt": "2026-08-25T02:53:43.711Z" }
+  { "strategyId": "dfc3...", "name": "MA", "version": 8, "type": "USER", "parameters": { "fastPeriod": 12, "slowPeriod": 60 }, "isMine": true, "createdAt": "2026-08-26T09:01:47.696Z" }
 ]
 ```
 
-**Lỗi:** `404` nếu `:name` không khớp plugin nào đã đăng ký trong `StrategyRegistry`; `401` nếu thiếu/sai token.
+**Lỗi:** `404` nếu `:name` không khớp plugin nào đã đăng ký; `401` nếu thiếu/sai token.
 
 ### `POST /strategy-plugin/strategies/:name/versions`
 
-Yêu cầu `Authorization: Bearer <accessToken>`. **Lưu một version tham số mới cho strategy `:name` — luôn INSERT một row mới, không bao giờ UPDATE row đã tồn tại.** Đây là bất biến quan trọng nhất của endpoint này: một Experiment đã tham chiếu version cũ (qua `candidate_strategies.strategy_id`/`experiment_config_strategies.strategy_id`) tiếp tục tham chiếu đúng row cũ, kết quả đã backtest không bị thay đổi retroactively.
+Yêu cầu `Authorization: Bearer <accessToken>`. **Luôn INSERT một row mới, không bao giờ UPDATE** — bất biến quan trọng nhất của endpoint này (`docs/about-projects/03-anti-patterns-to-avoid.md` #10 "Overwriting Strategy History"): một Experiment đã tham chiếu version cũ qua `candidate_strategies.strategy_id` tiếp tục trỏ đúng row cũ, kết quả đã backtest không bị đổi ngược.
 
-Kể cả khi `:name` đang là strategy `SYSTEM`, row mới lưu ra luôn có `type = 'USER'` và `owner_user_id` = user hiện tại — danh mục SYSTEM dùng chung cho mọi user **không bao giờ bị sửa** bởi thao tác lưu version của một user.
+Kể cả khi `:name` là strategy `SYSTEM`, row mới luôn có `type='USER'` + `owner_user_id` = user hiện tại — danh mục SYSTEM dùng chung **không bao giờ bị sửa** bởi thao tác của một user.
 
-**Request**
+**Request** — `{ "parameters": { "fastPeriod": 12, "slowPeriod": 60 } }`
+
+Validate 2 lớp: `zod` ở controller, và `StrategyPluginService.validateParameters` ở service (authoritative, so với `parameterSchema` thật đọc từ `StrategyRegistry` — từ chối key lạ/thiếu key/sai kiểu/ngoài khoảng/không đúng `step`).
+
+**Response `201`** — row vừa tạo, cùng shape 1 phần tử của `GET .../versions`.
+
+**Concurrency:** version kế tiếp = `MAX(version)+1` trong 1 transaction; nếu 2 request đua và unique index `uk_strategies_name_version` chặn (`23505`), repository **tự retry** tối đa 5 lần.
+
+**Endpoint này KHÔNG tự sinh lại Leaderboard** — đó là việc của `POST /strategy-search/experiments/:id/regenerate` ngay dưới. Tách 2 endpoint để module `StrategyPlugin` (sở hữu version) không phụ thuộc `StrategySearch` (sở hữu experiment/leaderboard). Frontend gọi lần lượt cả hai.
+
+### `POST /strategy-search/experiments/:id/regenerate`
+
+Yêu cầu `Authorization: Bearer <accessToken>`, `:id` phải thuộc user gọi. Nửa sau của "Lưu tham số → tạo version mới": sinh lại **mọi tổ hợp trên Leaderboard của experiment này có chứa strategy vừa lưu version mới**, đúng câu prototype in ra khi bấm lưu — *"hệ thống sinh lại N tổ hợp có chứa strategy này thành version tổ hợp mới trong Leaderboard"*.
+
+**Request** — `{ "strategyName": "MA" }`
+
+Hành vi (`StrategySearchService.regenerateForStrategyVersion`):
+- Lấy các candidate đang trên Leaderboard (`listTopCandidateMembers`, giới hạn đúng `topK` của experiment) — nên cascade **không bao giờ fan-out** thành hàng trăm backtest đồng bộ.
+- Gộp theo **tổ hợp** (tập tên strategy thành phần), mỗi tổ hợp sinh **đúng 1** candidate mới, seed từ candidate xếp hạng cao nhất của tổ hợp đó.
+- **Chỉ thay strategy vừa đổi** (row version mới + tham số mới); mọi thành phần khác giữ nguyên row và tham số ⇒ so sánh táo-với-táo với version tổ hợp trước.
+- Backtest ngay (đồng bộ, dùng đúng `BacktestingService.run()` mà vòng Search dùng), rồi rebuild leaderboard 1 lần ở cuối.
+- **Idempotent theo tổ hợp:** tổ hợp nào đã có candidate chạy version mới thì bỏ qua — gọi lại nhiều lần không đẻ thêm bản trùng.
+- Candidate lỗi (backtest ném lỗi, AI member precompute thất bại, domain không resolve được) bị đánh `FAILED` và **bỏ qua**, không làm hỏng cả cascade.
+
+**Response `201`**
 ```json
-{ "parameters": { "fastPeriod": 15, "slowPeriod": 40 } }
+{ "regenerated": 1, "skipped": 0, "candidateIds": ["d0bfc631-9a96-49d1-ae2f-b15f52e3a658"] }
 ```
 
-Validate 2 lớp:
-- `zod` ở tầng controller: `parameters` phải là object, mọi value phải là số hữu hạn.
-- **`StrategyPluginService.validateParameters` (tầng service, authoritative — không tin client):** so khớp với `parameterSchema` thật của plugin đọc từ `StrategyRegistry` — từ chối key lạ (`unknown`), thiếu key (`missing`), sai kiểu (`int` mà không phải số nguyên), ngoài khoảng `[min, max]`, hoặc không phải bội số của `step` tính từ `min`.
+**Trọng số của version mới:** `CandidateRepository.findDetail()` resolve weight theo **`name`** chứ không theo `strategy_id`, vì candidate do cascade sinh trỏ tới row `strategies` mới hơn row đã ghim trong `experiment_config_strategies`. Weight là thuộc tính của strategy trong Search Configuration, không phải của từng version tham số — nhờ vậy version mới kế thừa đúng trọng số mà **không phải sửa `experiment_configs`** (vốn bất biến theo `docs/database`).
 
-**Response `201`** — row vừa tạo, cùng shape với 1 phần tử của `GET .../versions`:
-```json
-{ "strategyId": "c2c2...", "name": "MA", "version": 3, "type": "USER", "parameters": { "fastPeriod": 10, "slowPeriod": 30 }, "isMine": true, "createdAt": "2026-08-25T02:55:10.000Z" }
-```
-
-**Concurrency:** version tiếp theo được tính bằng `MAX(version) + 1` tại thời điểm insert, trong 1 transaction. Nếu 2 request lưu đồng thời cùng tính ra cùng 1 số version, unique index `uk_strategies_name_version` sẽ chặn request thua ở lỗi Postgres `23505`; `StrategyRepository.createVersion` bắt lỗi này và **tự động retry** (tính lại `MAX(version)+1`, insert lại), tối đa 5 lần, thay vì để request thua thất bại.
-
-**Không nằm trong phạm vi endpoint này:** prototype UI mô tả "mỗi lần lưu tạo version mới, hệ thống sinh lại mọi tổ hợp có chứa strategy này thành version tổ hợp mới trong Leaderboard" — hành vi sinh lại tổ hợp Leaderboard **chưa được implement**. Lưu version tham số ở đây chỉ ảnh hưởng tới bảng `strategies`, không đụng tới `experiments`/`leaderboards` đã có.
-
-**Lỗi:** `400` nếu tham số sai kiểu/ngoài khoảng/thiếu/thừa key (theo `parameterSchema`); `404` nếu `:name` không khớp plugin nào đã đăng ký; `401` nếu thiếu/sai token.
+**Lỗi:** `404` nếu experiment không tồn tại/không thuộc user; `400` nếu `strategyName` rỗng hoặc không có row nào user này thấy được; `401` nếu thiếu/sai token.
 
 ## 2b. Queue Health
 

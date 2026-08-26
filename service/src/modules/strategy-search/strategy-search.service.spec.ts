@@ -83,6 +83,7 @@ describe('StrategySearchService', () => {
         iteration_id: 'iteration-1',
         created_at: new Date(),
       }),
+      listTopCandidateMembers: jest.fn().mockResolvedValue([]),
     };
     const strategies = {
       findByName: jest.fn(),
@@ -93,10 +94,10 @@ describe('StrategySearchService', () => {
         { id: 'strategy-sr', name: 'SUPPORT_RESISTANCE' },
       ]),
       listLatestForUser: jest.fn().mockResolvedValue([
-        { id: 'strategy-ma', name: 'MA' },
-        { id: 'strategy-rsi', name: 'RSI' },
-        { id: 'strategy-bollinger', name: 'BOLLINGER' },
-        { id: 'strategy-sr', name: 'SUPPORT_RESISTANCE' },
+        { id: 'strategy-ma', name: 'MA', type: 'SYSTEM', version: 1, parameters: {} },
+        { id: 'strategy-rsi', name: 'RSI', type: 'SYSTEM', version: 1, parameters: {} },
+        { id: 'strategy-bollinger', name: 'BOLLINGER', type: 'SYSTEM', version: 1, parameters: {} },
+        { id: 'strategy-sr', name: 'SUPPORT_RESISTANCE', type: 'SYSTEM', version: 1, parameters: {} },
       ]),
     };
     const generator = {
@@ -133,6 +134,9 @@ describe('StrategySearchService', () => {
     const aiPrecompute = {
       precompute: jest.fn().mockResolvedValue(new Map()),
     };
+    const strategyPlugin = {
+      validateParametersForType: jest.fn(),
+    };
 
     const mocks = {
       database,
@@ -151,6 +155,7 @@ describe('StrategySearchService', () => {
       metrics,
       aiStrategies,
       aiPrecompute,
+      strategyPlugin,
       ...overrides,
     };
 
@@ -171,6 +176,7 @@ describe('StrategySearchService', () => {
       mocks.metrics as any,
       mocks.aiStrategies as any,
       mocks.aiPrecompute as any,
+      mocks.strategyPlugin as any,
     );
 
     return { service, mocks };
@@ -289,7 +295,7 @@ describe('StrategySearchService', () => {
   });
 
   describe('buildRunCatalog()', () => {
-    it('only contributes the static discrete entry for a built-in row with no saved parameters', () => {
+    it('contributes exactly the static discrete entry for a built-in row — never reads its `parameters` column', () => {
       const { service } = buildService();
       const catalog = (service as any).buildRunCatalog(
         [{ row: { strategy_id: 's-ma', name: 'MA', type: 'SYSTEM', version: 1, parameters: {}, source_code: null, weight: '1' }, key: 'MA' }],
@@ -297,29 +303,176 @@ describe('StrategySearchService', () => {
       );
       expect(catalog.TREND).toHaveLength(1);
     });
+  });
 
-    it('adds a second, pinned entry sampling the exact saved parameters for a built-in row with a saved version', () => {
-      const { service } = buildService();
-      const catalog = (service as any).buildRunCatalog(
-        [
-          {
-            row: {
-              strategy_id: 's-ma',
-              name: 'MA',
-              type: 'SYSTEM',
-              version: 2,
-              parameters: { fastPeriod: 7, slowPeriod: 77 },
-              source_code: null,
-              weight: '1',
-            },
-            key: 'MA',
-          },
-        ],
-        new Map(),
+  describe('regenerateForStrategyVersion()', () => {
+    const experiment = { id: 'exp-1', user_id: 'user-1', search_config: {} };
+    const experimentConfigRow = {
+      id: 'config-1',
+      experiment_id: 'exp-1',
+      timeframe: '5m',
+      start_time: new Date(),
+      end_time: new Date(),
+      iteration_limit: 100,
+      created_at: new Date(),
+    };
+    const weightRows = [
+      { strategy_id: 'strategy-ma', name: 'MA', type: 'SYSTEM', version: 1, parameters: {}, source_code: null, weight: '0.5' },
+      { strategy_id: 'strategy-rsi', name: 'RSI', type: 'SYSTEM', version: 1, parameters: {}, source_code: null, weight: '0.5' },
+    ];
+    // The user just saved MA v8; RSI is untouched at its SYSTEM v1.
+    const latestForUser = [
+      { id: 'strategy-ma-v8', name: 'MA', type: 'USER', version: 8, parameters: { fastPeriod: 11, slowPeriod: 30 } },
+      { id: 'strategy-rsi', name: 'RSI', type: 'SYSTEM', version: 1, parameters: {} },
+    ];
+    function topMembers(candidateId: string, score: string) {
+      return [
+        { candidate_id: candidateId, overall_score: score, strategy_id: 'strategy-ma', name: 'MA', strategy_type: 'SYSTEM', version: 1, parameters: { fastPeriod: 20, slowPeriod: 50 } },
+        { candidate_id: candidateId, overall_score: score, strategy_id: 'strategy-rsi', name: 'RSI', strategy_type: 'SYSTEM', version: 1, parameters: { period: 14 } },
+      ];
+    }
+    function arrange(mocks: any, members: unknown[]) {
+      mocks.experiments.findOwned.mockResolvedValue(experiment);
+      mocks.experiments.findByIdOrThrow.mockResolvedValue(experiment);
+      mocks.experimentConfigs.findByExperimentId.mockResolvedValue(experimentConfigRow);
+      mocks.experimentConfigs.weightsByExperimentId.mockResolvedValue(weightRows);
+      mocks.strategies.listLatestForUser.mockResolvedValue(latestForUser);
+      mocks.candidates.listTopCandidateMembers.mockResolvedValue(members);
+      mocks.backtesting.run.mockReturnValue({ evaluation: { overallScore: 9, numberOfTrades: 5 } });
+    }
+
+    it('throws NotFoundException when the experiment is not owned by this user', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findOwned.mockResolvedValue(null);
+
+      await expect(
+        service.regenerateForStrategyVersion('exp-1', 'user-1', 'MA'),
+      ).rejects.toThrow('Experiment not found.');
+    });
+
+    it('rejects a strategy name that has no row this user can see', async () => {
+      const { service, mocks } = buildService();
+      arrange(mocks, []);
+      mocks.strategies.listLatestForUser.mockResolvedValue([]);
+
+      await expect(
+        service.regenerateForStrategyVersion('exp-1', 'user-1', 'MA'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('regenerates each affected combination onto the new version, substituting ONLY the changed strategy', async () => {
+      const { service, mocks } = buildService();
+      arrange(mocks, topMembers('cand-a', '80'));
+
+      const result = await service.regenerateForStrategyVersion('exp-1', 'user-1', 'MA');
+
+      expect(result.regenerated).toBe(1);
+      // The persisted candidate points at the NEW MA row and keeps the old RSI row.
+      const [, , persistedMembers] = mocks.candidates.createForIteration.mock.calls[0];
+      expect(persistedMembers).toEqual([
+        { strategyId: 'strategy-ma-v8', parameters: { fastPeriod: 11, slowPeriod: 30 } },
+        { strategyId: 'strategy-rsi', parameters: { period: 14 } },
+      ]);
+      // ...and the backtested definition carries the new version number.
+      const [definitionArg] = mocks.backtesting.run.mock.calls[0];
+      expect(definitionArg.members).toEqual([
+        { type: 'MA', domain: 'TREND', pluginVersion: 8, parameters: { fastPeriod: 11, slowPeriod: 30 } },
+        { type: 'RSI', domain: 'MOMENTUM', pluginVersion: 1, parameters: { period: 14 } },
+      ]);
+      expect(mocks.leaderboard.rebuildForExperiment).toHaveBeenCalled();
+    });
+
+    it('never touches the Search generator — regeneration is deliberate, not a random sample', async () => {
+      const { service, mocks } = buildService();
+      arrange(mocks, topMembers('cand-a', '80'));
+
+      await service.regenerateForStrategyVersion('exp-1', 'user-1', 'MA');
+
+      expect(mocks.generator.generate).not.toHaveBeenCalled();
+    });
+
+    it('produces ONE new candidate per distinct combination, not one per leaderboard row', async () => {
+      const { service, mocks } = buildService();
+      // Two different candidates, same MA+RSI combination, different params.
+      arrange(mocks, [...topMembers('cand-a', '80'), ...topMembers('cand-b', '70')]);
+
+      const result = await service.regenerateForStrategyVersion('exp-1', 'user-1', 'MA');
+
+      expect(result.regenerated).toBe(1);
+      expect(mocks.candidates.createForIteration).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips combinations that do not contain the changed strategy', async () => {
+      const { service, mocks } = buildService();
+      arrange(mocks, [
+        { candidate_id: 'cand-a', overall_score: '80', strategy_id: 'strategy-rsi', name: 'RSI', strategy_type: 'SYSTEM', version: 1, parameters: { period: 14 } },
+        { candidate_id: 'cand-a', overall_score: '80', strategy_id: 'strategy-bollinger', name: 'BOLLINGER', strategy_type: 'SYSTEM', version: 1, parameters: { period: 20 } },
+      ]);
+
+      const result = await service.regenerateForStrategyVersion('exp-1', 'user-1', 'MA');
+
+      expect(result.regenerated).toBe(0);
+      expect(mocks.candidates.createForIteration).not.toHaveBeenCalled();
+      expect(mocks.leaderboard.rebuildForExperiment).not.toHaveBeenCalled();
+    });
+
+    it('skips a combination already running the new version instead of duplicating it', async () => {
+      const { service, mocks } = buildService();
+      arrange(mocks, [
+        { candidate_id: 'cand-a', overall_score: '80', strategy_id: 'strategy-ma-v8', name: 'MA', strategy_type: 'USER', version: 8, parameters: { fastPeriod: 11, slowPeriod: 30 } },
+        { candidate_id: 'cand-a', overall_score: '80', strategy_id: 'strategy-rsi', name: 'RSI', strategy_type: 'SYSTEM', version: 1, parameters: { period: 14 } },
+      ]);
+
+      const result = await service.regenerateForStrategyVersion('exp-1', 'user-1', 'MA');
+
+      expect(result.regenerated).toBe(0);
+      expect(mocks.candidates.createForIteration).not.toHaveBeenCalled();
+    });
+
+    // Regression guard for a bug found only by live verification: after the
+    // first cascade the Leaderboard holds BOTH the migrated candidate (MA
+    // v8) and the older ones (MA v1) of the same combination. Skipping only
+    // the already-migrated candidate left an older one free to seed a
+    // duplicate, so every extra cascade minted another identical candidate.
+    // Idempotency has to be tracked per COMBINATION, not per candidate.
+    it('is idempotent: re-running with the Leaderboard holding both migrated and pre-migration candidates of one combination creates nothing', async () => {
+      const { service, mocks } = buildService();
+      arrange(mocks, [
+        // Already migrated (rank 1).
+        { candidate_id: 'cand-new', overall_score: '90', strategy_id: 'strategy-ma-v8', name: 'MA', strategy_type: 'USER', version: 8, parameters: { fastPeriod: 11, slowPeriod: 30 } },
+        { candidate_id: 'cand-new', overall_score: '90', strategy_id: 'strategy-rsi', name: 'RSI', strategy_type: 'SYSTEM', version: 1, parameters: { period: 14 } },
+        // Same combination, still on the old version (rank 2).
+        { candidate_id: 'cand-old', overall_score: '80', strategy_id: 'strategy-ma', name: 'MA', strategy_type: 'SYSTEM', version: 1, parameters: { fastPeriod: 20, slowPeriod: 50 } },
+        { candidate_id: 'cand-old', overall_score: '80', strategy_id: 'strategy-rsi', name: 'RSI', strategy_type: 'SYSTEM', version: 1, parameters: { period: 14 } },
+      ]);
+
+      const result = await service.regenerateForStrategyVersion('exp-1', 'user-1', 'MA');
+
+      expect(result.regenerated).toBe(0);
+      expect(mocks.candidates.createForIteration).not.toHaveBeenCalled();
+      expect(mocks.leaderboard.rebuildForExperiment).not.toHaveBeenCalled();
+    });
+
+    it('marks a failed regeneration FAILED and keeps going rather than failing the whole cascade', async () => {
+      const { service, mocks } = buildService();
+      arrange(mocks, topMembers('cand-a', '80'));
+      mocks.backtesting.run.mockImplementation(() => {
+        throw new Error('backtest exploded');
+      });
+
+      const result = await service.regenerateForStrategyVersion('exp-1', 'user-1', 'MA');
+
+      expect(result.regenerated).toBe(0);
+      expect(result.skipped).toBe(1);
+      expect(mocks.iterations.fail).toHaveBeenCalledWith(
+        'iteration-1',
+        expect.stringContaining('backtest exploded'),
       );
-      expect(catalog.TREND).toHaveLength(2);
-      const pinnedMember = catalog.TREND[1].sample(() => 0);
-      expect(pinnedMember.parameters).toEqual({ fastPeriod: 7, slowPeriod: 77 });
+      expect(mocks.backtestRuns.fail).toHaveBeenCalledWith(
+        'candidate-1',
+        expect.stringContaining('backtest exploded'),
+      );
+      expect(mocks.leaderboard.rebuildForExperiment).not.toHaveBeenCalled();
     });
   });
 
@@ -384,51 +537,6 @@ describe('StrategySearchService', () => {
       // start() enqueues the search onto the queue instead of running it
       // inline — this is the API-as-enqueuer behavior task-16 requires.
       expect(mocks.searchQueue.enqueue).toHaveBeenCalledWith('exp-1');
-    });
-
-    // Regression: listSystemStrategies() only ever returns type='SYSTEM'
-    // rows (the original seed row), so a saved parameter version — always
-    // inserted as type='USER' (StrategyRepository.createVersion's doc
-    // comment) — could never be pinned by a new search, even the saving
-    // user's own. start() must resolve built-ins via listLatestForUser(),
-    // which prefers this caller's own latest saved row.
-    it("pins the caller's own latest saved version of a built-in strategy, not the bare SYSTEM row", async () => {
-      const { service, mocks } = buildService();
-      mocks.experiments.create.mockResolvedValue({
-        id: 'exp-1',
-        user_id: 'user-1',
-        name: null,
-        status: 'PENDING',
-        started_at: null,
-        completed_at: null,
-        created_at: new Date(),
-      });
-      mocks.strategies.listLatestForUser.mockResolvedValue([
-        { id: 'strategy-ma-v5-mine', name: 'MA', type: 'USER', version: 5 },
-        { id: 'strategy-rsi', name: 'RSI', type: 'SYSTEM', version: 1 },
-        { id: 'strategy-bollinger', name: 'BOLLINGER', type: 'SYSTEM', version: 1 },
-        { id: 'strategy-sr', name: 'SUPPORT_RESISTANCE', type: 'SYSTEM', version: 1 },
-      ]);
-      const request: StartSearchRequest = {
-        ...baseRequest,
-        enabledDomains: ['TREND', 'MOMENTUM', 'VOLATILITY', 'STRUCTURE'],
-        strategyWeights: [
-          { type: 'MA', weight: 0.25 },
-          { type: 'RSI', weight: 0.25 },
-          { type: 'BOLLINGER', weight: 0.2 },
-          { type: 'SUPPORT_RESISTANCE', weight: 0.3 },
-        ],
-      };
-
-      await service.start('user-1', request);
-
-      expect(mocks.strategies.listLatestForUser).toHaveBeenCalledWith('user-1');
-      const [, , , , , , strategyWeightsArg] =
-        mocks.experimentConfigs.createWithWeights.mock.calls[0];
-      const pinnedForMa = strategyWeightsArg.find(
-        (w: { strategyId: string }) => w.strategyId === 'strategy-ma-v5-mine',
-      );
-      expect(pinnedForMa).toBeDefined();
     });
 
     // Regression for the Critical finding: maxDurationSeconds/

@@ -15,6 +15,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { extendSearchSchema } from './dto/extend-search.dto';
+import { regenerateForStrategySchema } from './dto/regenerate-for-strategy.dto';
 import { StrategySearchService } from './strategy-search.service';
 import type { StartSearchRequest } from './domain/search.types';
 
@@ -93,6 +94,36 @@ export class StrategySearchController {
       id,
       user.id,
       result.data.iterations,
+    );
+  }
+
+  // Second half of ParameterPanel's "Lưu tham số → tạo version mới": after
+  // POST /strategy-plugin/strategies/:name/versions has inserted the new
+  // immutable strategy version, this regenerates every combination on this
+  // experiment's Leaderboard that contains that strategy onto the new
+  // version — the prototype's "hệ thống sinh lại N tổ hợp có chứa strategy
+  // này thành version tổ hợp mới trong Leaderboard". Split across two
+  // endpoints so StrategyPlugin (which owns strategy versions) keeps no
+  // dependency on StrategySearch (which owns experiments/leaderboards).
+  @UseGuards(JwtAuthGuard)
+  @Post('experiments/:id/regenerate')
+  regenerate(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    const result = regenerateForStrategySchema.safeParse(body ?? {});
+    if (!result.success) {
+      throw new BadRequestException(
+        result.error.issues
+          .map((issue) => `${issue.path.join('.') || '(body)'}: ${issue.message}`)
+          .join('; '),
+      );
+    }
+    return this.strategySearchService.regenerateForStrategyVersion(
+      id,
+      user.id,
+      result.data.strategyName,
     );
   }
 

@@ -47,6 +47,7 @@ describe('CandidateRepository', () => {
         strategy_id: 's-ma',
         name: 'MA',
         strategy_type: 'SYSTEM',
+        version: 1,
         parameters: { fastPeriod: 20, slowPeriod: 50 },
         weight: '0.500000',
       },
@@ -54,6 +55,7 @@ describe('CandidateRepository', () => {
         strategy_id: 's-rsi',
         name: 'RSI',
         strategy_type: 'SYSTEM',
+        version: 3,
         parameters: { period: 14 },
         weight: '0.500000',
       },
@@ -123,6 +125,37 @@ describe('CandidateRepository', () => {
       expect(membersParams).toEqual([CANDIDATE_ID]);
     });
 
+    // Regression guard for the save-a-version cascade: a regenerated
+    // candidate points at a NEWER strategies row than the one pinned into
+    // experiment_config_strategies at start(). Resolving weight by
+    // strategy_id would INNER-JOIN those members away entirely; resolving
+    // by name lets the new version inherit its strategy's configured
+    // weight. If someone "simplifies" this back to an id join, the
+    // regenerated combos silently lose members from every detail view.
+    it('resolves member weight by strategy NAME, so a newer version row still inherits its configured weight', async () => {
+      const query = makeQueryMock();
+      const database = { query } as unknown as DatabaseService;
+      const repository = new CandidateRepository(database);
+
+      await repository.findDetail(CANDIDATE_ID, USER_ID, 1, 20);
+
+      const [membersSql] = query.mock.calls[1];
+      expect(membersSql).toMatch(/cfg_s\.name\s*=\s*s\.name/);
+      expect(membersSql).not.toMatch(/ecs\.strategy_id\s*=\s*cs\.strategy_id/);
+    });
+
+    it('selects each member\'s own pinned s.version, not the catalog\'s current version', async () => {
+      const query = makeQueryMock();
+      const database = { query } as unknown as DatabaseService;
+      const repository = new CandidateRepository(database);
+
+      const detail = await repository.findDetail(CANDIDATE_ID, USER_ID, 1, 20);
+
+      expect(query.mock.calls[1][0]).toContain('s.version');
+      // Fixture pins MA at v1 and RSI at v3 — both must survive verbatim.
+      expect(detail?.members.map((m) => m.version)).toEqual([1, 3]);
+    });
+
     it('pages trades by LIMIT pageSize OFFSET (page-1)*pageSize, ordered by entry_time ASC, and counts the total separately', async () => {
       const query = makeQueryMock();
       const database = { query } as unknown as DatabaseService;
@@ -155,8 +188,8 @@ describe('CandidateRepository', () => {
         experimentId: 'exp-1',
         iterationNumber: 3,
         members: [
-          { type: 'MA', parameters: { fastPeriod: 20, slowPeriod: 50 }, weight: 0.5 },
-          { type: 'RSI', parameters: { period: 14 }, weight: 0.5 },
+          { type: 'MA', version: 1, parameters: { fastPeriod: 20, slowPeriod: 50 }, weight: 0.5 },
+          { type: 'RSI', version: 3, parameters: { period: 14 }, weight: 0.5 },
         ],
         evaluation: {
           totalReturn: 18.24,
@@ -198,6 +231,7 @@ describe('CandidateRepository', () => {
               strategy_id: 'ai-1',
               name: 'MyMomentumBot',
               strategy_type: 'AI_GENERATED',
+              version: 2,
               parameters: {},
               weight: '0.500000',
             },
@@ -210,7 +244,7 @@ describe('CandidateRepository', () => {
 
       const detail = await repository.findDetail(CANDIDATE_ID, USER_ID, 1, 20);
 
-      expect(detail?.members).toEqual([{ type: 'AI:ai-1', parameters: {}, weight: 0.5 }]);
+      expect(detail?.members).toEqual([{ type: 'AI:ai-1', version: 2, parameters: {}, weight: 0.5 }]);
     });
 
     it('returns evaluation: null when the candidate has no evaluation row yet', async () => {

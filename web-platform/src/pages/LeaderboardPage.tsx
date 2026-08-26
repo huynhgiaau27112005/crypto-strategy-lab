@@ -41,7 +41,8 @@ function signalKind(signal: StrategySignal | null): SignalKind {
 export default function LeaderboardPage() {
   const navigate = useNavigate()
   const { strategies } = useStrategySelection()
-  const { experimentId, setBacktestCandidateId, lastConfig, setLastConfig } = useExperimentContext()
+  const { experimentId, setBacktestCandidateId, lastConfig, setLastConfig, leaderboardRev } =
+    useExperimentContext()
 
   // Bumped after a successful POST .../extend to restart useExperiment's
   // polling in place (see the hook's `resumeToken` doc) — the experiment
@@ -53,7 +54,14 @@ export default function LeaderboardPage() {
   // persisted `topK` (matches leaderboards.top_k / leaderboard_entries)
   // instead of a client-side guess that goes stale across sessions/reloads
   // (lastConfig is in-memory React state, not persisted).
-  const { rows, details } = useTopCandidates(experimentId, undefined, expStatus?.completed ?? 0)
+  // `leaderboardRev` folds in out-of-tab changes (ParameterPanel's
+  // save-a-version cascade adds regenerated candidates from another tab),
+  // so those appear here without a manual reload.
+  const { rows, details } = useTopCandidates(
+    experimentId,
+    undefined,
+    (expStatus?.completed ?? 0) + leaderboardRev * 100000,
+  )
 
   const [extending, setExtending] = useState(false)
   const [extendError, setExtendError] = useState<string | null>(null)
@@ -255,13 +263,21 @@ export default function LeaderboardPage() {
                   )}`
                 : 'Chọn một tổ hợp ở bảng phía trên.'}
             </p>
+            {selectedDetail ? (
+              <p className="text-muted" style={{ fontSize: 11, margin: '0 0 8px' }}>
+                Version = bản ghi plugin được gắn cho candidate này lúc search sinh ra nó. Tham số là
+                giá trị search thật sự thử trên candidate này (Domain-guided Random Search tự chọn
+                trong không gian tham số) — không nhất thiết trùng với tham số mặc định lưu sẵn trong
+                version đó.
+              </p>
+            ) : null}
             <table className="table">
               <thead>
                 <tr>
                   <th>Strategy đơn</th>
                   <th style={{ width: 120 }}>Nguồn</th>
                   <th style={{ width: 92 }}>Version</th>
-                  <th>Tham số của version này</th>
+                  <th>Tham số candidate này dùng</th>
                   <th style={{ width: 80, textAlign: 'right' }}>Trọng số</th>
                   <th style={{ width: 86, textAlign: 'right' }}>Tín hiệu</th>
                 </tr>
@@ -284,7 +300,12 @@ export default function LeaderboardPage() {
                           <span className="tag tag-neutral">Hệ thống</span>
                         </td>
                         <td className="mono" style={{ fontSize: 13 }}>
-                          {catalog?.version != null ? `v${catalog.version}` : '—'}
+                          {/* The version pinned to THIS candidate at generation time —
+                              never the live catalog's version, which can have moved on
+                              since (a bug: this cell used to show catalog?.version,
+                              silently relabeling every old candidate as "using" whatever
+                              version is newest right now). */}
+                          v{m.version}
                         </td>
                         <td className="text-muted mono" style={{ fontSize: 12 }}>
                           {Object.entries(m.parameters)

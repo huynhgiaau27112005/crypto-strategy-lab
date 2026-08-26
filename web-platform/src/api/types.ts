@@ -191,6 +191,23 @@ export interface SaveStrategyVersionRequest {
 }
 
 /**
+ * Body of `POST /strategy-search/experiments/:id/regenerate` — the cascade
+ * half of ParameterPanel's save. After a new strategy version is saved,
+ * every combination on that experiment's Leaderboard containing the named
+ * strategy is regenerated onto the new version.
+ */
+export interface RegenerateForStrategyRequest {
+  strategyName: string
+}
+
+/** Response of `POST /strategy-search/experiments/:id/regenerate`. */
+export interface RegenerateForStrategyResponse {
+  regenerated: number
+  skipped: number
+  candidateIds: string[]
+}
+
+/**
  * One entry of `POST /strategy-search/experiments`'s `strategyWeights`
  * field — artifacts/api-contract.md §2. Weights do NOT need to sum to 1 —
  * the composite score is a weighted average (divided by Σ weights), so any
@@ -289,6 +306,13 @@ export interface TopCandidateRow {
 /** One member of `GET /strategy-search/candidates/:id`'s `members` array. */
 export interface CandidateMemberDto {
   type: SearchStrategyType
+  /** The exact `strategies` row version this candidate's member was pinned
+   * to when it was generated — NOT necessarily the currently-latest version
+   * for this type (that moves on every time the user saves a new parameter
+   * version). Never substitute the live catalog's version here: doing so
+   * silently relabels every older candidate as "using" whatever version is
+   * newest right now. */
+  version: number
   parameters: Record<string, number>
   weight: number
 }

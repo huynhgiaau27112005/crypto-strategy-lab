@@ -15,6 +15,15 @@ export interface CandidateStrategyInput {
 
 export interface CandidateDetailMember {
   type: SearchStrategyType;
+  /** The exact `strategies` row version this candidate's member was pinned
+   * to at experiment-creation time — NOT the currently-latest version for
+   * this name/user (that can have moved on since). Rendering the live
+   * catalog's version here instead was a real, user-reported bug: after a
+   * strategy gained newer saved versions, every OLD candidate's detail
+   * view started claiming it too used the newest version, when it had
+   * actually run against whatever version was pinned back when it was
+   * generated. */
+  version: number;
   parameters: Record<string, number>;
   weight: number;
 }
@@ -70,10 +79,21 @@ interface CandidateHeaderRow {
   overall_score: string | null;
 }
 
+export interface TopCandidateMemberRow {
+  candidate_id: string;
+  overall_score: string | null;
+  strategy_id: string;
+  name: string;
+  strategy_type: 'SYSTEM' | 'USER' | 'AI_GENERATED';
+  version: number;
+  parameters: Record<string, number>;
+}
+
 interface CandidateMemberRow {
   strategy_id: string;
   name: string;
   strategy_type: 'SYSTEM' | 'USER' | 'AI_GENERATED';
+  version: number;
   parameters: Record<string, number>;
   weight: string;
 }
@@ -117,6 +137,49 @@ export class CandidateRepository {
     return candidate;
   }
 
+  /**
+   * The members of the experiment's currently top-ranked candidates (same
+   * ordering/filter `ExperimentRepository.top` uses, so this sees exactly
+   * what the Leaderboard shows), flattened one row per member.
+   *
+   * Used by `StrategySearchService.regenerateForStrategyVersion` to answer
+   * "which combinations on this Leaderboard contain the strategy the user
+   * just saved a new parameter version for" — the prototype's `saveParams`
+   * cascade ("hệ thống sinh lại N tổ hợp có chứa strategy này thành version
+   * tổ hợp mới trong Leaderboard"). Scoped to the owning user, and bounded
+   * by `limit` so the cascade can never fan out past the Leaderboard's own
+   * Top-K.
+   */
+  async listTopCandidateMembers(
+    experimentId: string,
+    userId: string,
+    minimumTrades: number,
+    limit: number,
+  ): Promise<TopCandidateMemberRow[]> {
+    const result = await this.database.query<TopCandidateMemberRow>(
+      `WITH top_candidates AS (
+         SELECT c.id AS candidate_id, ev.overall_score
+         FROM experiments e
+         JOIN experiment_iterations ei ON ei.experiment_id = e.id
+         JOIN candidates c ON c.iteration_id = ei.id
+         JOIN backtest_runs br ON br.candidate_id = c.id AND br.status = 'COMPLETED'
+         JOIN evaluations ev ON ev.backtest_run_id = br.id
+         WHERE e.id = $1 AND e.user_id = $2 AND ev.number_of_trades >= $3
+         ORDER BY ev.overall_score DESC NULLS LAST
+         LIMIT $4
+       )
+       SELECT tc.candidate_id, tc.overall_score,
+              s.id AS strategy_id, s.name, s.type AS strategy_type, s.version,
+              cs.parameters
+       FROM top_candidates tc
+       JOIN candidate_strategies cs ON cs.candidate_id = tc.candidate_id
+       JOIN strategies s ON s.id = cs.strategy_id
+       ORDER BY tc.overall_score DESC NULLS LAST, s.name ASC`,
+      [experimentId, userId, minimumTrades, limit],
+    );
+    return result.rows;
+  }
+
   // Returns one candidate's full detail (header + evaluation + weighted
   // members + a page of trades), scoped to the requesting user via
   // candidates -> experiment_iterations -> experiments.user_id, so a bare
@@ -148,14 +211,27 @@ export class CandidateRepository {
     if (!header) return null;
 
     const membersResult = await this.database.query<CandidateMemberRow>(
-      `SELECT s.id AS strategy_id, s.name, s.type AS strategy_type, cs.parameters, ecs.weight
+      // Weight resolves by strategy NAME, not by the exact `strategies` row
+      // id. Weight is a property of the Search Configuration and is set per
+      // strategy in the weighted-voting table ("MA has weight 0.25"), not
+      // per parameter version — and a candidate created by the
+      // save-a-new-version cascade
+      // (StrategySearchService.regenerateForStrategyVersion) deliberately
+      // points at a NEWER `strategies` row than the one pinned into
+      // experiment_config_strategies at start(). Joining on strategy_id
+      // would silently drop exactly those members from every detail view
+      // (INNER JOIN, no match); joining on name lets the new version
+      // inherit its strategy's configured weight while leaving the
+      // immutable experiment_configs untouched.
+      `SELECT s.id AS strategy_id, s.name, s.type AS strategy_type, s.version, cs.parameters, ecs.weight
        FROM candidate_strategies cs
        JOIN strategies s ON s.id = cs.strategy_id
        JOIN candidates c ON c.id = cs.candidate_id
        JOIN experiment_iterations ei ON ei.id = c.iteration_id
        JOIN experiment_configs ec ON ec.experiment_id = ei.experiment_id
        JOIN experiment_config_strategies ecs
-         ON ecs.experiment_config_id = ec.id AND ecs.strategy_id = cs.strategy_id
+         ON ecs.experiment_config_id = ec.id
+       JOIN strategies cfg_s ON cfg_s.id = ecs.strategy_id AND cfg_s.name = s.name
        WHERE cs.candidate_id = $1`,
       [candidateId],
     );
@@ -187,6 +263,7 @@ export class CandidateRepository {
       iterationNumber: header.iteration_number,
       members: membersResult.rows.map((row) => ({
         type: strategyTypeKey({ id: row.strategy_id, name: row.name, type: row.strategy_type }),
+        version: row.version,
         parameters: row.parameters,
         weight: Number(row.weight),
       })),

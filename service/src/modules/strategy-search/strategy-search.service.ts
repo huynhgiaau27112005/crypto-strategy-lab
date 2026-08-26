@@ -23,7 +23,7 @@ import {
   StrategyWeight,
   defaultEqualWeights,
 } from './domain/search.types';
-import { aiCatalogEntry, builtinPinnedEntry, STRATEGY_CATALOG } from './catalog/strategy-catalog';
+import { aiCatalogEntry, STRATEGY_CATALOG } from './catalog/strategy-catalog';
 import {
   DomainGuidedRandomGenerator,
   RunCatalog,
@@ -31,6 +31,7 @@ import {
 import {
   CandidateDetail,
   CandidateRepository,
+  TopCandidateMemberRow,
 } from './repositories/candidate.repository';
 import {
   ExperimentConfigRepository,
@@ -57,6 +58,8 @@ import { AiStrategySignalPrecomputeService } from '../ai-strategy/ai-strategy-si
 import { CandleInput } from '../ai-strategy/ai-strategy.types';
 import { CandleEntity } from '../../database/types';
 import { StrategySignal } from '../strategy-engine/strategy.types';
+import { StrategyPluginService } from '../strategy-plugin/strategy-plugin.service';
+import { CandidateDefinition } from './domain/search.types';
 
 @Injectable()
 export class StrategySearchService implements OnApplicationBootstrap {
@@ -84,6 +87,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
     private readonly metrics: MetricsService,
     private readonly aiStrategies: AiStrategyRepository,
     private readonly aiPrecompute: AiStrategySignalPrecomputeService,
+    private readonly strategyPlugin: StrategyPluginService,
   ) {}
 
   // Runs in BOTH the API process and the worker process (StrategySearchModule
@@ -121,10 +125,14 @@ export class StrategySearchService implements OnApplicationBootstrap {
       );
     }
 
-    // This user's own latest saved version per built-in name, falling back
-    // to the shared SYSTEM row when they have never saved one — otherwise
-    // a saved version could never be pinned by a new search of theirs (see
-    // StrategyRepository.listLatestForUser's doc comment).
+    // Pin each built-in to the version that is current FOR THIS USER right
+    // now (their own latest saved parameter version, else the shared SYSTEM
+    // row) — not the bare SYSTEM row. about-projects/02-architecture-goals
+    // §9: "Every experiment remains traceable to the exact strategy
+    // version, parameters, dataset, timeframe, result, and trades that
+    // produced it." Pinning happens once, here, and the pinned rows are
+    // immutable, so a later saved version never rewrites what this
+    // experiment ran against.
     const systemStrategies = await this.strategies.listLatestForUser(userId);
     const byName = new Map(systemStrategies.map((s) => [s.name, s]));
     const weights: StrategyWeight[] =
@@ -234,6 +242,291 @@ export class StrategySearchService implements OnApplicationBootstrap {
 
     await this.schedule(experimentId);
     return { id: experimentId, status: 'PENDING' as const };
+  }
+
+  /**
+   * The cascade behind ParameterPanel's "Lưu tham số → tạo version mới".
+   *
+   * The approved prototype's `saveParams()` does two things: it appends a
+   * new parameter version to that ONE strategy's own history
+   * (`hist[strategyId]`), and it then reports "hệ thống sinh lại N tổ hợp
+   * có chứa strategy này thành version tổ hợp mới trong Leaderboard". The
+   * first half is `StrategyPluginService.saveVersion` (a new immutable
+   * `strategies` row). This method is the second half.
+   *
+   * Two-level versioning, straight from the prototype's own state logic:
+   *   verNum(id) = base + histOf(id).length - 1          // strategy đơn
+   *   bump       = Σ (histOf(memberId).length - 1)       // over members
+   *   comboVer   = 1 + bump + comboRev                   // candidate
+   * A candidate's version is DERIVED from the versions of its member
+   * strategies — which is exactly what `candidate_strategies.strategy_id`
+   * already encodes, since each row points at one specific, immutable
+   * `strategies` version row. So nothing new needs storing: bumping a
+   * member's version and re-running the combination IS the new combo
+   * version, and about-projects #36's "Experiment #122 must remain linked
+   * to the exact version it used" holds because the OLD candidates keep
+   * pointing at the OLD rows, untouched.
+   *
+   * Scope and bound: only the combinations currently ON the Leaderboard
+   * are regenerated (`listTopCandidateMembers`, limited to the
+   * experiment's own Top-K), matching the prototype where `combos()` IS
+   * the leaderboard. Candidates are grouped by their set of member
+   * strategy names and one new candidate is produced per distinct
+   * combination, seeded from that combination's best-ranked current
+   * candidate — so this can never fan out into hundreds of synchronous
+   * backtests, and re-saving does not pile up near-duplicate rows.
+   */
+  async regenerateForStrategyVersion(
+    experimentId: string,
+    userId: string,
+    strategyName: string,
+  ): Promise<{ regenerated: number; skipped: number; candidateIds: string[] }> {
+    const experiment = await this.experiments.findOwned(experimentId, userId);
+    if (!experiment) throw new NotFoundException('Experiment not found.');
+
+    const experimentConfig =
+      await this.experimentConfigs.findByExperimentId(experimentId);
+    if (!experimentConfig) throw new Error('Experiment config not found.');
+
+    // The version row to switch affected combinations onto: this user's
+    // current latest for that name (the one saveVersion just inserted).
+    const latestForUser = await this.strategies.listLatestForUser(userId);
+    const newRow = latestForUser.find((row) => row.name === strategyName);
+    if (!newRow) {
+      throw new BadRequestException(`Unknown strategy "${strategyName}".`);
+    }
+
+    const config = await this.loadConfig(experimentId);
+    const memberRows = await this.candidates.listTopCandidateMembers(
+      experimentId,
+      userId,
+      config.minimumTrades,
+      config.topK,
+    );
+
+    // Rebuild per-candidate member lists, preserving the score ordering the
+    // query returned so the first candidate seen for a combination is its
+    // best-ranked one.
+    const byCandidate = new Map<string, TopCandidateMemberRow[]>();
+    for (const row of memberRows) {
+      const list = byCandidate.get(row.candidate_id);
+      if (list) list.push(row);
+      else byCandidate.set(row.candidate_id, [row]);
+    }
+
+    const combinationKey = (members: TopCandidateMemberRow[]): string =>
+      members
+        .map((m) => m.name)
+        .sort()
+        .join('+');
+
+    // First pass: which combinations are ALREADY represented on the
+    // Leaderboard by a candidate running the new version? Tracking this per
+    // COMBINATION (not per candidate) is what makes the cascade idempotent.
+    // Skipping merely the already-migrated candidate is not enough: the
+    // older, still-on-the-previous-version candidates of that same
+    // combination are also on the Leaderboard, and one of them would then
+    // seed a duplicate regeneration on every subsequent save. Reproduced
+    // live — a second cascade with no new version saved created a second
+    // identical MA v8 + RSI v1 candidate.
+    const alreadyOnNewVersion = new Set<string>();
+    for (const members of byCandidate.values()) {
+      const target = members.find((m) => m.name === strategyName);
+      if (target && target.version === newRow.version) {
+        alreadyOnNewVersion.add(combinationKey(members));
+      }
+    }
+
+    // Second pass: one entry per distinct combination that contains the
+    // changed strategy and is not already covered, seeded from its
+    // best-ranked candidate (the query returns members in score order).
+    const combinations = new Map<string, TopCandidateMemberRow[]>();
+    for (const members of byCandidate.values()) {
+      if (!members.some((m) => m.name === strategyName)) continue;
+      const key = combinationKey(members);
+      if (alreadyOnNewVersion.has(key)) continue;
+      if (!combinations.has(key)) combinations.set(key, members);
+    }
+
+    if (combinations.size === 0) {
+      return { regenerated: 0, skipped: 0, candidateIds: [] };
+    }
+
+    const candles = await this.experiments.candles(
+      experimentConfig.timeframe,
+      experimentConfig.start_time,
+      experimentConfig.end_time,
+    );
+
+    // Weights come from the experiment's immutable config, keyed by
+    // strategy NAME — the new version row is a different `strategies` row
+    // than the pinned one, but weight belongs to the strategy, not to a
+    // parameter version (see CandidateRepository.findDetail's join note).
+    const weightRows =
+      await this.experimentConfigs.weightsByExperimentId(experimentId);
+    const weightByName = new Map(
+      weightRows.map((row) => [row.name, Number(row.weight)]),
+    );
+
+    const newParameters = (newRow.parameters ?? {}) as Record<string, number>;
+    const created: string[] = [];
+    let skipped = 0;
+
+    for (const members of combinations.values()) {
+      // Substitute ONLY the changed strategy: its new version row and its
+      // newly saved parameters. Every other member keeps the exact row and
+      // parameters its seed candidate ran with, so the comparison against
+      // the previous combo version stays apples-to-apples.
+      const substituted = members.map((member) =>
+        member.name === strategyName
+          ? {
+              strategyId: newRow.id,
+              name: newRow.name,
+              type: newRow.type,
+              version: newRow.version,
+              parameters: newParameters,
+            }
+          : {
+              strategyId: member.strategy_id,
+              name: member.name,
+              type: member.strategy_type,
+              version: member.version,
+              parameters: member.parameters,
+            },
+      );
+
+      const keyed = substituted.map((member) => ({
+        member,
+        key: strategyTypeKey({
+          id: member.strategyId,
+          name: member.name,
+          type: member.type,
+        }),
+      }));
+
+      const weightMap = Object.fromEntries(
+        keyed.map(({ member, key }) => [key, weightByName.get(member.name) ?? 0]),
+      ) as StrategyWeightMap;
+
+      const aiMembers = keyed.filter(({ member }) => member.type === 'AI_GENERATED');
+      let aiSignals = new Map<SearchStrategyType, StrategySignal[]>();
+      if (aiMembers.length > 0) {
+        const sourceByKey = await this.aiSourceCodeByKey(aiMembers, userId);
+        const precomputed = await this.aiPrecompute.precompute(
+          sourceByKey,
+          this.toAiCandleInput(candles),
+        );
+        aiSignals = precomputed as unknown as Map<SearchStrategyType, StrategySignal[]>;
+        // An AI member whose signals could not be precomputed cannot be
+        // backtested — skip this whole combination rather than scoring it
+        // with a silently-missing member (same failure isolation as run()).
+        if (aiMembers.some(({ key }) => !precomputed.has(key))) {
+          skipped += 1;
+          continue;
+        }
+      }
+
+      let candidateDefinition: CandidateDefinition;
+      try {
+        candidateDefinition = {
+          schemaVersion: 1,
+          combination: {
+            method: 'WEIGHTED_VOTE',
+            buyThreshold: 0.3,
+            sellThreshold: -0.3,
+          },
+          members: keyed.map(({ member, key }) => ({
+            type: key,
+            domain: strategyRowDomain({
+              name: member.name,
+              type: member.type,
+              parameters: member.parameters,
+            }),
+            pluginVersion: member.version,
+            parameters: member.parameters,
+          })),
+        };
+      } catch (error) {
+        // A member with no resolvable domain (legacy AI row) — skip the
+        // combination, never fail the whole cascade.
+        this.logger.warn(
+          `Skipping regeneration of a combination: ${this.errorMessage(error)}`,
+        );
+        skipped += 1;
+        continue;
+      }
+
+      const iteration = await this.database.withTransaction((client) =>
+        this.iterations.createNext(client, experimentId),
+      );
+      let candidateEntity: Awaited<
+        ReturnType<CandidateRepository['createForIteration']>
+      >;
+      try {
+        candidateEntity = await this.database.withTransaction((client) =>
+          this.candidates.createForIteration(
+            client,
+            iteration.id,
+            keyed.map(({ member }) => ({
+              strategyId: member.strategyId,
+              parameters: member.parameters,
+            })),
+          ),
+        );
+      } catch (error) {
+        await this.iterations.fail(iteration.id, this.errorMessage(error));
+        skipped += 1;
+        continue;
+      }
+      this.metrics.candidatesGeneratedTotal.inc();
+
+      try {
+        const result = this.backtesting.run(
+          candidateDefinition,
+          candles,
+          weightMap,
+          aiSignals,
+        );
+        this.metrics.backtestsRunTotal.inc();
+        await this.backtestRuns.complete(candidateEntity.id, result);
+        await this.iterations.complete(iteration.id);
+        created.push(candidateEntity.id);
+      } catch (error) {
+        await this.iterations.fail(iteration.id, this.errorMessage(error));
+        await this.backtestRuns.fail(candidateEntity.id, this.errorMessage(error));
+        this.logger.warn(
+          `Regenerated candidate ${candidateEntity.id} failed to backtest: ${this.errorMessage(error)}`,
+        );
+        skipped += 1;
+      }
+    }
+
+    if (created.length > 0) {
+      await this.leaderboard.rebuildForExperiment(
+        experimentId,
+        config.topK,
+        config.minimumTrades,
+      );
+    }
+
+    return { regenerated: created.length, skipped, candidateIds: created };
+  }
+
+  // Loads the Python source for each AI member being regenerated, keyed the
+  // same way AiStrategySignalPrecomputeService expects.
+  private async aiSourceCodeByKey(
+    aiMembers: Array<{ member: { strategyId: string }; key: SearchStrategyType }>,
+    userId: string,
+  ): Promise<Array<{ key: string; sourceCode: string }>> {
+    const out: Array<{ key: string; sourceCode: string }> = [];
+    for (const { member, key } of aiMembers) {
+      const row = await this.aiStrategies.findOwnedActiveById(
+        member.strategyId,
+        userId,
+      );
+      out.push({ key, sourceCode: row?.source_code ?? '' });
+    }
+    return out;
   }
 
   async getStatus(experimentId: string, userId: string) {
@@ -734,20 +1027,20 @@ export class StrategySearchService implements OnApplicationBootstrap {
 
   // Builds this run's per-domain sampler catalog from the experiment's
   // actual weight rows: a built-in row contributes the fixed
-  // STRATEGY_CATALOG entry for its domain (the static discrete parameter
-  // pool the generator has always explored), PLUS — when the pinned
-  // `strategies` row carries a user-saved parameter version (non-empty
-  // `parameters`, i.e. someone used ParameterPanel's "Lưu tham số → tạo
-  // version mới") — a second, fixed entry that always samples exactly
-  // those saved values. Without this second entry a saved version was
-  // pure metadata: it changed which row got pinned/displayed but the
-  // generator never actually tried its parameters, so it could never
-  // appear on the Leaderboard. An AI row contributes a fixed
+  // STRATEGY_CATALOG entry for its domain, an AI row contributes a fixed
   // (non-randomized) member pinned to its exact strategyId/version — but
   // ONLY if its signals were successfully precomputed (aiSignalsByType has
   // its key). This is where a failed/excluded AI strategy actually stops
   // participating in candidate generation for this run — see run()'s
   // "Precompute" comment.
+  //
+  // Deliberately does NOT read a built-in row's `parameters` column — a
+  // built-in `strategies` row never carries a meaningful custom parameter
+  // set (see artifacts/decisions.md §10): the Strategy/Candidate split
+  // means "which numeric parameters to try" is Candidate's job, generated
+  // fresh per iteration, never baked into the Strategy row itself. A
+  // deliberately-chosen parameter set for one specific combo is instead a
+  // manual Candidate (see createManualCandidate()), not a Search input.
   private buildRunCatalog(
     keyedRows: Array<{ row: WeightRow; key: SearchStrategyType }>,
     aiSignalsByType: Map<string, StrategySignal[]>,
@@ -770,14 +1063,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
         );
       } else {
         const entry = STRATEGY_CATALOG[domain];
-        if (entry.type !== row.name) continue;
-        catalog[domain].push(entry);
-        const savedParameters = row.parameters as Record<string, number>;
-        if (savedParameters && Object.keys(savedParameters).length > 0) {
-          catalog[domain].push(
-            builtinPinnedEntry(entry.type, domain, savedParameters),
-          );
-        }
+        if (entry.type === row.name) catalog[domain].push(entry);
       }
     }
     return catalog;

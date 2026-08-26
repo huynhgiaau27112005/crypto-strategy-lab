@@ -102,7 +102,7 @@ package "Modular Monolith — NestJS (service/)" as BE {
     rectangle "StrategyRegistry\nregister/get/list/has\n(built-ins) +\nresolve(type) (task-15:\nbuilt-in hoặc AI adapter)" as PLUG_REG
     rectangle "MaPlugin\nRsiPlugin\nBollingerPlugin\nSupportResistancePlugin" as PLUG_P
     rectangle "AiStrategyPluginAdapter\n(task-15) 1 instance dùng\nchung cho MỌI \"AI:<id>\";\nanalyze() = tra bảng\nSignalContext.aiSignals" as PLUG_AI
-    rectangle "StrategyPluginController\n/strategy-plugin/strategies\n/strategies/:name/versions" as PLUG_C
+    rectangle "StrategyPluginController\nGET /strategy-plugin/strategies\nGET|POST /strategies/:name/versions" as PLUG_C
     rectangle "StrategyPluginService\nlistCatalog(userId)\n= built-ins + AI rows\ncủa user (task-15)" as PLUG_S
     PLUG_P --> PLUG_REG : onModuleInit\nregister()
     PLUG_AI --> PLUG_REG : onModuleInit\nregisterAiAdapter()
@@ -123,7 +123,7 @@ package "Modular Monolith — NestJS (service/)" as BE {
   }
 
   package "Strategy Search Module" as M_SEARCH {
-    rectangle "StrategySearchController\nPOST /experiments\nGET /experiments/:id[/top]\nPOST /:id/cancel /:id/extend\nGET /candidates/:id" as SR_C
+    rectangle "StrategySearchController\nPOST /experiments\nGET /experiments/:id[/top]\nPOST /:id/cancel /:id/extend\nPOST /:id/regenerate\nGET /candidates/:id" as SR_C
     rectangle "StrategySearchService\nstart/extend → schedule()\n= enqueue only.\nrun() = search loop thật,\nchỉ được gọi bởi SearchProcessor.\ngetTop() = cache theo\nleaderboard version (task-17)" as SR_S
     rectangle "SearchQueueService\nenqueue (scan+coalesce\nby experimentId)\ncancelIfQueued" as SR_Q
     rectangle "DomainGuidedRandomGenerator" as SR_GEN

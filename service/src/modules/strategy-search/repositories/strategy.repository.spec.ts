@@ -77,6 +77,25 @@ describe('StrategyRepository', () => {
       expect(params).toEqual(['user-1']);
     });
 
+    // Regression guard for a bug found only by live verification: a SYSTEM
+    // row has owner_user_id NULL, so `owner_user_id = $1` evaluates to NULL
+    // (not false), and Postgres sorts NULLs FIRST under DESC — putting the
+    // shared SYSTEM row ahead of the caller's own newer version, so
+    // DISTINCT ON kept exactly the wrong row and a freshly saved version
+    // never showed up. The ordering key must be NULL-safe.
+    it('orders the ownership tiebreaker NULL-safely so a SYSTEM row cannot outrank the caller\'s own version', async () => {
+      const query = jest.fn().mockResolvedValue({ rows: [] });
+      const database = { query } as unknown as DatabaseService;
+      const repository = new StrategyRepository(database);
+
+      await repository.listLatestForUser('user-1');
+
+      const [sql] = query.mock.calls[0];
+      expect(sql).toMatch(/COALESCE\(\s*owner_user_id\s*=\s*\$1\s*,\s*false\s*\)\s*DESC/);
+      // A bare `owner_user_id = $1 DESC` is the NULL-unsafe form this guards against.
+      expect(sql).not.toMatch(/ORDER BY[^;]*[^E)]\s owner_user_id\s*=\s*\$1\s+DESC/);
+    });
+
     it("returns the caller's own latest saved version for a name instead of the shared SYSTEM row", async () => {
       // Mirrors the real ORDER BY: caller's own row first (highest
       // version), SYSTEM row last — DISTINCT ON (name) keeps only the

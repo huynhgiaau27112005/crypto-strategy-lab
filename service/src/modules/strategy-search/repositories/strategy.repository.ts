@@ -47,10 +47,16 @@ export class StrategyRepository {
    */
   async listLatestForUser(userId: string): Promise<StrategyEntity[]> {
     const result = await this.database.query<StrategyEntity>(
+      // COALESCE(..., false), not a bare `owner_user_id = $1`: a SYSTEM row
+      // has owner_user_id NULL, so that comparison yields NULL rather than
+      // false, and Postgres sorts NULLs FIRST under `DESC` — which put the
+      // shared SYSTEM row ahead of the caller's own newer version and made
+      // DISTINCT ON pick exactly the wrong row. Verified live: after saving
+      // MA v8, the catalog still reported v1 until this was coalesced.
       `SELECT DISTINCT ON (name) *
        FROM strategies
        WHERE is_active = true AND (type = 'SYSTEM' OR owner_user_id = $1)
-       ORDER BY name, (owner_user_id = $1) DESC, version DESC`,
+       ORDER BY name, COALESCE(owner_user_id = $1, false) DESC, version DESC`,
       [userId],
     );
     return result.rows;

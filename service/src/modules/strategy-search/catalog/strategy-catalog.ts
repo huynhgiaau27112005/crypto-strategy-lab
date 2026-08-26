@@ -73,31 +73,6 @@ export const STRATEGY_CATALOG: Record<StrategyDomain, CatalogEntry> = {
 };
 
 /**
- * A built-in strategy's user-saved parameter version as a second,
- * additional catalog entry for its domain (pushed alongside the static
- * `STRATEGY_CATALOG[domain]` entry in `buildRunCatalog`, never replacing
- * it — see that call site's comment). Unlike the static entry's `sample`,
- * this one is fixed: it always returns the exact parameters the user
- * saved via `StrategyPluginService.saveVersion` (ParameterPanel's "Lưu
- * tham số → tạo version mới"), so that saving a new version actually
- * gives it a real chance to be generated, backtested, and ranked on the
- * Leaderboard by a future search — before this, a saved version only
- * changed which `strategies` row got pinned/displayed and never affected
- * what parameters `DomainGuidedRandomGenerator` actually tried.
- */
-export function builtinPinnedEntry(
-  type: SearchStrategyType,
-  domain: StrategyDomain,
-  parameters: Record<string, number>,
-): CatalogEntry {
-  return {
-    type,
-    domain,
-    sample: () => member(type, domain, parameters),
-  };
-}
-
-/**
  * One AI strategy's catalog entry — unlike a built-in's, its "sample" is
  * fixed (no numeric parameter space to explore; the source code is what
  * it is for this pinned version), so it always returns the same member

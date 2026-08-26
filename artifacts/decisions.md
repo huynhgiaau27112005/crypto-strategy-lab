@@ -117,3 +117,49 @@ Kết luận: `docs/database/design.dbml` là bản thiết kế **sau này, ch�
 - Cập nhật dòng ghi chú dưới form giải thích rõ lý do bị vô hiệu hoá (chưa có model phí/slippage trong `BacktestingService`), trỏ về mục quyết định này.
 
 **Nợ kỹ thuật còn lại:** nếu sau này muốn làm (a), cần: (1) thêm cột lưu 3 tham số này (ví dụ mở rộng `experiments.search_config` JSONB — đã dùng cho mục 1 ở decision liên quan tới search config cross-process), (2) áp dụng trong `BacktestingService` tại điểm khớp entry/exit, (3) viết test pin cứng thứ tự: phí cao hơn ⇒ lợi nhuận ròng thấp hơn nghiêm ngặt trên cùng input.
+
+### 10. Version tham số cho strategy đơn + cascade sinh lại tổ hợp (sửa 3 lần, 2 lần đầu sai hướng)
+
+**Phát hiện ban đầu (người dùng báo):** Lưu nhiều version tham số MA (v2, v3, v5, v7...) qua `ParameterPanel` nhưng catalog và version ghim vào Search mới **luôn hiện v1**. Nguyên nhân đúng: `createVersion()` ghi version mới với `type='USER'`, còn `listCatalog()`/`start()` chỉ đọc `WHERE type='SYSTEM'`.
+
+**Lần sửa 1 (sai):** thêm `listLatestForUser()` + nhét tham số đã lưu vào vòng random của `DomainGuidedRandomGenerator`. Sai vì nó biến tham số đã lưu thành một ứng viên *ngẫu nhiên* — không phải thứ người dùng chủ động chọn.
+
+**Lần sửa 2 (sai nặng hơn):** đọc `docs/database/Schema explanation.md` mục 5 ("database KHÔNG được chứa MA20/MA30/MA50 như strategy riêng") rồi **xoá sạch versioning cho strategy đơn**, thay bằng "tạo 1 Candidate thủ công". Sai vì đọc mục 5 rộng hơn phạm vi thật của nó, và vì bỏ qua 4 nguồn binding nói ngược lại:
+
+| Nguồn | Nói gì |
+|---|---|
+| `about-projects/03-anti-patterns-to-avoid.md` #10 | *"Do not overwrite old strategy results when **parameters or logic change**. A changed strategy receives a **new version**"* — tham số đổi ⇒ strategy nhận version mới |
+| `about-projects/02-architecture-goals.md` §9 | *"Every strategy definition has a version"*; experiment truy được *"exact strategy **version, parameters**"* (2 thứ tách biệt) |
+| `modules-specification/strategy-plugin.md` §12 | *"a registered strategy has a version… the registry must not make an updated implementation indistinguishable from the earlier version"* |
+| `docs/ui-prototype` (đọc cả JS mock) | input tham số **editable**, dropdown "Version tham số", nút "Dùng lại tham số version này", `hist[strategyId]` = lịch sử version **theo từng strategy** |
+
+**Chốt (lần 3, đang dùng) — mô hình version 2 cấp, lấy thẳng từ state logic của prototype:**
+
+```
+verNum(id) = base + histOf(id).length - 1        // cấp 1: version của strategy đơn
+bump       = Σ (histOf(memberId).length - 1)     // cộng trên các thành phần
+comboVer   = 1 + bump + comboRev                 // cấp 2: version của tổ hợp (Candidate)
+```
+
+Version của Candidate **dẫn xuất** từ version các strategy thành phần — nên **không cần lưu thêm cột nào**: `candidate_strategies.strategy_id` vốn đã trỏ tới đúng một row `strategies` bất biến, tức đã mã hoá sẵn version tổ hợp.
+
+Cụ thể đã build:
+
+1. **Strategy đơn có version thật.** `POST /strategy-plugin/strategies/:name/versions` luôn INSERT row mới (`type='USER'`, owner-scoped), không bao giờ UPDATE. `GET .../versions` trả lineage SYSTEM + version của chính user (không thấy của user khác).
+2. **`start()` ghim version hiện tại của user** (`listLatestForUser`) — thoả §9 "traceable to the exact strategy version".
+3. **Cascade** `POST /strategy-search/experiments/:id/regenerate` — đúng câu prototype in ra khi bấm lưu: *"hệ thống sinh lại N tổ hợp có chứa strategy này thành version tổ hợp mới trong Leaderboard"*. Chỉ thay **duy nhất** strategy vừa đổi, các thành phần khác giữ nguyên row + tham số ⇒ so sánh táo-với-táo. Giới hạn trong Top-K hiện tại và gộp theo *tổ hợp* (1 candidate mới / 1 tổ hợp) nên không bao giờ fan-out thành hàng trăm backtest đồng bộ.
+4. **Search vẫn random tham số như cũ** — đúng vai trò "tự động khám phá không gian tham số" (about-projects #16/#17). Hai cơ chế song song, không giẫm chân nhau: Search dò tự động, user ghim thủ công.
+5. **Candidate cũ bất biến** — vẫn trỏ row version cũ, kết quả cũ vẫn tái lập được (#36 "Experiment #122 must remain linked to the exact version it used", anti-pattern #10).
+
+**Điểm kỹ thuật đáng lưu (weight):** candidate do cascade sinh trỏ tới row `strategies` **mới hơn** row đã ghim trong `experiment_config_strategies`. `CandidateRepository.findDetail()` vì thế resolve weight theo **`name`** thay vì `strategy_id` — weight là thuộc tính của strategy trong Search Configuration ("MA có trọng số 0.25"), không phải của từng version tham số. Giữ join theo id sẽ khiến INNER JOIN **âm thầm nuốt mất** đúng các member đó khỏi mọi màn hình chi tiết, và tránh được việc phải sửa `experiment_configs` (vốn bất biến theo `docs/database`).
+
+**Cột "Version" ở Leaderboard:** trước đây hiển thị `catalog?.version` (version mới nhất *hiện tại*) chứ không phải version candidate thực sự đã chạy — mọi candidate cũ tự nhiên bị gán nhãn version mới nhất. `findDetail()` giờ SELECT thêm `s.version`, frontend đọc `m.version`.
+
+**2 bug chỉ lộ ra khi verify live (unit test mock DB không bắt được):**
+- `listLatestForUser` sắp xếp bằng `owner_user_id = $1 DESC`. Row SYSTEM có `owner_user_id` NULL ⇒ biểu thức ra **NULL chứ không phải false**, mà Postgres `DESC` mặc định **NULLS FIRST** ⇒ row SYSTEM luôn thắng row của chính user. Lưu MA v8 xong catalog vẫn báo v1. Sửa bằng `COALESCE(owner_user_id = $1, false) DESC`.
+- Cascade **không idempotent**: sau lần 1, Leaderboard chứa cả candidate đã migrate (MA v8) lẫn candidate cũ (MA v1) của *cùng một tổ hợp*. Chỉ skip candidate đã migrate là chưa đủ — candidate cũ vẫn seed một bản trùng, nên mỗi lần bấm lưu lại đẻ thêm 1 candidate y hệt. Sửa bằng cách theo dõi idempotency theo **tổ hợp**, không theo candidate.
+
+**Bài học:** (1) "test xanh" không đồng nghĩa đúng kiến trúc — phải đối chiếu **tất cả** nguồn binding, không chỉ nguồn vừa đọc; (2) một câu trong tài liệu tham khảo (mục 5 của `Schema explanation.md`, nói về tham số do *Search Engine* sinh) không được phép suy rộng thành quy tắc phủ định 4 nguồn binding khác; (3) unit test mock DB không thay thế được verify chạy thật — cả 2 bug cuối chỉ lộ khi gọi API thật trên Postgres thật.
+
+**Bằng chứng verify live (API + psql thật):** experiment 12 candidate → lưu MA v8 → cascade `regenerated:1` → candidate mới rank #1 (74.494 > 74.357 cũ), members = `MA v8 {12,60}` + `RSI v1` giữ nguyên; candidate cũ vẫn `MA v1 {20,50}` không đổi; cascade lại 2 lần → `regenerated:0`; lưu MA v9 → cascade → `regenerated:1`. Leaderboard cuối chứa đồng thời candidate ở v1, v8, v9.
+

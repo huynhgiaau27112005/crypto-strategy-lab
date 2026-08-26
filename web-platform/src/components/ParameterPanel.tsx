@@ -2,7 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import BlueprintCorners from './BlueprintCorners'
 import Panel from './Panel'
 import { useStrategyVersions } from '../hooks/useStrategyVersions'
-import type { ParameterSpec, StrategyCatalogItem, StrategyVersionSummary } from '../api/types'
+import { apiFetch, ApiError } from '../api/client'
+import { useExperimentContext } from '../state/ExperimentContext'
+import type {
+  ParameterSpec,
+  RegenerateForStrategyResponse,
+  StrategyCatalogItem,
+  StrategyVersionSummary,
+} from '../api/types'
 import { isAiStrategyType } from '../api/types'
 
 function defaultValues(schema: ParameterSpec[]): Record<string, number> {
@@ -40,6 +47,8 @@ function validate(schema: ParameterSpec[], values: Record<string, number>): Reco
 
 export default function ParameterPanel({ strategy }: { strategy: StrategyCatalogItem | null }) {
   const { versions, loading, error, saving, saveError, saveVersion } = useStrategyVersions(strategy?.type ?? null)
+  const { experimentId, bumpLeaderboard } = useExperimentContext()
+  const [cascading, setCascading] = useState(false)
 
   // The version currently shown in the picker — defaults to the latest
   // (highest-version) row once versions load. `null` = nothing loaded yet /
@@ -103,12 +112,50 @@ export default function ParameterPanel({ strategy }: { strategy: StrategyCatalog
   async function handleSave() {
     if (!strategy || hasErrors) return
     setSavedNotice(null)
+    let created: StrategyVersionSummary
     try {
-      const created = await saveVersion(formValues)
-      setSelectedVersionId(created.strategyId)
-      setSavedNotice(`Đã lưu version ${created.version}.`)
+      created = await saveVersion(formValues)
     } catch {
       // saveError from the hook already carries the message; nothing more to do here.
+      return
+    }
+    setSelectedVersionId(created.strategyId)
+
+    // Second half of the approved prototype's `saveParams`: regenerate every
+    // combination on the current experiment's Leaderboard that contains this
+    // strategy, onto the version just saved. Skipped (with an explicit note)
+    // when no experiment is open — there is no Leaderboard to cascade into
+    // yet, and the saved version still applies to the next Search.
+    if (!experimentId) {
+      setSavedNotice(
+        `Đã lưu version ${created.version}. Chưa có experiment nào đang mở nên chưa sinh lại tổ hợp — ` +
+          'version này sẽ được dùng khi bạn chạy Search & Backtest ở tab Backtest.',
+      )
+      return
+    }
+
+    setCascading(true)
+    try {
+      const res = await apiFetch<RegenerateForStrategyResponse>(
+        `/strategy-search/experiments/${experimentId}/regenerate`,
+        { method: 'POST', body: JSON.stringify({ strategyName: strategy.type }) },
+      )
+      bumpLeaderboard()
+      setSavedNotice(
+        res.regenerated > 0
+          ? `Đã lưu version ${created.version}. Hệ thống sinh lại ${res.regenerated} tổ hợp có chứa ` +
+            `${strategy.displayName} thành version tổ hợp mới trong Leaderboard.`
+          : `Đã lưu version ${created.version}. Không có tổ hợp nào trên Leaderboard chứa ` +
+            `${strategy.displayName} để sinh lại.`,
+      )
+    } catch (err) {
+      setSavedNotice(
+        `Đã lưu version ${created.version}, nhưng sinh lại tổ hợp thất bại: ` +
+          (err instanceof ApiError || err instanceof Error ? err.message : 'lỗi không xác định') +
+          '.',
+      )
+    } finally {
+      setCascading(false)
     }
   }
 
@@ -221,11 +268,15 @@ export default function ParameterPanel({ strategy }: { strategy: StrategyCatalog
           type="button"
           className="btn btn-primary btn-block blueprint"
           style={{ height: 38, marginTop: 12 }}
-          disabled={hasErrors || saving}
+          disabled={hasErrors || saving || cascading}
           onClick={handleSave}
         >
           <BlueprintCorners />
-          {saving ? 'Đang lưu…' : 'Lưu tham số → tạo version mới'}
+          {saving
+            ? 'Đang lưu…'
+            : cascading
+              ? 'Đang sinh lại tổ hợp…'
+              : 'Lưu tham số → tạo version mới'}
         </button>
       )}
 
