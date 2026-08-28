@@ -1,16 +1,31 @@
 import * as path from 'path';
+import { resolvePythonBin } from '../../../common/python-bin';
 
-// The Python interpreter must never be hard-coded to one machine's absolute
-// path (env var makes it configurable per environment). The default matches
-// the venv set up in workers/news/README.md, resolved relative to the
-// service's own working directory (`service/`, per its `start`/`start:dev`
-// scripts) rather than __dirname, so it survives being run from either
-// `src` (ts-node) or `dist` (compiled) without pointing at the wrong tree.
+export const NEWS_PYTHON_BIN_ENV = 'NEWS_WORKER_PYTHON_BIN';
+
+/**
+ * The Python interpreter used to run the news crawler.
+ *
+ * Resolution (see `resolvePythonBin`, shared with the AI-strategy worker):
+ * `NEWS_WORKER_PYTHON_BIN` -> the worker's own venv **if it exists**, in this
+ * platform's layout -> a PATH interpreter. Paths are resolved relative to the
+ * service's working directory (`service/`, per its `start`/`start:dev`
+ * scripts) rather than __dirname, so it survives being run from either `src`
+ * (ts-node) or `dist` (compiled) without pointing at the wrong tree.
+ *
+ * This used to return `<repo>/workers/news/.venv/bin/python` unconditionally:
+ * POSIX-only, and for a venv that need not exist — so on Windows every crawl
+ * failed with `spawn ... ENOENT` before the worker started.
+ *
+ * NOTE: unlike the AI-strategy worker (standard library only), this worker
+ * needs real third-party packages (feedparser, beautifulsoup4, psycopg2, ...).
+ * A PATH interpreter without them fails at import time, which is why
+ * `workers/news/README.md` still describes creating the venv — the fallback
+ * keeps the failure honest and readable, it does not conjure dependencies.
+ */
 export function getPythonBin(): string {
-  return (
-    process.env.NEWS_WORKER_PYTHON_BIN ??
-    path.resolve(process.cwd(), '..', 'workers', 'news', '.venv', 'bin', 'python')
-  );
+  const venvDir = path.resolve(process.cwd(), '..', 'workers', 'news', '.venv');
+  return resolvePythonBin(venvDir, process.env[NEWS_PYTHON_BIN_ENV]);
 }
 
 export function getWorkerDir(): string {

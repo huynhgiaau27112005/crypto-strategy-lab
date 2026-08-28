@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -23,17 +24,47 @@ export class MarketDataController {
   // MarketDataService.getCandles (assertAllowedInterval/assertValidLimit)
   // so an invalid value 400s here instead of reaching Binance or the
   // Redis cache key unfiltered.
+  // `startTime`/`endTime` (ISO 8601 or epoch ms) are optional: omitted,
+  // this returns the latest `limit` closed candles as before. Supplied, it
+  // returns that exact historical window — which is what the Backtest tab
+  // needs so its result chart shows the candles the run was configured
+  // over instead of "whatever is latest right now".
   @Get('candles')
   async getCandles(
     @Query('symbol') symbol: string,
     @Query('interval') interval: string,
     @Query('limit') limit = '500',
+    @Query('startTime') startTime?: string,
+    @Query('endTime') endTime?: string,
   ) {
+    const from = this.parseTime(startTime, 'startTime');
+    const to = this.parseTime(endTime, 'endTime');
+    if (from && to && from >= to) {
+      throw new BadRequestException('startTime must be before endTime.');
+    }
     return this.marketDataService.getCandles(
       symbol,
       interval,
       limit,
+      from,
+      to,
     );
+  }
+
+  private parseTime(value: string | undefined, field: string): Date | undefined {
+    if (value === undefined || value === '') return undefined;
+    // Accept both epoch milliseconds and ISO 8601 so the query string can
+    // carry whichever form the caller already has.
+    const asNumber = Number(value);
+    const parsed = Number.isFinite(asNumber)
+      ? new Date(asNumber)
+      : new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException(
+        `${field} must be an ISO 8601 timestamp or epoch milliseconds.`,
+      );
+    }
+    return parsed;
   }
 
   // Writes into the shared, non-user-scoped `candles` table that every

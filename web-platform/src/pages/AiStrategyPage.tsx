@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import BlueprintCorners from '../components/BlueprintCorners'
 import { useStrategySelection } from '../state/StrategySelectionContext'
+import { useAiProvider } from '../hooks/useAiProvider'
 import { useAiStrategy } from '../hooks/useAiStrategy'
 import type { AiValidationCheckDto, StrategyDomain } from '../api/types'
 
@@ -29,6 +30,7 @@ function fmtDate(iso: string): string {
 export default function AiStrategyPage() {
   const navigate = useNavigate()
   const ai = useAiStrategy()
+  const provider = useAiProvider()
 
   const generating = ai.generateState === 'generating'
   const { refreshStrategies } = useStrategySelection()
@@ -45,6 +47,21 @@ export default function AiStrategyPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* A missing/misnamed API key is otherwise invisible: the fallback
+          provider returns canned but perfectly valid Python. */}
+      {provider && !provider.live ? (
+        <div className="ai-provider-warning blueprint">
+          <BlueprintCorners />
+          <strong>Đang dùng provider giả lập ({provider.name}).</strong> Code Python sinh ra là code
+          mẫu cố định, KHÔNG gọi LLM thật — vì backend chưa đọc được API key nào. Đặt{' '}
+          <code>OPENAI_API_KEY</code> hoặc <code>OPENROUTER_API_KEY</code> trong{' '}
+          <code>service/.env</code> rồi khởi động lại API (xem <code>service/.env.example</code>).
+        </div>
+      ) : provider ? (
+        <div className="text-muted mono" style={{ fontSize: 11 }}>
+          LLM: {provider.name} · {provider.model} · key từ {provider.keySource}
+        </div>
+      ) : null}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start' }}>
         {/* Left column: prompt + samples */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0, flex: '1 1 300px', maxWidth: 380 }}>

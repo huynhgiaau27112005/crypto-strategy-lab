@@ -18,6 +18,8 @@ describe('BacktestRunRepository', () => {
         quantity: 1,
         profitLoss: 10,
         returnPercent: 8,
+        stopLoss: null,
+        takeProfit: null,
         exitReason: 'SIGNAL',
       },
       {
@@ -29,6 +31,8 @@ describe('BacktestRunRepository', () => {
         quantity: 2,
         profitLoss: -20,
         returnPercent: -5,
+        stopLoss: null,
+        takeProfit: null,
         exitReason: 'END_OF_BACKTEST',
       },
     ],
@@ -99,6 +103,7 @@ describe('BacktestRunRepository', () => {
       const trade2Params = calls[3][1] as unknown[];
 
       // columns: backtest_run_id, side, entry_time, entry_price, quantity,
+      //          stop_loss, take_profit,
       //          exit_time, exit_price, profit_loss, return_pct, exit_reason
       expect(trade1Params).toEqual([
         RUN_ID,
@@ -106,6 +111,8 @@ describe('BacktestRunRepository', () => {
         result.trades[0].entryTime,
         100,
         1,
+        null,
+        null,
         result.trades[0].exitTime,
         110,
         10, // profit_loss <- profitLoss
@@ -119,6 +126,8 @@ describe('BacktestRunRepository', () => {
         result.trades[1].entryTime,
         200,
         2,
+        null,
+        null,
         result.trades[1].exitTime,
         190,
         -20, // profit_loss <- profitLoss

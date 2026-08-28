@@ -84,6 +84,7 @@ describe('StrategySearchService', () => {
         created_at: new Date(),
       }),
       listTopCandidateMembers: jest.fn().mockResolvedValue([]),
+      rankedSummaries: jest.fn().mockResolvedValue([]),
     };
     const strategies = {
       findByName: jest.fn(),
@@ -141,9 +142,17 @@ describe('StrategySearchService', () => {
     const sentimentPrecompute = {
       precompute: jest.fn().mockResolvedValue([]),
     };
+    // start() backfills candles before checking the window; the mock makes
+    // that a no-op so these tests stay offline and deterministic.
+    const marketData = {
+      ensureCandleCoverage: jest
+        .fn()
+        .mockResolvedValue({ interval: '5m', before: 0, after: 0, fetched: 0 }),
+    };
 
     const mocks = {
       database,
+      marketData,
       experiments,
       experimentConfigs,
       iterations,
@@ -166,6 +175,7 @@ describe('StrategySearchService', () => {
 
     const service = new StrategySearchService(
       mocks.database as any,
+      mocks.marketData as any,
       mocks.experiments as any,
       mocks.experimentConfigs as any,
       mocks.iterations as any,
@@ -660,6 +670,15 @@ describe('StrategySearchService', () => {
           maxNoImprovement: 5,
           topK: 3,
           minimumTrades: 0,
+          // The cost model travels with the rest of the config so a
+          // re-run in any process reproduces the same trades.
+          costs: {
+            initialCapital: 10_000,
+            transactionCostPct: 0,
+            slippageBps: 0,
+            stopLossPct: null,
+            takeProfitPct: null,
+          },
         },
       );
 

@@ -227,3 +227,389 @@ Backend vốn đúng (`listLatestPerName` scope theo owner + active). Gap ở FE
 
 **Bài học lớn nhất của đợt này:** tôi từng tuyên bố "hoàn thành 100%" dựa trên **test xanh**, trong khi người dùng phát hiện 5 lỗi thật chỉ bằng cách bấm thử từng màn hình. Test xanh chứng minh code làm đúng điều test mô tả — **không** chứng minh sản phẩm dùng được. Cả 4 bug ở mục trên đều lọt qua toàn bộ suite và chỉ lộ ra khi gọi API thật trên Postgres thật.
 
+
+
+## Đợt sửa theo tab "Flow" trong Google Doc (2026-08-28)
+
+Nguồn: danh sách lỗi người dùng ghi trong tab **Flow** của doc `Plan`, phân mức
+theo màu (đỏ = ảnh hưởng cao, xanh dương = ảnh hưởng thấp, tím = cần bàn).
+Ba mục tím đã được chốt trước khi code (xem cuối mục này).
+
+### F1. Chart không realtime — chỉ nhảy khi nến đóng (đỏ)
+
+**Phát hiện:** `MarketDataGateway.handleUpstreamUpdate` có `if (!update.isClosed) return;`
+— nến đang hình thành bị **chặn cả broadcast lẫn ghi DB**. Hệ quả: chart chỉ đổi
+một lần mỗi timeframe, nên pane 1m trễ tới 1 phút và pane 4h trễ tới 4 giờ so với
+thị trường. Đây đúng là lỗi requirement: WebSocket có mà luồng vẫn tĩnh.
+
+**Chốt:** tách hai quyết định vốn bị gộp làm một.
+- **Broadcast** cả nến chưa đóng, kèm cờ `closed: boolean`. FE `upsertCandle` vẽ đè
+  lên đúng cây nến đang chạy → chart chuyển động liên tục trong một interval.
+- **Ghi DB** vẫn chỉ nến đã đóng. Ghi nến đang chạy sẽ làm hỏng chuỗi lịch sử mà
+  mọi backtest đọc — lý do ban đầu của `if` này vẫn đúng, chỉ là nó đã bị áp cho
+  cả đường broadcast một cách không cần thiết.
+
+### F2. "Recent ticks" lấy theo phút, không phải tick (đỏ)
+
+**Phát hiện:** panel này được nuôi bằng chính stream **nến**, nên về bản chất
+không thể có quá 1 dòng mỗi timeframe. Một "tick" là một lệnh khớp, không phải
+một cây nến.
+
+**Chốt:** thêm stream `btcusdt@aggTrade` (`BinanceClient.streamTrades`) và room
+`trades` trên gateway (`subscribeTrades` / `unsubscribeTrades`, cùng cơ chế đếm
+tham chiếu như stream nến). FE dùng hook riêng `useMarketTicks`. Tách room riêng
+để client chỉ vẽ chart không phải gánh luồng trade vốn dày hơn nhiều.
+
+Refactor kèm theo: `streamCandles`/`streamTrades` dùng chung `openStream()` —
+một chỗ duy nhất giữ logic reconnect backoff, thay vì nhân bản.
+
+### F3. Thiếu cột Volume dưới mỗi chart (đỏ)
+
+`CandleChart` thêm `HistogramSeries` trên price scale riêng (`scaleMargins.top =
+0.78`) để độ lớn volume không bóp méo thang giá. Màu theo chiều nến.
+
+### F4. Nút bật/tắt realtime + chọn đường MA (tím → đã chốt)
+
+**Chốt (người dùng chọn):** có nút bật/tắt realtime, và mặc định đổi sang bộ MA
+của Binance — **MA7 / MA25 / MA99** thay cho MA(20) tự xuất hiện. Người dùng
+tick chọn đường nào muốn hiện (7/20/25/50/99). Tắt realtime = giữ nguyên nến đã
+có, không nhận update (không xoá dữ liệu — đóng băng, không reset).
+
+`CandleChart` nay nhận `maOverlays: MaOverlay[]` thay vì `maPeriod` cố định, và
+thêm/bớt series theo period nên đổi lựa chọn không phải dựng lại chart.
+
+### F5. Backtest yêu cầu tối thiểu 202 nến / thiếu nến quá khứ 1h, 4h (đỏ)
+
+**Phát hiện:** `minimumCandles()` là **đúng** (MA cần 202 nến lookback). Lỗi thật
+nằm ở chỗ **không có đường nào tự nạp nến vào DB** ngoài script thủ công
+`npm run seed:candles`. Khoảng ngày người dùng chọn hợp lệ; database mới là thứ
+trống — nặng nhất ở 1h/4h vì một tháng lịch sử chỉ vài trăm dòng.
+
+**Chốt:** `MarketDataService.ensureCandleCoverage()` — đếm nến trong cửa sổ, nếu
+thiếu thì phân trang kéo từ Binance (`startTime`+`endTime`) và upsert. Gọi ngay
+đầu `StrategySearchService.start()`, với ngưỡng
+`max(minimumCandles, MIN_CANDLES_PER_TIMEFRAME = 300)` — đúng yêu cầu "mỗi
+timeframe phải có ít nhất trên 300 candle trong database".
+
+Ràng buộc an toàn: idempotent (upsert theo `(timeframe, timestamp)`), chặn số
+trang tối đa (`MAX_BACKFILL_PAGES = 30`) và có `sleep` giữa các trang — không vi
+phạm anti-pattern "uncontrolled infinite loop"; Binance lỗi thì chỉ log cảnh báo
+rồi rơi xuống check nến như cũ, không biến sự cố mạng thành 500.
+
+Thông báo lỗi khi vẫn thiếu nến được viết lại bằng tiếng Việt, nói rõ phải làm gì
+(chọn khoảng ngày dài hơn hoặc timeframe nhỏ hơn) thay vì câu tiếng Anh về
+"dataset".
+
+### F6. Chart kết quả backtest không lấy nến đúng thời gian trong config (đỏ)
+
+**Phát hiện:** vòng backtest **luôn** chạy đúng cửa sổ config
+(`ExperimentRepository.candles(timeframe, start, end)`). Chỗ sai là **chart mục
+02**: `useCandleHistory` gọi `GET /market-data/candles` vốn chỉ có
+`symbol/interval/limit`, nên vẽ 300 nến mới nhất bất kể khoảng ngày đã backtest —
+lệnh liệt kê bên dưới thường nằm hoàn toàn ngoài vùng giá đang hiển thị.
+
+**Chốt:** thêm `startTime`/`endTime` (ISO 8601 hoặc epoch ms) cho
+`GET /market-data/candles`, truyền xuống Binance klines. Cache key gồm cả 2 mốc
+để một request có cửa sổ không bao giờ bị phục vụ bằng response "mới nhất".
+
+### F7. Vốn / Transaction cost / Slippage bị vô hiệu hoá (xanh dương) — **đảo quyết định số 9**
+
+Quyết định số 9 ở trên chọn phương án (b): bỏ tuyên bố, khoá 3 ô input, vì lúc đó
+không đủ thời gian viết test kiểm chứng công thức tài chính. Người dùng yêu cầu
+sửa, nên đợt này làm **phương án (a)** như chính mục "Nợ kỹ thuật còn lại" của
+quyết định 9 đã phác:
+
+- `BacktestCosts` (`initialCapital`, `transactionCostPct`, `slippageBps`,
+  `stopLossPct`, `takeProfitPct`) lưu trong `experiments.search_config` JSONB —
+  đúng chỗ quyết định 9 đề xuất, **không cần migration**.
+- Áp dụng tại điểm khớp lệnh: mua khớp **cao hơn** giá tham chiếu, bán khớp
+  **thấp hơn** (slippage theo bps); phí tính trên notional **cả hai chiều**;
+  `notional = capital / (1 + fee)` để phí vào lệnh trừ từ chính vốn cấp cho lệnh.
+- Mặc định `DEFAULT_BACKTEST_COSTS` = **y hệt hành vi cũ** (vốn 10 000, phí 0,
+  slippage 0, không SL/TP) nên mọi caller/test cũ và mọi experiment đã lưu
+  trước đây tái lập đúng kết quả cũ.
+- Test: `backtesting-costs.spec.ts` pin cứng từng quy tắc (vốn, phí hai chiều,
+  hướng slippage, SL/TP, ưu tiên SL).
+
+Nhãn `Net Profit` đổi lại thành "Đã trừ phí & slippage theo config" — nay là sự
+thật.
+
+### F8. Thiếu điểm Take Profit / Stop Loss trên chart kết quả (xanh dương)
+
+Trước đây `SimulatedTrade` **không hề có** khái niệm SL/TP: cột Stoploss /
+TakeProfit trong bảng luôn `—`, và 2 cột `stop_loss`/`take_profit` trong bảng
+`trades` chưa bao giờ được ghi (enum `exit_reason` thì đã có sẵn `STOP_LOSS`,
+`TAKE_PROFIT` từ migration 003).
+
+**Chốt:** SL/TP là **tuỳ chọn, mặc định tắt** (ô để trống = tắt). Bật thì:
+- thoát ngay **trong cây nến chạm mức**, so với `low`/`high` chứ không phải
+  `close` — chờ close sẽ báo giá thoát tốt hơn thực tế;
+- một nến chạm cả hai mức → lấy **Stop Loss** (giả định mức có lợi khớp trước là
+  cách backtest tự đánh bóng kết quả);
+- ghi `stop_loss`/`take_profit`/`exit_reason` xuống DB, hiện trên bảng lệnh
+  (thêm cột "Lý do thoát") và vẽ 3 đường Entry / SL / TP trên chart cho lệnh
+  đang chọn (bấm một dòng trong bảng để đổi lệnh được đánh dấu).
+
+Không đặt mặc định khác 0 cho SL/TP: làm thế sẽ **âm thầm đổi kết quả** của mọi
+lần chạy.
+
+### F9. Config backtest mất khi chuyển tab rồi quay lại (đỏ)
+
+Form nằm trong `useState` của `BacktestPage`, mà đổi tab là unmount page. Chuyển
+toàn bộ form vào `ExperimentContext` (`backtestForm` / `setBacktestForm`) — cùng
+chỗ đã giữ `experimentId`/`lastConfig`, scope ở route `/app` nên sống qua mọi lần
+đổi tab.
+
+### F10. Top-K nhập tự do (tím → đã chốt)
+
+**Chốt (người dùng chọn):** giới hạn **1–20**, mặc định 8. Backend siết
+`MAX_TOP_K = 20` (trước là 100) ở cả `validateRequest` lẫn `sanitizeSearchConfig`;
+FE dùng `input type=number` có `min`/`max` + thông báo lỗi tiếng Việt trước khi
+gửi.
+
+### F11. Tiêu đề candidate đang xem quá nhỏ (xanh dương)
+
+Đổi từ dòng caption 11px dưới ô tìm kiếm thành **heading có dropdown**: nhãn
+"CANDIDATE ĐANG XEM" + tên tổ hợp 19px + mũi tên sổ danh sách (đúng ý "Tiêu đề
+candidate hiện tại ⬇" trong doc). Ô tìm kiếm bị bỏ vì danh sách tối đa nay chỉ
+còn 20 dòng (F10) — tìm kiếm trong 20 dòng là thừa.
+
+### F12. Chữ bảng lệnh / Leaderboard quá nhỏ (xanh dương)
+
+`.table` nâng nền chung (td 12→13px, th 10→11px, padding rộng hơn);
+`.trades-table` nâng thêm một nấc (td 14px) vì đây là bảng người ta thật sự đọc
+số. Không phóng to toàn app để khỏi phá layout các panel khác.
+
+### F13. "Lưu bộ Strategy & trọng số" — KHÔNG đổi Leaderboard (giữ nguyên business gốc)
+
+Tab Flow có một gạch đầu dòng nói rằng bấm "Lưu bộ Strategy & trọng số" thì
+Leaderboard phải reorder (nếu đổi trọng số) hoặc tạo version rồi so lại (nếu đổi
+tham số plugin). **Người dùng xác nhận gạch đầu dòng đó là sai, quên xoá.**
+
+**Business đúng, giữ nguyên như trước:** nút "Lưu bộ Strategy & trọng số" chỉ xác
+nhận lựa chọn ở phía client (`StrategySelectionContext.confirmSelection()` bật cờ
+`confirmed`, tự tắt khi người dùng chỉnh tiếp). Nó **không gọi API nào**, **không
+đụng tới Leaderboard**. Leaderboard chỉ đổi khi bấm **Chạy Search & Backtest** ở
+tab Backtest — lúc đó experiment mới được tạo lại từ đầu với bộ strategy và trọng
+số hiện tại.
+
+Lý do business này hợp lý: trọng số là thuộc tính **cố định của một Experiment
+Configuration** (xem mục 4b) — mọi candidate trong cùng một lần chạy phải được
+chấm bằng cùng một bộ trọng số thì so sánh giữa chúng mới có nghĩa. Sửa trọng số
+của một experiment đã chạy xong rồi chấm lại tại chỗ sẽ làm hỏng đúng tính chất
+"experiment truy vết được tới đúng cấu hình đã sinh ra nó".
+
+Trong một lượt sửa trước, tôi đã hiện thực gạch đầu dòng sai đó (thêm
+`POST /strategy-search/experiments/:id/reweight` chấm lại toàn bộ candidate) —
+**đã gỡ bỏ hoàn toàn**: endpoint, DTO, service method, 2 query repository
+(`updateWeight`, `listAllCandidateMembers`) và toàn bộ thay đổi FE kèm theo
+(`appliedWeights` trong `ExperimentContext`, props `saving`/`saveNotice` của
+`WeightedVotingTable`, handler async ở `StrategyEnginePage`). `StrategyEnginePage`
+và `WeightedVotingTable` được khôi phục đúng bản gốc.
+
+Cascade "lưu tham số plugin → tạo version mới → sinh lại tổ hợp"
+(`ParameterPanel` → `POST .../regenerate`) là chuyện **khác** và vốn đã có từ
+trước; nó không nằm trong nút "Lưu bộ Strategy & trọng số" và không bị đụng tới.
+
+### F14. Version người dùng tự chỉnh không hiện trên Leaderboard (tím → đã chốt)
+
+**Chốt (người dùng chọn):** giữ Top-K đúng nghĩa xếp hạng, **thêm mục riêng
+"Version của tôi"** bên dưới. `POST .../regenerate` nay trả thêm `summaries`:
+mỗi tổ hợp vừa sinh lại kèm **hạng thật trên tổng số** (`RANK() OVER` trên toàn
+bộ candidate đã hoàn tất, không chỉ Top-K) + các chỉ số chính. Nhờ vậy một
+version tệ vẫn nhìn thấy được và so sánh được ("#37 / 100"), thay vì biến mất
+làm người dùng tưởng hệ thống không tạo gì.
+
+### F15. Nút "Xem kết quả backtest" nên nổi bật (tím → làm luôn)
+
+Thêm class `.btn-go` (nền `--color-up`) cho hành động chính của panel, thay vì
+một nút secondary xám lẫn giữa các nút xám khác.
+
+### F16. AI Strategy vẫn sinh code giả dù đã gắn API key (đỏ)
+
+**Phát hiện:** `llmProviderFactory` chỉ đọc **`OPENAI_API_KEY`**. Tài liệu kiến
+trúc lại nói dùng **OpenRouter**, và `service/.env.example` **không hề nhắc** biến
+nào cho AI. Đặt key dưới tên khác ⇒ rơi âm thầm về `FakeLlmProvider`, mà code
+canned của nó là Python hợp lệ nên nhìn không ra.
+
+**Chốt:**
+- chấp nhận cả `OPENAI_API_KEY` và `OPENROUTER_API_KEY` (OpenRouter nói cùng
+  protocol OpenAI-compatible), mỗi biến có `BASE_URL`/`MODEL` mặc định riêng;
+- thêm `GET /ai-strategy/provider` và **banner đỏ ngay đầu tab AI Strategy** khi
+  đang chạy provider giả lập, nói rõ phải đặt biến nào ở đâu. Im lặng fallback là
+  bản thân cái bug;
+- bổ sung đầy đủ các biến vào `service/.env.example`.
+
+### Không đổi (đã đúng sẵn, đã kiểm tra lại)
+
+- **Danh sách strategy hệ thống:** đủ 4 loại đề bài nêu (MA, RSI, Bollinger,
+  Support/Resistance) + News Sentiment, đăng ký qua `StrategyRegistry`.
+- **Bấm thẻ Strategy để check/uncheck:** đã có từ commit f4f0945.
+- **Danh sách strategy do AI sinh trên tab Strategy Engine:** đã có (nhóm 2).
+- **Tín hiệu HOLD/SELL trên từng Strategy:** **giữ**. Doc ghi "bỏ nếu không cần
+  thiết; nếu là đặc điểm của từng Strategy thì giữ" — đây đúng là output riêng
+  của từng plugin (`GET /strategy-engine/signal` → `perStrategy`), không phải
+  nhãn trang trí, nên giữ.
+
+
+## F17. AI Strategy không chạy được trên Windows (2026-08-29)
+
+**Triệu chứng:** tab AI Strategy luôn dừng ở check đầu tiên với
+`Validation worker could not run: Python worker process error (validate.py):
+spawn E:\...\workers
+ews\.venvin\python ENOENT`.
+
+**Đúng là lỗi code — và là HAI lỗi chồng lên nhau,** cả hai đều do worker Python
+được viết với giả định chạy trên POSIX:
+
+### Lỗi 1 — đường dẫn interpreter hard-code kiểu POSIX
+
+`getAiStrategyPythonBin()` trả về thẳng
+`<repo>/workers/news/.venv/bin/python` **vô điều kiện**. Hai vấn đề:
+- venv trên Windows nằm ở `Scripts\python.exe`, không phải `bin/python`;
+- trên máy này `workers/news/.venv` **không tồn tại** (chưa ai tạo), nên kể cả
+  sửa đúng layout vẫn hỏng.
+
+**Sửa:** thứ tự phân giải rõ ràng, dừng ở cái đầu tiên tồn tại:
+1. `AI_STRATEGY_PYTHON_BIN` — override tường minh, dùng nguyên văn (lựa chọn cố
+   ý phải thắng mọi auto-detect);
+2. venv `workers/news/.venv` **nếu thật sự có**, thử đúng layout của HĐH;
+3. `python` (Windows) / `python3` (POSIX) lấy từ PATH.
+
+`validate.py`/`run.py` chỉ dùng thư viện chuẩn (`ast`, `json`, `signal`,
+`threading`) nên bất kỳ CPython 3.10+ nào cũng chạy — venv là tiện lợi, không
+phải điều kiện bắt buộc. Đây là lý do bước 3 hợp lệ chứ không phải fallback bừa.
+
+Kèm theo: `ENOENT` nay được dịch thành câu chỉ rõ phải làm gì (cài Python / đặt
+`AI_STRATEGY_PYTHON_BIN`) thay vì ném nguyên `spawn ... ENOENT` lên UI.
+
+### Lỗi 2 — `signal.SIGALRM` không tồn tại trên Windows
+
+Sửa xong lỗi 1 thì lộ lỗi thứ hai: cả `validate.py` và `run.py` đều gọi
+`signal.signal(signal.SIGALRM, ...)`. Trên Windows module `signal` **không có**
+`SIGALRM` → `AttributeError` ngay trước khi script kịp in JSON nào, nên Node chỉ
+thấy exit code khác 0.
+
+**Sửa:** thêm context manager dùng chung `time_limit()` trong `sandbox.py`:
+- POSIX: giữ nguyên `signal.alarm` (kernel ngắt main thread);
+- Windows: `threading.Timer` + `_thread.interrupt_main()` — raise
+  `KeyboardInterrupt` ở main thread giữa các bytecode, đủ để thoát khỏi vòng lặp
+  Python thuần mà strategy do AI sinh vốn chỉ gồm những thứ đó.
+
+Cả hai đường đều **vẫn chỉ là defense in depth**, đúng như docstring gốc đã nói:
+không cơ chế nào ngắt được một lời gọi C dài, và `python-process.util.ts` luôn
+bọc tiến trình bằng timeout cứng riêng rồi SIGKILL khi quá hạn. `_SmokeTimeout`
+và `_RunTimeout` gộp thành một `TimeLimitExceeded` duy nhất.
+
+### Đã verify chạy thật (không chỉ test xanh)
+
+Chạy trên chính máy Windows này, qua đúng lớp `runPythonWorker` mà API dùng:
+- `validate.py` với strategy hợp lệ → `parses=OK contract=OK safety=OK smoke=OK`;
+- `validate.py` với `while True: pass` → `smoke=FAIL "Smoke run exceeded 5s
+  internal timeout"`, tiến trình kết thúc sau ~6s (watchdog Windows hoạt động);
+- `run.py` trả về đúng dãy signal;
+- `run.py` với `import os` → vẫn bị chặn: `Safety scan failed: disallowed import: os`
+  (gate an toàn không bị nới lỏng khi sửa).
+
+
+## F18. Nút "Crawl tin tức" mất trạng thái khi chuyển tab (2026-08-29)
+
+**Triệu chứng:** bấm Crawl, chuyển sang tab khác rồi quay lại tab News thì nút
+trở về "Crawl tin tức" trong khi worker vẫn đang crawl.
+
+**Hai nguyên nhân, cùng cho ra một triệu chứng:**
+
+### Nguyên nhân 1 — state sống trong component bị unmount
+
+`useNewsCrawl` là hook thường, gọi bên trong `NewsPage`. Đổi tab = React
+unmount `NewsPage` ⇒ cleanup abort request, clear timer, và toàn bộ `job`/`state`
+biến mất. Quay lại là mount mới, bắt đầu từ `'idle'`. Đây **đúng cùng một lớp
+lỗi** với "config Backtest mất khi đổi tab" (mục F9) — chỉ khác chỗ nó nằm ở
+hook chứ không phải `useState` trong page.
+
+**Sửa:** đưa lên `NewsCrawlProvider` mount tại route `/app` (cạnh
+`ExperimentProvider` trong `App.tsx`), `useNewsCrawl()` thành consumer của
+context. Một poll duy nhất sống xuyên suốt mọi lần đổi tab.
+
+Thêm: reload cả trang thì provider cũng bị unmount thật, nên khi mount provider
+gọi `GET /news/crawl/status` **một lần** để nhận lại job đang chạy. Endpoint này
+đọc state BullMQ/Redis thật, không phải bộ nhớ client — nên nút phản ánh worker
+đang làm gì, chứ không phải tab này nhớ được gì.
+
+### Nguyên nhân 2 — trần polling 5 phút ngắn hơn trần của worker
+
+`MAX_POLL_ATTEMPTS = 150` × 2s = **5 phút**, trong khi một lượt crawl được chặn
+ở **10 phút** phía server (`news-crawl.config.ts` → `getTimeoutMs`). Nghĩa là
+mọi lượt crawl chạy quá phút thứ 5 đều bị client tự tuyên bố `'timeout'` và lật
+nút về "Crawl tin tức" trong khi worker vẫn đang chạy — UI nói ngược lại hệ
+thống. Sửa nguyên nhân 1 mà không sửa cái này thì lỗi vẫn tái diễn, chỉ muộn hơn.
+
+**Sửa:** bỏ trần theo số lần thử, thay bằng trần theo **số lần lỗi liên tiếp**
+(`MAX_CONSECUTIVE_FAILURES = 5`). Vòng lặp vẫn có điều kiện dừng rõ ràng —
+chính trạng thái job của server, vốn đã bị chặn bởi timeout cứng của worker —
+nên **không** vi phạm anti-pattern "uncontrolled infinite loop": nó không thể
+sống lâu hơn cái job nó đang theo dõi. Một request status lỗi lẻ tẻ cũng không
+còn bị coi là "crawl đã dừng".
+
+### Đã verify bằng cách bấm thật trên trình duyệt
+
+API thật đang chạy ở `:3000` nhưng tôi không đăng nhập hộ người dùng được, nên
+dựng một mock API nhỏ ở scratchpad (không thuộc repo) + một dev server tạm, nạp
+phiên bằng refresh token thay vì gõ mật khẩu. Kết quả:
+
+| Thao tác | Trước | Sau |
+|---|---|---|
+| Bấm Crawl | "Dừng Crawl" · "Đang crawl…" | giữ nguyên |
+| Đổi sang Realtime → Backtest → quay lại News | **về "Crawl tin tức"** | vẫn "Dừng Crawl" · "Đang crawl…" |
+| Reload cả trang | **về "Crawl tin tức"** | vẫn "Dừng Crawl" · "Đang crawl…" |
+| Bấm "Dừng Crawl" | — | về "Crawl tin tức" · "Crawl xong" |
+| Đổi tab sau khi dừng | — | vẫn ở trạng thái đã dừng |
+
+
+## F19. Crawl tin tức chết với `spawn ... bin\python ENOENT` (2026-08-29)
+
+**Đây là ĐÚNG lỗi ở mục F17, nhưng ở module News — và tôi đã bỏ sót nó.** F17 sửa
+`ai-strategy.config.ts`, trong khi `news-crawl.config.ts` có y hệt một dòng
+hard-code `.venv/bin/python` kiểu POSIX. Sửa một bản, bản kia vẫn hỏng.
+
+**Sửa triệt để:** gộp về **một** implementation dùng chung,
+`service/src/common/python-bin.ts`:
+- `resolvePythonBin(venvDir, override)` — override env → venv **nếu thật sự có**,
+  đúng layout HĐH (`Scripts\python.exe` trên Windows) → interpreter trên PATH;
+- `describeSpawnFailure(err, bin, envVar)` — dịch `ENOENT` thành câu nói rõ phải
+  cài Python hoặc đặt biến môi trường nào.
+
+Cả `news-crawl.config.ts` lẫn `ai-strategy.config.ts` giờ gọi chung hàm này. Lý
+do gộp chứ không copy lần hai: bản sao thứ hai chính là thứ đã tạo ra bug này.
+
+### Khác biệt quan trọng giữa hai worker
+
+| | AI strategy | News crawler |
+|---|---|---|
+| Thư viện | chỉ standard library | feedparser, bs4, pydantic, requests, pyyaml, psycopg2 |
+| Fallback PATH có đủ không? | **Có** | **Không** — thiếu package sẽ lỗi lúc import |
+
+Nên với News, fallback PATH chỉ giúp lỗi *dễ đọc*, không tự sinh ra dependency.
+Venv `workers/news/.venv` vẫn là bước cài đặt bắt buộc (đúng như
+`workers/news/README.md` mô tả) — đã tạo và cài trên máy này.
+
+### Sentiment tạm thời là NULL
+
+`torch` + `transformers` (~2.5GB) **chưa cài**, nên `get_sentiment_provider()`
+degrade về `NoopSentimentProvider` đúng như thiết kế: bài vẫn crawl và lưu, cột
+`sentiment` để NULL, và log ghi rõ lý do. Muốn có sentiment thật thì cài extra
+`sentiment` rồi tải model FinBERT — xem `workers/news/README.md`.
+
+### Đã chạy thật, không chỉ test xanh
+
+- `main.py` trực tiếp: crawl 30 bài từ cointelegraph, **upsert 30 dòng vào
+  Postgres**, exit 0;
+- qua đúng lớp `NewsCrawlService.execute()` (chính đường `POST /news/crawl` gọi):
+  `News crawl completed.` sau 5.1s;
+- `getPythonBin()` nay trả về `...\.venv\Scripts\python.exe` (tồn tại: true).
+
+**Bài học lặp lại lần thứ hai trong repo này:** ở đợt trước tôi đã ghi "test xanh
+không chứng minh sản phẩm dùng được". Lần này tôi lặp lại đúng sai lầm đó theo
+kiểu khác — sửa một module rồi tuyên bố xong, mà không grep xem cùng pattern còn
+ở đâu nữa. Khi sửa một lỗi do giả định môi trường (đường dẫn, HĐH, layout), việc
+đầu tiên phải là **grep toàn repo tìm bản sao của cùng giả định đó**.

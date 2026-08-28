@@ -23,14 +23,17 @@ export class BacktestRunRepository {
         await client.query(
           `INSERT INTO trades (
              backtest_run_id, side, entry_time, entry_price, quantity,
+             stop_loss, take_profit,
              exit_time, exit_price, profit_loss, return_pct, exit_reason
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
           [
             runId,
             trade.side,
             trade.entryTime,
             trade.entryPrice,
             trade.quantity,
+            trade.stopLoss,
+            trade.takeProfit,
             trade.exitTime,
             trade.exitPrice,
             trade.profitLoss,

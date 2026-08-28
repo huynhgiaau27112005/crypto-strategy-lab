@@ -1,3 +1,8 @@
+import {
+  BacktestCosts,
+  DEFAULT_BACKTEST_COSTS,
+} from '../../backtesting/backtesting.types';
+
 // INFORMATION is the "Information (News Sentiment)" group the brief lists
 // alongside Trend/Momentum/Volatility/Structure
 // (docs/about-projects/04-examples-in-the-brief.md #17). It is deliberately
@@ -144,6 +149,13 @@ export interface StrategyWeight {
 }
 
 export interface SearchConfig {
+  /**
+   * Trading frictions and protective exits every candidate in this
+   * experiment is backtested with. Part of the search config (not a
+   * per-candidate value) because comparing candidates only means anything
+   * when they all paid the same costs.
+   */
+  costs: BacktestCosts;
   enabledDomains: StrategyDomain[];
   minMembers: number;
   maxMembers: number;
@@ -157,6 +169,16 @@ export interface SearchConfig {
 
 export interface StartSearchRequest {
   timeframe: string;
+  /** Starting equity in USD. Defaults to DEFAULT_BACKTEST_COSTS.initialCapital. */
+  initialCapital?: number;
+  /** Commission per side in percent of notional. */
+  transactionCostPct?: number;
+  /** Execution slippage per side in basis points. */
+  slippageBps?: number;
+  /** Stop-loss distance below entry in percent; omitted/null disables it. */
+  stopLossPct?: number | null;
+  /** Take-profit distance above entry in percent; omitted/null disables it. */
+  takeProfitPct?: number | null;
   startTime: string;
   endTime: string;
   maxCandidates?: number;
@@ -174,6 +196,7 @@ export interface SearchAlgorithm {
 }
 
 export const DEFAULT_SEARCH_CONFIG: SearchConfig = {
+  costs: DEFAULT_BACKTEST_COSTS,
   enabledDomains: ['TREND', 'MOMENTUM', 'VOLATILITY', 'STRUCTURE'],
   minMembers: 2,
   maxMembers: 4,

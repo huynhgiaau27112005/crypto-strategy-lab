@@ -7,6 +7,12 @@ import {
   OnApplicationBootstrap,
 } from '@nestjs/common';
 import { BacktestingService } from '../backtesting/backtesting.service';
+import {
+  BacktestCosts,
+  DEFAULT_BACKTEST_COSTS,
+} from '../backtesting/backtesting.types';
+import { MarketDataService } from '../market-data/market-data.service';
+import { MIN_CANDLES_PER_TIMEFRAME } from '../market-data/config';
 import { BacktestRunRepository } from '../backtesting/repositories/backtest-run.repository';
 import { StrategyWeightMap } from '../composite-strategy/composite-strategy.service';
 import { LeaderboardService } from '../leaderboard/leaderboard.service';
@@ -37,6 +43,7 @@ import {
 import {
   CandidateDetail,
   CandidateRepository,
+  RankedCandidateSummary,
   TopCandidateMemberRow,
 } from './repositories/candidate.repository';
 import {
@@ -58,6 +65,11 @@ import {
   leaderboardVersionKey,
 } from '../leaderboard/leaderboard-cache-keys';
 import type { SearchTopRow } from './repositories/experiment.repository';
+
+// Upper bound for the caller-supplied Top-K. The leaderboard is a
+// shortlist meant to be read at a glance; letting a client ask for 100
+// rows only produced a table nobody scrolls.
+const MAX_TOP_K = 20;
 import { MetricsService } from '../../observability/metrics/metrics.service';
 import { AiStrategyRepository } from '../ai-strategy/repositories/ai-strategy.repository';
 import { AiStrategySignalPrecomputeService } from '../ai-strategy/ai-strategy-signal-precompute.service';
@@ -79,6 +91,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
 
   constructor(
     private readonly database: DatabaseService,
+    private readonly marketData: MarketDataService,
     private readonly experiments: ExperimentRepository,
     private readonly experimentConfigs: ExperimentConfigRepository,
     private readonly iterations: ExperimentIterationRepository,
@@ -97,6 +110,11 @@ export class StrategySearchService implements OnApplicationBootstrap {
     private readonly strategyPlugin: StrategyPluginService,
     private readonly sentimentPrecompute: NewsSentimentPrecomputeService,
   ) {}
+
+  // Market scope is fixed for this project (Binance BTCUSDT), the same
+  // constant MarketDataGateway pins; kept here so the auto-backfill below
+  // does not have to invent a symbol.
+  private static readonly SYMBOL = 'BTCUSDT';
 
   // Runs in BOTH the API process and the worker process (StrategySearchModule
   // is imported by both AppModule and WorkerModule) — deliberately: a
@@ -121,15 +139,42 @@ export class StrategySearchService implements OnApplicationBootstrap {
 
   async start(userId: string, request: StartSearchRequest) {
     const { startTime, endTime, config } = this.validateRequest(request);
+    const minimumCandles = this.minimumCandles(config.enabledDomains);
+
+    // Fill the local `candles` table from Binance before deciding the
+    // window is unusable. Every "Dataset has N candles; at least 202 are
+    // required" failure came from here: the requested window was fine, the
+    // database had simply never been backfilled for that timeframe (worst
+    // on 1h/4h, where a month of history is only a few hundred rows and
+    // nothing but the manual seed script ever wrote them). Idempotent and
+    // page-bounded - see MarketDataService.ensureCandleCoverage.
+    try {
+      await this.marketData.ensureCandleCoverage(
+        StrategySearchService.SYMBOL,
+        request.timeframe,
+        startTime,
+        endTime,
+        Math.max(minimumCandles, MIN_CANDLES_PER_TIMEFRAME),
+      );
+    } catch (error) {
+      // A Binance outage must not make an otherwise-runnable window fail:
+      // fall through to the candle count check, which reports the real
+      // situation either way.
+      this.logger.warn(
+        `Candle backfill for ${request.timeframe} failed: ${this.errorMessage(error)}`,
+      );
+    }
+
     const candles = await this.experiments.candles(
       request.timeframe,
       startTime,
       endTime,
     );
-    const minimumCandles = this.minimumCandles(config.enabledDomains);
     if (candles.length < minimumCandles) {
       throw new BadRequestException(
-        `Dataset has ${candles.length} candles; at least ${minimumCandles} are required.`,
+        `Khoảng thời gian đã chọn chỉ có ${candles.length} nến ${request.timeframe} ` +
+          `(cần tối thiểu ${minimumCandles}). Hãy chọn khoảng ngày dài hơn, ` +
+          'hoặc đổi sang timeframe nhỏ hơn.',
       );
     }
 
@@ -288,7 +333,12 @@ export class StrategySearchService implements OnApplicationBootstrap {
     experimentId: string,
     userId: string,
     strategyName: string,
-  ): Promise<{ regenerated: number; skipped: number; candidateIds: string[] }> {
+  ): Promise<{
+    regenerated: number;
+    skipped: number;
+    candidateIds: string[];
+    summaries: RankedCandidateSummary[];
+  }> {
     const experiment = await this.experiments.findOwned(experimentId, userId);
     if (!experiment) throw new NotFoundException('Experiment not found.');
 
@@ -357,7 +407,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
     }
 
     if (combinations.size === 0) {
-      return { regenerated: 0, skipped: 0, candidateIds: [] };
+      return { regenerated: 0, skipped: 0, candidateIds: [], summaries: [] };
     }
 
     const candles = await this.experiments.candles(
@@ -494,6 +544,8 @@ export class StrategySearchService implements OnApplicationBootstrap {
           candles,
           weightMap,
           aiSignals,
+          undefined,
+          config.costs,
         );
         this.metrics.backtestsRunTotal.inc();
         await this.backtestRuns.complete(candidateEntity.id, result);
@@ -517,7 +569,22 @@ export class StrategySearchService implements OnApplicationBootstrap {
       );
     }
 
-    return { regenerated: created.length, skipped, candidateIds: created };
+    // The regenerated combinations are exactly what the user asked to
+    // see, so return where each one landed against the whole population -
+    // a version that scored outside the Top-K is otherwise invisible on
+    // the Leaderboard and looks like it was never created.
+    const summaries = await this.candidates.rankedSummaries(
+      experimentId,
+      userId,
+      created,
+    );
+
+    return {
+      regenerated: created.length,
+      skipped,
+      candidateIds: created,
+      summaries,
+    };
   }
 
 
@@ -707,6 +774,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
       maxNoImprovement: config.maxNoImprovement,
       topK: config.topK,
       minimumTrades: config.minimumTrades,
+      costs: config.costs,
     };
   }
 
@@ -719,7 +787,11 @@ export class StrategySearchService implements OnApplicationBootstrap {
     raw: unknown,
   ): Pick<
     SearchConfig,
-    'maxDurationSeconds' | 'maxNoImprovement' | 'topK' | 'minimumTrades'
+    | 'maxDurationSeconds'
+    | 'maxNoImprovement'
+    | 'topK'
+    | 'minimumTrades'
+    | 'costs'
   > {
     const obj =
       raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
@@ -748,13 +820,48 @@ export class StrategySearchService implements OnApplicationBootstrap {
         10_000,
         DEFAULT_SEARCH_CONFIG.maxNoImprovement,
       ),
-      topK: boundedOrDefault(obj.topK, 1, 100, DEFAULT_SEARCH_CONFIG.topK),
+      topK: boundedOrDefault(obj.topK, 1, MAX_TOP_K, DEFAULT_SEARCH_CONFIG.topK),
       minimumTrades: boundedOrDefault(
         obj.minimumTrades,
         0,
         10_000,
         DEFAULT_SEARCH_CONFIG.minimumTrades,
       ),
+      costs: this.sanitizeCosts(obj.costs),
+    };
+  }
+
+  /**
+   * Same defensive parse for the cost model. A row written before costs
+   * were configurable has no `costs` key at all and falls back to
+   * DEFAULT_BACKTEST_COSTS, which is exactly the behaviour that run
+   * originally had - so re-running an old experiment reproduces it.
+   */
+  private sanitizeCosts(raw: unknown): BacktestCosts {
+    const obj =
+      raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+    const num = (value: unknown, fallback: number): number =>
+      typeof value === 'number' && Number.isFinite(value) && value >= 0
+        ? value
+        : fallback;
+    const optional = (value: unknown): number | null =>
+      typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? value
+        : null;
+    return {
+      initialCapital:
+        typeof obj.initialCapital === 'number' &&
+        Number.isFinite(obj.initialCapital) &&
+        obj.initialCapital > 0
+          ? obj.initialCapital
+          : DEFAULT_BACKTEST_COSTS.initialCapital,
+      transactionCostPct: num(
+        obj.transactionCostPct,
+        DEFAULT_BACKTEST_COSTS.transactionCostPct,
+      ),
+      slippageBps: num(obj.slippageBps, DEFAULT_BACKTEST_COSTS.slippageBps),
+      stopLossPct: optional(obj.stopLossPct),
+      takeProfitPct: optional(obj.takeProfitPct),
     };
   }
 
@@ -985,6 +1092,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
             weightMap,
             aiSignals,
             sentimentScores,
+            config.costs,
           );
           this.metrics.backtestsRunTotal.inc();
           await this.backtestRuns.complete(candidateEntity.id, result);
@@ -1342,7 +1450,10 @@ export class StrategySearchService implements OnApplicationBootstrap {
         50,
         'maxNoImprovement',
       ),
-      topK: this.integerInRange(request.topK, 1, 100, 10, 'topK'),
+      // Capped at MAX_TOP_K so the leaderboard a run produces stays a
+      // readable shortlist rather than an unbounded dump the UI has to
+      // render (the field is a free-text input in the Backtest tab).
+      topK: this.integerInRange(request.topK, 1, MAX_TOP_K, 10, 'topK'),
       minimumTrades: this.integerInRange(
         request.minimumTrades,
         0,
@@ -1350,6 +1461,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
         20,
         'minimumTrades',
       ),
+      costs: this.validateCosts(request),
     };
     const hasDirectional = config.enabledDomains.some(
       (item) => item === 'TREND' || item === 'STRUCTURE',
@@ -1367,6 +1479,83 @@ export class StrategySearchService implements OnApplicationBootstrap {
       config.enabledDomains.length,
     );
     return { startTime, endTime, config };
+  }
+
+  /**
+   * Validates the caller-supplied cost model. Every field is optional and
+   * falls back to DEFAULT_BACKTEST_COSTS, so a client that does not know
+   * about costs yet behaves exactly as before. Bounds are deliberately
+   * generous but finite - the point is to reject nonsense (negative
+   * capital, a 500% fee) rather than to prescribe a trading style.
+   */
+  private validateCosts(request: StartSearchRequest): BacktestCosts {
+    return {
+      initialCapital: this.numberInRange(
+        request.initialCapital,
+        1,
+        1_000_000_000,
+        DEFAULT_BACKTEST_COSTS.initialCapital,
+        'initialCapital',
+      ),
+      transactionCostPct: this.numberInRange(
+        request.transactionCostPct,
+        0,
+        10,
+        DEFAULT_BACKTEST_COSTS.transactionCostPct,
+        'transactionCostPct',
+      ),
+      slippageBps: this.numberInRange(
+        request.slippageBps,
+        0,
+        1_000,
+        DEFAULT_BACKTEST_COSTS.slippageBps,
+        'slippageBps',
+      ),
+      stopLossPct: this.optionalNumberInRange(
+        request.stopLossPct,
+        0.01,
+        100,
+        'stopLossPct',
+      ),
+      takeProfitPct: this.optionalNumberInRange(
+        request.takeProfitPct,
+        0.01,
+        1_000,
+        'takeProfitPct',
+      ),
+    };
+  }
+
+  private numberInRange(
+    value: number | undefined,
+    minimum: number,
+    maximum: number,
+    fallback: number,
+    field: string,
+  ): number {
+    const resolved = value ?? fallback;
+    if (!Number.isFinite(resolved) || resolved < minimum || resolved > maximum) {
+      throw new BadRequestException(
+        `${field} must be a number from ${minimum} to ${maximum}.`,
+      );
+    }
+    return resolved;
+  }
+
+  /** Same as numberInRange, but `undefined`/`null` means "disabled". */
+  private optionalNumberInRange(
+    value: number | null | undefined,
+    minimum: number,
+    maximum: number,
+    field: string,
+  ): number | null {
+    if (value === undefined || value === null) return null;
+    if (!Number.isFinite(value) || value < minimum || value > maximum) {
+      throw new BadRequestException(
+        `${field} must be a number from ${minimum} to ${maximum}, or omitted to disable it.`,
+      );
+    }
+    return value;
   }
 
   private integerInRange(

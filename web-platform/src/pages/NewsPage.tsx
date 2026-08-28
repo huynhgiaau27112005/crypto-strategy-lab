@@ -3,7 +3,7 @@ import BlueprintCorners from '../components/BlueprintCorners'
 import Chip from '../components/Chip'
 import SignalBadge, { type SignalKind } from '../components/SignalBadge'
 import { useNews } from '../hooks/useNews'
-import { useNewsCrawl } from '../hooks/useNewsCrawl'
+import { useNewsCrawl } from '../state/NewsCrawlContext'
 import { useSentimentSummary } from '../hooks/useSentimentSummary'
 import type { SentimentLabel } from '../api/types'
 

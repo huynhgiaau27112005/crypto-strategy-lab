@@ -21,6 +21,11 @@ export interface Candle {
   low: string
   close: string
   volume: string
+  /**
+   * `false` for the bar currently being built. Undefined on candles that
+   * came from the REST history (those are closed by construction).
+   */
+  closed?: boolean
 }
 
 export interface MarketSocketState {
@@ -38,6 +43,7 @@ function toCandle(c: CandleDto | MarketCandleEvent): Candle {
     low: c.low,
     close: c.close,
     volume: c.volume,
+    closed: 'closed' in c ? c.closed : true,
   }
 }
 
@@ -45,8 +51,10 @@ function upsertCandle(prev: Candle[], next: Candle): Candle[] {
   let out: Candle[]
   const last = prev[prev.length - 1]
   if (last && last.timestamp === next.timestamp) {
-    // Same closed candle re-broadcast (should not normally happen once
-    // closed, but keep the merge idempotent instead of duplicating).
+    // The forming bar arrives many times per interval, each update
+    // replacing the previous state of the SAME bar — this is what makes
+    // the chart move continuously instead of once per timeframe. A closed
+    // bar re-broadcast lands here too, and replacing is idempotent.
     out = [...prev.slice(0, -1), next]
   } else {
     out = [...prev, next]
@@ -73,6 +81,12 @@ function upsertCandle(prev: Candle[], next: Candle): Candle[] {
 export function useMarketSocket(
   interval: MarketInterval,
   onCandle?: (candle: Candle) => void,
+  /**
+   * When false, the hook still loads REST history but ignores live socket
+   * updates — the "Realtime" switch on the Realtime tab. History is kept
+   * as-is so turning the feed off freezes the chart instead of clearing it.
+   */
+  live = true,
 ): MarketSocketState {
   const [candles, setCandles] = useState<Candle[]>([])
   const [status, setStatus] = useState<MarketStatusEvent | null>(null)
@@ -109,6 +123,11 @@ export function useMarketSocket(
         if (!cancelled) setLoading(false)
       })
 
+    if (!live) return () => {
+      cancelled = true
+      controller.abort()
+    }
+
     const socket = getMarketSocket()
 
     const handleCandle = (msg: MarketCandleEvent) => {
@@ -141,7 +160,7 @@ export function useMarketSocket(
       socket.off('status', handleStatus)
       socket.off('error', handleError)
     }
-  }, [interval])
+  }, [interval, live])
 
   return { candles, status, loading, error }
 }

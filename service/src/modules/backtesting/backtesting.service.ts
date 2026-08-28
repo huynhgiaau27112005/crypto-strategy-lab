@@ -7,15 +7,26 @@ import {
 import { CandidateDefinition, SearchStrategyType } from '../strategy-search/domain/search.types';
 import { StrategySignal } from '../strategy-engine/strategy.types';
 import {
+  BacktestCosts,
   BacktestEvaluation,
   BacktestResult,
+  DEFAULT_BACKTEST_COSTS,
+  ExitReason,
   SimulatedTrade,
 } from './backtesting.types';
 
+interface Position {
+  entryTime: Date;
+  entryPrice: number;
+  quantity: number;
+  /** Commission already paid to open - deducted when the trade closes. */
+  entryFee: number;
+  stopLoss: number | null;
+  takeProfit: number | null;
+}
+
 @Injectable()
 export class BacktestingService {
-  private readonly initialCapital = 10_000;
-
   constructor(private readonly compositeStrategy: CompositeStrategyService) {}
 
   run(
@@ -33,22 +44,47 @@ export class BacktestingService {
     // `aiSignals`, and likewise omittable for any candidate with no
     // sentiment member.
     sentimentScores?: Array<number | null>,
+    // Frictions and protective exits for this run. Omitted, the simulation
+    // behaves exactly as it did before this became configurable
+    // (DEFAULT_BACKTEST_COSTS: 10 000 capital, no fee, no slippage, no
+    // SL/TP), so every existing caller and test is unaffected.
+    costs: BacktestCosts = DEFAULT_BACKTEST_COSTS,
   ): BacktestResult {
     if (candles.length < 2)
       throw new Error('At least two candles are required.');
     const trades: SimulatedTrade[] = [];
-    let capital = this.initialCapital;
-    let position: {
-      entryTime: Date;
-      entryPrice: number;
-      quantity: number;
-    } | null = null;
+    let capital = costs.initialCapital;
+    let position: Position | null = null;
     let peakEquity = capital;
     let maximumDrawdown = 0;
 
     for (let index = 0; index < candles.length; index += 1) {
       const candle = candles[index];
       const close = Number(candle.close);
+
+      // Protective exits are checked BEFORE this candle's signal, and
+      // against the candle's own high/low rather than its close: a stop
+      // touched intrabar would have filled then, so waiting for the close
+      // would report an exit the strategy could not actually have got.
+      // When both levels sit inside one candle we take the stop - assuming
+      // the favourable one filled first is the classic way a backtest
+      // flatters itself.
+      if (position) {
+        const protective = this.protectiveExit(position, candle);
+        if (protective) {
+          const trade = this.closePosition(
+            position,
+            candle.timestamp,
+            protective.price,
+            protective.reason,
+            costs,
+          );
+          trades.push(trade);
+          capital += trade.profitLoss;
+          position = null;
+        }
+      }
+
       const result = this.compositeStrategy.analyze(
         candidate,
         {
@@ -60,17 +96,14 @@ export class BacktestingService {
         weights,
       );
       if (!position && result.signal === 'BUY') {
-        position = {
-          entryTime: candle.timestamp,
-          entryPrice: close,
-          quantity: capital / close,
-        };
+        position = this.openPosition(candle.timestamp, close, capital, costs);
       } else if (position && result.signal === 'SELL') {
         const trade = this.closePosition(
           position,
           candle.timestamp,
           close,
           'SIGNAL',
+          costs,
         );
         trades.push(trade);
         capital += trade.profitLoss;
@@ -94,6 +127,7 @@ export class BacktestingService {
         last.timestamp,
         Number(last.close),
         'END_OF_BACKTEST',
+        costs,
       );
       trades.push(trade);
       capital += trade.profitLoss;
@@ -101,27 +135,92 @@ export class BacktestingService {
 
     return {
       trades,
-      evaluation: this.evaluate(trades, capital, maximumDrawdown),
+      evaluation: this.evaluate(trades, capital, maximumDrawdown, costs),
     };
   }
 
+  /**
+   * Opens a long at `close`, adjusted for slippage (a buy fills above the
+   * reference price) and sized so the entry commission comes out of the
+   * same capital that funds the position.
+   */
+  private openPosition(
+    entryTime: Date,
+    close: number,
+    capital: number,
+    costs: BacktestCosts,
+  ): Position {
+    const slippage = costs.slippageBps / 10_000;
+    const fee = costs.transactionCostPct / 100;
+    const entryPrice = close * (1 + slippage);
+    // notional * (1 + fee) = capital  ->  notional = capital / (1 + fee)
+    const notional = capital / (1 + fee);
+    return {
+      entryTime,
+      entryPrice,
+      quantity: notional / entryPrice,
+      entryFee: notional * fee,
+      stopLoss:
+        costs.stopLossPct == null
+          ? null
+          : entryPrice * (1 - costs.stopLossPct / 100),
+      takeProfit:
+        costs.takeProfitPct == null
+          ? null
+          : entryPrice * (1 + costs.takeProfitPct / 100),
+    };
+  }
+
+  /** Stop-loss / take-profit hit inside `candle`, or null when neither is. */
+  private protectiveExit(
+    position: Position,
+    candle: CandleEntity,
+  ): { price: number; reason: ExitReason } | null {
+    if (position.stopLoss != null && Number(candle.low) <= position.stopLoss) {
+      return { price: position.stopLoss, reason: 'STOP_LOSS' };
+    }
+    if (
+      position.takeProfit != null &&
+      Number(candle.high) >= position.takeProfit
+    ) {
+      return { price: position.takeProfit, reason: 'TAKE_PROFIT' };
+    }
+    return null;
+  }
+
   private closePosition(
-    position: { entryTime: Date; entryPrice: number; quantity: number },
+    position: Position,
     exitTime: Date,
     exitPrice: number,
-    exitReason: 'SIGNAL' | 'END_OF_BACKTEST',
+    exitReason: ExitReason,
+    costs: BacktestCosts,
   ): SimulatedTrade {
-    const profitLoss = (exitPrice - position.entryPrice) * position.quantity;
+    const slippage = costs.slippageBps / 10_000;
+    const fee = costs.transactionCostPct / 100;
+    // A sell fills below the reference price - the mirror of the entry. A
+    // protective exit is already an exact level, but it is subject to the
+    // same execution slippage as any other fill.
+    const fillPrice = exitPrice * (1 - slippage);
+    const exitNotional = fillPrice * position.quantity;
+    const profitLoss =
+      (fillPrice - position.entryPrice) * position.quantity -
+      position.entryFee -
+      exitNotional * fee;
+    const entryNotional = position.entryPrice * position.quantity;
     return {
       side: 'LONG',
       entryTime: position.entryTime,
       entryPrice: position.entryPrice,
       exitTime,
-      exitPrice,
+      exitPrice: fillPrice,
       quantity: position.quantity,
+      stopLoss: position.stopLoss,
+      takeProfit: position.takeProfit,
       profitLoss,
+      // Return on the capital this trade actually tied up, so it stays
+      // comparable across trades once fees are in play.
       returnPercent:
-        ((exitPrice - position.entryPrice) / position.entryPrice) * 100,
+        entryNotional === 0 ? 0 : (profitLoss / entryNotional) * 100,
       exitReason,
     };
   }
@@ -130,6 +229,7 @@ export class BacktestingService {
     trades: SimulatedTrade[],
     finalCapital: number,
     maximumDrawdown: number,
+    costs: BacktestCosts,
   ): BacktestEvaluation {
     const returns = trades.map((trade) => trade.returnPercent);
     const wins = trades.filter((trade) => trade.profitLoss > 0);
@@ -142,7 +242,7 @@ export class BacktestingService {
         .reduce((sum, trade) => sum + trade.profitLoss, 0),
     );
     const totalReturn =
-      ((finalCapital - this.initialCapital) / this.initialCapital) * 100;
+      ((finalCapital - costs.initialCapital) / costs.initialCapital) * 100;
     const winRate = trades.length === 0 ? 0 : wins.length / trades.length;
     const profitFactor =
       grossLoss === 0 ? (grossProfit > 0 ? 10 : null) : grossProfit / grossLoss;
@@ -157,7 +257,7 @@ export class BacktestingService {
     );
     return {
       totalReturn,
-      profitLoss: finalCapital - this.initialCapital,
+      profitLoss: finalCapital - costs.initialCapital,
       winRate,
       maxDrawdown,
       numberOfTrades: trades.length,

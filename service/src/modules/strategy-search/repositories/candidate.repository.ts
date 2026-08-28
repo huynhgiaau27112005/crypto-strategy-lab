@@ -79,6 +79,33 @@ interface CandidateHeaderRow {
   overall_score: string | null;
 }
 
+/** One row of CandidateRepository.rankedSummaries. */
+export interface RankedCandidateSummary {
+  candidateId: string;
+  /** Member strategy names joined, e.g. "BOLLINGER + MA". */
+  combo: string;
+  rank: number;
+  /** How many completed candidates this experiment has in total. */
+  total: number;
+  overallScore: number | null;
+  profitLoss: number | null;
+  winRate: number | null;
+  maxDrawdown: number | null;
+  numberOfTrades: number;
+}
+
+interface RankedCandidateSummaryRow {
+  candidate_id: string;
+  combo: string | null;
+  rank: string;
+  total: string;
+  overall_score: string | null;
+  profit_loss: string | null;
+  win_rate: string | null;
+  max_drawdown: string | null;
+  number_of_trades: number;
+}
+
 export interface TopCandidateMemberRow {
   candidate_id: string;
   overall_score: string | null;
@@ -178,6 +205,60 @@ export class CandidateRepository {
       [experimentId, userId, minimumTrades, limit],
     );
     return result.rows;
+  }
+
+  /**
+   * Rank + headline metrics for specific candidates, measured against
+   * EVERY completed candidate of the experiment - not just the Top-K.
+   *
+   * This is what lets the UI show a parameter version the user saved even
+   * when it scored outside the leaderboard: "#37 / 100" is a real,
+   * comparable placement, whereas the Top-K query simply returns nothing
+   * for such a candidate and the version looks like it vanished.
+   */
+  async rankedSummaries(
+    experimentId: string,
+    userId: string,
+    candidateIds: string[],
+  ): Promise<RankedCandidateSummary[]> {
+    if (candidateIds.length === 0) return [];
+    const result = await this.database.query<RankedCandidateSummaryRow>(
+      `WITH ranked AS (
+         SELECT c.id AS candidate_id,
+                ev.overall_score, ev.profit_loss, ev.win_rate,
+                ev.max_drawdown, ev.number_of_trades,
+                RANK() OVER (ORDER BY ev.overall_score DESC NULLS LAST) AS rank,
+                COUNT(*) OVER () AS total
+           FROM experiments e
+           JOIN experiment_iterations ei ON ei.experiment_id = e.id
+           JOIN candidates c ON c.iteration_id = ei.id
+           JOIN backtest_runs br ON br.candidate_id = c.id AND br.status = 'COMPLETED'
+           JOIN evaluations ev ON ev.backtest_run_id = br.id
+          WHERE e.id = $1 AND e.user_id = $2
+       )
+       SELECT r.*,
+              (
+                SELECT string_agg(s.name, ' + ' ORDER BY s.name)
+                  FROM candidate_strategies cs
+                  JOIN strategies s ON s.id = cs.strategy_id
+                 WHERE cs.candidate_id = r.candidate_id
+              ) AS combo
+         FROM ranked r
+        WHERE r.candidate_id = ANY($3::uuid[])
+        ORDER BY r.rank ASC`,
+      [experimentId, userId, candidateIds],
+    );
+    return result.rows.map((row) => ({
+      candidateId: row.candidate_id,
+      combo: row.combo ?? '',
+      rank: Number(row.rank),
+      total: Number(row.total),
+      overallScore: row.overall_score === null ? null : Number(row.overall_score),
+      profitLoss: row.profit_loss === null ? null : Number(row.profit_loss),
+      winRate: row.win_rate === null ? null : Number(row.win_rate),
+      maxDrawdown: row.max_drawdown === null ? null : Number(row.max_drawdown),
+      numberOfTrades: row.number_of_trades,
+    }));
   }
 
   // Returns one candidate's full detail (header + evaluation + weighted

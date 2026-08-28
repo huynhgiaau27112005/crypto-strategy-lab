@@ -6,6 +6,7 @@ import { LeaderboardModule } from '../leaderboard/leaderboard.module';
 import { StrategyPluginModule } from '../strategy-plugin/strategy-plugin.module';
 import { AiStrategyModule } from '../ai-strategy/ai-strategy.module';
 import { NewsModule } from '../news/news.module';
+import { MarketDataCoreModule } from '../market-data/market-data-core.module';
 import { DomainGuidedRandomGenerator } from './generators/domain-guided-random.generator';
 import { ExperimentRepository } from './repositories/experiment.repository';
 import { ExperimentConfigRepository } from './repositories/experiment-config.repository';
@@ -28,6 +29,10 @@ import { SearchQueueService } from './services/search-queue.service';
     StrategyPluginModule,
     AiStrategyModule,
     NewsModule,
+    // Candle backfill before a search starts - see
+    // StrategySearchService.start(). Core module (no controller/gateway)
+    // because WorkerModule imports this module too.
+    MarketDataCoreModule,
   ],
   controllers: [StrategySearchController],
   providers: [

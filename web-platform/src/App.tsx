@@ -9,6 +9,7 @@ import NewsPage from './pages/NewsPage'
 import RealtimePage from './pages/RealtimePage'
 import StrategyEnginePage from './pages/StrategyEnginePage'
 import { ExperimentProvider } from './state/ExperimentContext'
+import { NewsCrawlProvider } from './state/NewsCrawlContext'
 import { StrategySelectionProvider } from './state/StrategySelectionContext'
 import WorkspaceLayout from './workspace/WorkspaceLayout'
 
@@ -30,7 +31,14 @@ export default function App() {
                   experiment run (id + applied config) and the candidate
                   currently drilled into — same live state, no second fetch. */}
               <ExperimentProvider>
-                <WorkspaceLayout />
+                {/* Mounted at the route, not inside NewsPage: a running crawl
+                    must survive switching tabs. Owning the poll here is what
+                    keeps the button on "Đang crawl" until the user stops it
+                    (or the worker finishes), instead of resetting every time
+                    the News tab unmounts. */}
+                <NewsCrawlProvider>
+                  <WorkspaceLayout />
+                </NewsCrawlProvider>
               </ExperimentProvider>
             </StrategySelectionProvider>
           </RequireAuth>
