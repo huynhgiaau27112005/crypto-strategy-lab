@@ -55,6 +55,34 @@ export function assertValidLimit(limit: unknown): number {
   return parsed;
 }
 
+/**
+ * Milliseconds covered by one candle of `interval`. Returns null for an
+ * interval this parser does not recognise (every value in
+ * ALLOWED_INTERVALS is recognised).
+ */
+export function intervalMs(interval: string): number | null {
+  const match = /^(\d+)([smhdw])$/.exec(interval);
+  if (!match) return null;
+  const unitSeconds: Record<string, number> = {
+    s: 1,
+    m: 60,
+    h: 60 * 60,
+    d: 24 * 60 * 60,
+    w: 7 * 24 * 60 * 60,
+  };
+  return Number(match[1]) * unitSeconds[match[2]] * 1000;
+}
+
+/**
+ * Minimum number of candles this project wants in the database for every
+ * timeframe before a backtest window is considered usable. Long timeframes
+ * (1h, 4h) used to fail every search with "Dataset has N candles; at least
+ * 202 are required" purely because nobody had ever backfilled that far
+ * back — the requested window was legitimate, the local history was not.
+ * MarketDataService.ensureCandleCoverage() backfills up to this floor.
+ */
+export const MIN_CANDLES_PER_TIMEFRAME = 300;
+
 const DEFAULT_CACHE_TTL_SECONDS = 30;
 // Safety cap so a huge/unexpected interval string (e.g. "1w") can't pin a
 // cached candle response for an unreasonably long time; every interval this

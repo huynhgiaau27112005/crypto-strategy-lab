@@ -1,5 +1,11 @@
 import { spawn } from 'child_process';
-import { getAiStrategyPythonBin, getAiStrategyWorkerDir, getMaxOutputBytes } from './ai-strategy.config';
+import { describeSpawnFailure } from '../../common/python-bin';
+import {
+  AI_STRATEGY_PYTHON_BIN_ENV,
+  getAiStrategyPythonBin,
+  getAiStrategyWorkerDir,
+  getMaxOutputBytes,
+} from './ai-strategy.config';
 
 export class PythonProcessError extends Error {
   constructor(
@@ -83,7 +89,13 @@ export function runPythonWorker<T>(script: string, payload: unknown, timeoutMs: 
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      reject(new PythonProcessError(`Python worker process error (${script}): ${errorMessage(err)}`, null, stderr));
+      reject(
+        new PythonProcessError(
+          `Python worker process error (${script}): ${describeSpawnFailure(err, pythonBin, AI_STRATEGY_PYTHON_BIN_ENV)}`,
+          null,
+          stderr,
+        ),
+      );
     });
 
     child.on('close', (code) => {
@@ -142,3 +154,4 @@ export function runPythonWorker<T>(script: string, payload: unknown, timeoutMs: 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+

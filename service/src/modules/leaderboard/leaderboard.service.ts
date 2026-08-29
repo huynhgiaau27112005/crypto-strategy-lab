@@ -1,15 +1,31 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  DomainEventNames,
+  LeaderboardUpdatedPayload,
+} from '../../domain-events';
+import { getCorrelationId } from '../../observability/correlation/correlation-context';
 import { DatabaseService } from '../../database/database.service';
 import { CacheService } from '../../cache/cache.service';
 import { leaderboardVersionKey } from './leaderboard-cache-keys';
 
 @Injectable()
 export class LeaderboardService {
+  private readonly logger = new Logger(LeaderboardService.name);
+
   constructor(
     private readonly database: DatabaseService,
     private readonly cache: CacheService,
+    private readonly events: EventEmitter2,
   ) {}
 
+  /**
+   * CQRS write side (tactical — see artifacts/cqrs.md): materialises the
+   * `leaderboard_entries` read model from the normalised write tables
+   * (`experiment_iterations` / `candidates` / `backtest_runs` /
+   * `evaluations`) in one transaction, then bumps the cache version the
+   * read side keys on. Same database, separate paths.
+   */
   async rebuildForExperiment(
     experimentId: string,
     topK: number,
@@ -56,6 +72,29 @@ export class LeaderboardService {
     // Best-effort: a failed bump only means the next read serves a cached
     // response for up to LEADERBOARD_TOP_CACHE_TTL_SECONDS longer, not
     // that the rebuild itself (already committed above) is lost.
-    await this.cache.incr(leaderboardVersionKey(experimentId));
+    const leaderboardVersion = await this.cache.incr(
+      leaderboardVersionKey(experimentId),
+    );
+
+    // Fire-and-forget by design, and the ONLY emit in this codebase that is
+    // not awaited: nothing downstream of it is required for correctness
+    // (today: logging/metrics; later: a WebSocket push), and the rebuild it
+    // reports is already committed. Awaiting it would let a future listener
+    // slow down — or, worse, fail — a write path that has already succeeded.
+    const payload: LeaderboardUpdatedPayload = {
+      experimentId,
+      topK,
+      leaderboardVersion: leaderboardVersion ?? null,
+      correlationId: getCorrelationId(),
+    };
+    void this.events
+      .emitAsync(DomainEventNames.LeaderboardUpdated, payload)
+      .catch((error: unknown) =>
+        this.logger.warn(
+          `leaderboard.updated listener failed for experiment ${experimentId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        ),
+      );
   }
 }

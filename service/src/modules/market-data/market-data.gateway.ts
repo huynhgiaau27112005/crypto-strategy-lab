@@ -9,12 +9,21 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 
-import { BinanceClient, KlineStreamHandle, KlineUpdate } from './clients/binance.client';
+import {
+    BinanceClient,
+    KlineStreamHandle,
+    KlineUpdate,
+    TradeUpdate,
+} from './clients/binance.client';
 import { CandleRepository } from './repositories/candle.repository';
 import { assertAllowedInterval } from './config';
 
 // Market scope is fixed for this project: Binance, BTCUSDT only.
 const SYMBOL = 'BTCUSDT';
+
+// Single room for the symbol-wide tick feed (there is only one symbol in
+// this project's scope, so no per-symbol room naming is needed).
+const TRADE_ROOM = 'trades';
 
 interface CandleBroadcast {
     interval: string;
@@ -24,6 +33,23 @@ interface CandleBroadcast {
     low: string;
     close: string;
     volume: string;
+    /**
+     * False while this candle is still forming. Both states are broadcast:
+     * dropping the forming ones (the previous behaviour) meant the chart
+     * only ever moved once per interval, so a 1m pane was up to a minute
+     * behind the market and a 4h pane four hours behind. Consumers redraw
+     * the in-progress bar on every update and treat `closed: true` as the
+     * bar's final state; only closed candles are persisted.
+     */
+    closed: boolean;
+}
+
+interface TradeBroadcast {
+    tradeId: number;
+    timestamp: string;
+    price: string;
+    quantity: string;
+    buyerIsMaker: boolean;
 }
 
 interface StatusBroadcast {
@@ -65,6 +91,11 @@ export class MarketDataGateway
     // interval -> set of subscribed socket ids. The size of each set is the
     // ref-count that decides when to open/close the matching upstream stream.
     private readonly subscribers = new Map<string, Set<string>>();
+
+    // Same ref-counting, one level simpler, for the single symbol-wide
+    // aggregate-trade stream backing the "Recent ticks" feed.
+    private readonly tradeSubscribers = new Set<string>();
+    private tradeStream: KlineStreamHandle | null = null;
 
     constructor(
         private readonly binanceClient: BinanceClient,
@@ -125,10 +156,28 @@ export class MarketDataGateway
         this.removeSubscriber(interval, client.id);
     }
 
+    /**
+     * Opt-in tick feed. Kept separate from `subscribe` so a client that only
+     * renders charts never pays for the (far busier) trade stream.
+     */
+    @SubscribeMessage('subscribeTrades')
+    handleSubscribeTrades(@ConnectedSocket() client: Socket): void {
+        void client.join(TRADE_ROOM);
+        this.tradeSubscribers.add(client.id);
+        this.ensureTradeStream();
+    }
+
+    @SubscribeMessage('unsubscribeTrades')
+    handleUnsubscribeTrades(@ConnectedSocket() client: Socket): void {
+        void client.leave(TRADE_ROOM);
+        this.removeTradeSubscriber(client.id);
+    }
+
     handleDisconnect(client: Socket): void {
         for (const interval of [...this.subscribers.keys()]) {
             this.removeSubscriber(interval, client.id);
         }
+        this.removeTradeSubscriber(client.id);
     }
 
     onModuleDestroy(): void {
@@ -137,6 +186,44 @@ export class MarketDataGateway
         }
         this.streams.clear();
         this.subscribers.clear();
+        this.tradeStream?.stop();
+        this.tradeStream = null;
+        this.tradeSubscribers.clear();
+    }
+
+    private removeTradeSubscriber(socketId: string): void {
+        if (!this.tradeSubscribers.delete(socketId)) return;
+        if (this.tradeSubscribers.size === 0) {
+            this.tradeStream?.stop();
+            this.tradeStream = null;
+        }
+    }
+
+    private ensureTradeStream(): void {
+        if (this.tradeStream) return;
+        try {
+            this.tradeStream = this.binanceClient.streamTrades(SYMBOL, {
+                onTrade: (trade) => this.handleUpstreamTrade(trade),
+            });
+        } catch (error) {
+            // Same rationale as ensureStream(): never cache a broken handle,
+            // so the next subscriber retries instead of the room being dead
+            // for the rest of the process's life.
+            this.logger.error(
+                `Failed to open upstream trade stream: ${String(error)}`,
+            );
+        }
+    }
+
+    private handleUpstreamTrade(trade: TradeUpdate): void {
+        const message: TradeBroadcast = {
+            tradeId: trade.tradeId,
+            timestamp: new Date(trade.timestamp).toISOString(),
+            price: trade.price,
+            quantity: trade.quantity,
+            buyerIsMaker: trade.buyerIsMaker,
+        };
+        this.server.to(TRADE_ROOM).emit('trade', message);
     }
 
     private removeSubscriber(interval: string, socketId: string): void {
@@ -195,14 +282,8 @@ export class MarketDataGateway
     }
 
     private handleUpstreamUpdate(interval: string, update: KlineUpdate): void {
-        // Only closed candles are broadcast and persisted — an in-progress
-        // candle still mutates and would corrupt the historical series that
-        // every backtest reads if written through CandleRepository.
-        if (!update.isClosed) {
-            return;
-        }
-
         const candle: CandleBroadcast = {
+            closed: update.isClosed,
             interval,
             timestamp: new Date(update.timestamp).toISOString(),
             open: update.open,
@@ -213,6 +294,14 @@ export class MarketDataGateway
         };
 
         this.server.to(this.roomName(interval)).emit('candle', candle);
+
+        // Persist ONLY closed candles: an in-progress candle still mutates,
+        // and writing it through CandleRepository would corrupt the
+        // historical series every backtest reads. Broadcasting it is safe
+        // (the client redraws the same bar); storing it is not.
+        if (!update.isClosed) {
+            return;
+        }
 
         this.candleRepository
             .insertCandles([

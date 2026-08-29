@@ -446,9 +446,17 @@ Không cần auth (giống các endpoint `.../health` khác trong repo — đây
 
 > ⚠️ **Chưa có auth** — đây là nợ kỹ thuật đã biết, cần bổ sung `JwtAuthGuard` cho nhất quán với phần còn lại.
 
-### `GET /market-data/candles?symbol=BTCUSDT&interval=5m&limit=500`
+### `GET /market-data/candles?symbol=BTCUSDT&interval=5m&limit=500[&startTime=&endTime=]`
 
 Lấy nến **trực tiếp từ Binance** (không đọc DB). `limit` mặc định 500.
+
+`startTime` / `endTime` (tuỳ chọn, nhận **ISO 8601 hoặc epoch milliseconds**) giới
+hạn cửa sổ lịch sử. Bỏ trống cả hai → trả về `limit` nến đã đóng **mới nhất** như
+trước. Có tham số → trả về đúng khoảng đó. Đây là thứ tab Backtest cần: trước khi
+có 2 tham số này, chart mục 02 luôn vẽ 300 nến mới nhất bất kể khoảng ngày đã
+backtest, nên các lệnh liệt kê bên dưới thường nằm ngoài hẳn vùng giá đang hiện.
+`startTime >= endTime` → `400`. Cache key có chứa cả hai mốc, nên request có cửa
+sổ không bao giờ bị phục vụ bằng response "mới nhất" đã cache.
 
 **Nến đang hình thành (chưa đóng) bị loại khỏi response.** Trang mới nhất Binance trả về luôn có phần tử cuối là cây nến hiện tại còn đang chạy — `close`/`volume` của nó còn thay đổi, chưa phải giá trị cuối cùng. Nếu trả về lẫn với các nến đã đóng mà không phân biệt được, mọi consumer (chart, tính toán phía sau) đều có nguy cơ đọc nhầm số liệu tạm là số liệu thật. Do endpoint này chưa có field nào để đánh dấu "chưa đóng", lựa chọn là **loại bỏ hẳn** nến đó khỏi mảng trả về (cùng tiêu chí `isClosed` dùng bởi `POST /market-data/import` và WebSocket) thay vì trả về kèm cờ — giữ bất biến "mọi nến endpoint này trả về đều đã đóng" cho toàn bộ consumer, không cần nhớ check thêm field. Hệ quả: mảng trả về có thể ngắn hơn `limit` tối đa 1 phần tử.
 
@@ -497,6 +505,8 @@ Phạm vi cố định: chỉ **Binance / BTCUSDT**; `interval` chỉ nhận đ�
 |---|---|---|
 | `subscribe` | `{ "interval": "1m" \| "5m" \| "15m" \| "1h" \| "4h" }` | Tham gia room nhận nến của khung thời gian đó. |
 | `unsubscribe` | `{ "interval": "..." }` | Rời room; nếu là subscriber cuối cùng của interval đó, upstream stream Binance cho interval này bị đóng. |
+| `subscribeTrades` | *(không payload)* | Tham gia room `trades` để nhận từng lệnh khớp. Tách riêng khỏi `subscribe` để client chỉ vẽ chart không phải gánh luồng trade vốn dày hơn nhiều. |
+| `unsubscribeTrades` | *(không payload)* | Rời room `trades`; subscriber cuối cùng rời đi thì đóng stream aggTrade upstream. |
 
 `interval` không hợp lệ (vd `"2h"`) → server emit `error`, **không** mở kết nối lên Binance, **không** join room.
 
@@ -504,7 +514,8 @@ Phạm vi cố định: chỉ **Binance / BTCUSDT**; `interval` chỉ nhận đ�
 
 | Event | Payload | Khi nào bắn |
 |---|---|---|
-| `candle` | `{ interval, timestamp, open, high, low, close, volume }` — cùng shape với phần tử mảng của `GET /market-data/candles` (`timestamp` là ISO 8601, các giá trị giá/khối lượng là chuỗi) | Chỉ khi nến của Binance đã **đóng** (kline `x: true` phía Binance — chi tiết wire-format này không lộ ra ngoài `binance.client.ts`). Chỉ gửi tới room `interval:<value>` tương ứng, không broadcast toàn namespace. |
+| `candle` | `{ interval, timestamp, open, high, low, close, volume, closed }` — cùng shape với phần tử mảng của `GET /market-data/candles`, **thêm cờ `closed`** | Bắn cho **mọi** update của Binance, kể cả nến đang hình thành (`closed: false`). Đây là thứ làm chart chuyển động liên tục trong một interval; trước đây chỉ bắn nến đã đóng nên pane 1m trễ tới 1 phút, pane 4h trễ tới 4 giờ. Client vẽ đè lên đúng cây nến cùng `timestamp`. Chỉ gửi tới room `interval:<value>`, không broadcast toàn namespace. **Chỉ nến `closed: true` mới được ghi DB.** |
+| `trade` | `{ tradeId, timestamp, price, quantity, buyerIsMaker }` | Mỗi lệnh khớp thật (Binance `btcusdt@aggTrade`), gửi tới room `trades`. Nguồn cho panel "Recent ticks" — trước đây panel này ăn từ stream nến nên không thể có quá 1 dòng mỗi timeframe. `buyerIsMaker: true` nghĩa là bên chủ động là người bán. |
 | `status` | `{ connected: boolean, interval: string, lastMessageAt: string \| null }` | Gửi cho client ngay khi `subscribe` thành công (snapshot trạng thái hiện tại), và bắn lại cho cả room mỗi khi upstream đổi trạng thái kết nối (mở/rớt/reconnect). `lastMessageAt` là thời điểm nhận message gần nhất từ Binance, dùng cho panel "Trạng thái kết nối" trên UI — không phải trạng thái lạc quan cố định `connected: true`. |
 | `error` | `{ message: string }` | `subscribe` với interval không hợp lệ. |
 
@@ -757,3 +768,63 @@ Dùng định dạng lỗi mặc định của NestJS:
 4. Chưa có validation pipe khai báo (dùng `class-validator`); hiện việc kiểm tra dữ liệu vào làm thủ công trong service (endpoint mới `news`/`sentiment` dùng `zod`, giống `auth`, thay vì `class-validator`).
 5. `SentimentModule` phụ thuộc `NewsRepository` (export từ `NewsModule`) thay vì có repository sentiment riêng — hợp lý vì cả hai đọc cùng bảng `news`, nhưng nghĩa là ranh giới module "Sentiment" hiện chỉ là ranh giới đọc/tổng hợp, không có bảng riêng của nó.
 6. (task-16) `POST /news/crawl` không tự động retry khi worker Python lỗi (`attempts: 1`, xem mục 4). Người dùng phải tự bấm lại. Đây là lựa chọn có chủ đích (một crawl thất bại retry mù có thể crawl trùng cùng cửa sổ thời gian), không phải thiếu sót — nhưng nghĩa là một lỗi thoáng qua (mất mạng RSS tạm thời) cần thao tác thủ công thay vì tự phục hồi.
+
+
+## 8. Bổ sung sau đợt sửa theo tab "Flow" (2026-08-28)
+
+### `POST /strategy-search/experiments` — tham số chi phí giao dịch
+
+Body nhận thêm (tất cả đều tuỳ chọn, bỏ trống = hành vi cũ):
+
+| Field | Kiểu | Mặc định | Miền giá trị |
+|---|---|---|---|
+| `initialCapital` | number | `10000` | 1 … 1 000 000 000 |
+| `transactionCostPct` | number | `0` | 0 … 10 (phần trăm notional, **mỗi chiều**) |
+| `slippageBps` | number | `0` | 0 … 1000 (basis point, **mỗi chiều**) |
+| `stopLossPct` | number \| null | `null` (tắt) | 0.01 … 100 |
+| `takeProfitPct` | number \| null | `null` (tắt) | 0.01 … 1000 |
+| `topK` | int | `10` | **1 … 20** (trước đây 1…100) |
+
+Lưu trong `experiments.search_config` JSONB dưới khoá `costs`, nên mọi process
+(`API`, `worker`) dựng lại được đúng cấu hình — không cần migration. Row cũ không có
+khoá `costs` → rơi về mặc định, tái lập đúng kết quả trước đây.
+
+Cách áp dụng: mua khớp `close × (1 + slippage)`, bán khớp `close × (1 − slippage)`;
+phí tính trên notional cả hai chiều; `notional = capital / (1 + fee)`. SL/TP kiểm tra
+theo `low`/`high` **trong chính cây nến** (không chờ `close`), một nến chạm cả hai
+thì lấy Stop Loss.
+
+### `POST /strategy-search/experiments/:id/regenerate` — trường mới `summaries`
+
+Response bổ sung `summaries`: mỗi tổ hợp vừa sinh lại kèm **hạng thật trên tổng số**
+candidate của experiment (`RANK() OVER` trên toàn bộ, không chỉ Top-K).
+
+```json
+{
+  "regenerated": 2,
+  "skipped": 0,
+  "candidateIds": ["…"],
+  "summaries": [
+    { "candidateId": "…", "combo": "MA + RSI", "rank": 37, "total": 100,
+      "overallScore": 54.2, "profitLoss": -12.5, "winRate": 0.41,
+      "maxDrawdown": -8.2, "numberOfTrades": 24 }
+  ]
+}
+```
+
+Lý do: version tham số người dùng tự chỉnh thường **không lọt Top-K**, nên trước đây
+nhìn như hệ thống không tạo gì cả. FE hiển thị chúng ở mục riêng **"Version của
+tôi"** dưới bảng Top-K.
+
+### `GET /ai-strategy/provider`
+
+Cho biết LLM nào đang thực sự được nối. Không có endpoint này thì không phân biệt
+được "key đúng" với "không có key" — provider giả lập trả về Python **hợp lệ**.
+
+```json
+{ "name": "openai-compatible", "live": true, "keySource": "OPENROUTER_API_KEY",
+  "baseUrl": "https://openrouter.ai/api/v1", "model": "openai/gpt-4o-mini" }
+```
+
+`live: false` ⇒ chưa cấu hình key nào (hoặc key đặt dưới tên biến backend không
+đọc). Backend chấp nhận **`OPENAI_API_KEY`** hoặc **`OPENROUTER_API_KEY`**.

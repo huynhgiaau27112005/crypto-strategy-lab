@@ -90,10 +90,38 @@ describe('MarketDataService', () => {
             const service = new MarketDataService(binanceClient as any, candleRepository as any, cache as any);
             await service.getCandles('BTCUSDT', '5m', 500);
 
+            // The trailing `::` is the empty startTime/endTime window — a
+            // windowed request keys differently so it can never be served
+            // the latest-candles response.
             expect(cache.set).toHaveBeenCalledWith(
-                'market-data:candles:BTCUSDT:5m:500',
+                'market-data:candles:BTCUSDT:5m:500::',
                 expect.any(Array),
                 300, // 5m
+            );
+        });
+
+        it('keys a windowed request separately and passes both bounds to Binance', async () => {
+            const closedA = makeRow({ openTime: 1_000, closeTime: 1_059 });
+            const binanceClient = { getKlines: jest.fn().mockResolvedValue([closedA]) };
+            const candleRepository = { insertCandles: jest.fn() };
+            const cache = makeCache();
+            const from = new Date('2026-08-01T00:00:00.000Z');
+            const to = new Date('2026-08-08T00:00:00.000Z');
+
+            const service = new MarketDataService(binanceClient as any, candleRepository as any, cache as any);
+            await service.getCandles('BTCUSDT', '5m', 500, from, to);
+
+            expect(binanceClient.getKlines).toHaveBeenCalledWith(
+                'BTCUSDT',
+                '5m',
+                500,
+                to.getTime(),
+                from.getTime(),
+            );
+            expect(cache.set).toHaveBeenCalledWith(
+                `market-data:candles:BTCUSDT:5m:500:${from.getTime()}:${to.getTime()}`,
+                expect.any(Array),
+                300,
             );
         });
 

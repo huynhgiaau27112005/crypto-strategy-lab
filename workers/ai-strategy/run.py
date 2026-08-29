@@ -21,27 +21,20 @@ from __future__ import annotations
 
 import ast
 import json
-import signal
 import sys
 
 from sandbox import (
     CONTRACT_FUNCTION,
+    TimeLimitExceeded,
     build_restricted_globals,
     check_contract_signature,
     find_contract_function,
     scan_safety,
+    time_limit,
 )
 
 RUN_TIMEOUT_SECONDS = 20
 VALID_SIGNALS = {"BUY", "SELL", "HOLD"}
-
-
-class _RunTimeout(Exception):
-    pass
-
-
-def _on_alarm(signum, frame):  # noqa: ARG001
-    raise _RunTimeout(f"Execution exceeded {RUN_TIMEOUT_SECONDS}s internal timeout")
 
 
 def fail(message: str) -> int:
@@ -67,13 +60,15 @@ def main() -> int:
     if violations:
         return fail("Safety scan failed: " + "; ".join(violations))
 
-    old_handler = signal.signal(signal.SIGALRM, _on_alarm)
-    signal.alarm(RUN_TIMEOUT_SECONDS)
     try:
         restricted_globals = build_restricted_globals()
         exec(compile(tree, "<ai-strategy>", "exec"), restricted_globals)  # noqa: S102
         fn = restricted_globals[CONTRACT_FUNCTION]
-        result = fn(candles)
+        with time_limit(
+            RUN_TIMEOUT_SECONDS,
+            f"Execution exceeded {RUN_TIMEOUT_SECONDS}s internal timeout",
+        ):
+            result = fn(candles)
         if not isinstance(result, list) or len(result) != len(candles):
             got_len = len(result) if isinstance(result, list) else "n/a"
             return fail(
@@ -83,13 +78,10 @@ def main() -> int:
         bad = sorted({s for s in result if s not in VALID_SIGNALS}, key=str)
         if bad:
             return fail(f"Invalid signal value(s) returned (must be BUY/SELL/HOLD): {bad[:5]}")
-    except _RunTimeout as exc:
+    except TimeLimitExceeded as exc:
         return fail(str(exc))
     except Exception as exc:  # noqa: BLE001
         return fail(f"{type(exc).__name__}: {exc}")
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
 
     print(json.dumps({"signals": result}))
     return 0

@@ -47,7 +47,7 @@ function validate(schema: ParameterSpec[], values: Record<string, number>): Reco
 
 export default function ParameterPanel({ strategy }: { strategy: StrategyCatalogItem | null }) {
   const { versions, loading, error, saving, saveError, saveVersion } = useStrategyVersions(strategy?.type ?? null)
-  const { experimentId, bumpLeaderboard } = useExperimentContext()
+  const { experimentId, bumpLeaderboard, setMyVersionCandidates } = useExperimentContext()
   const [cascading, setCascading] = useState(false)
 
   // The version currently shown in the picker — defaults to the latest
@@ -135,10 +135,17 @@ export default function ParameterPanel({ strategy }: { strategy: StrategyCatalog
         { method: 'POST', body: JSON.stringify({ strategyName: strategy.type }) },
       )
       bumpLeaderboard()
+      // Hand the placements to the Leaderboard tab so the regenerated
+      // combinations stay visible even when they score outside Top-K.
+      setMyVersionCandidates(res.summaries ?? [])
+      const placements = (res.summaries ?? [])
+        .map((sum) => `#${sum.rank}/${sum.total}`)
+        .join(', ')
       setSavedNotice(
         res.regenerated > 0
           ? `Đã lưu version ${created.version}. Hệ thống sinh lại ${res.regenerated} tổ hợp có chứa ` +
-            `${strategy.displayName} thành version tổ hợp mới trong Leaderboard.`
+            `${strategy.displayName}${placements ? ` (hạng ${placements})` : ''}. ` +
+            'Xem mục "Version của tôi" ở tab Leaderboard — kể cả khi chưa lọt Top-K.'
           : `Đã lưu version ${created.version}. Không có tổ hợp nào trên Leaderboard chứa ` +
             `${strategy.displayName} để sinh lại.`,
       )

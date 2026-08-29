@@ -18,27 +18,20 @@ from __future__ import annotations
 
 import ast
 import json
-import signal
 import sys
 
 from sandbox import (
     CONTRACT_FUNCTION,
+    TimeLimitExceeded,
     build_restricted_globals,
     check_contract_signature,
     find_contract_function,
     scan_safety,
+    time_limit,
 )
 
 SMOKE_TIMEOUT_SECONDS = 5
 VALID_SIGNALS = {"BUY", "SELL", "HOLD"}
-
-
-class _SmokeTimeout(Exception):
-    pass
-
-
-def _on_alarm(signum, frame):  # noqa: ARG001
-    raise _SmokeTimeout(f"Smoke run exceeded {SMOKE_TIMEOUT_SECONDS}s internal timeout")
 
 
 def synthetic_candles(n: int = 30) -> list[dict]:
@@ -120,14 +113,16 @@ def main() -> int:
             overall_valid = False
 
     if tree is not None and func_node is not None and safety_ok:
-        old_handler = signal.signal(signal.SIGALRM, _on_alarm)
-        signal.alarm(SMOKE_TIMEOUT_SECONDS)
         try:
             candles = synthetic_candles()
             restricted_globals = build_restricted_globals()
             exec(compile(tree, "<ai-strategy>", "exec"), restricted_globals)  # noqa: S102
             fn = restricted_globals[CONTRACT_FUNCTION]
-            result = fn(candles)
+            with time_limit(
+                SMOKE_TIMEOUT_SECONDS,
+                f"Smoke run exceeded {SMOKE_TIMEOUT_SECONDS}s internal timeout",
+            ):
+                result = fn(candles)
             if not isinstance(result, list) or len(result) != len(candles):
                 got_len = len(result) if isinstance(result, list) else "n/a"
                 raise ValueError(
@@ -144,15 +139,12 @@ def main() -> int:
                     "message": f"Ran on {len(candles)} synthetic candles, returned {len(result)} valid signals.",
                 }
             )
-        except _SmokeTimeout as exc:
+        except TimeLimitExceeded as exc:
             checks.append({"key": "smoke", "passed": False, "message": str(exc)})
             overall_valid = False
         except Exception as exc:  # noqa: BLE001 - any failure from untrusted code becomes a check result, not a crash
             checks.append({"key": "smoke", "passed": False, "message": f"{type(exc).__name__}: {exc}"})
             overall_valid = False
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
     else:
         checks.append({"key": "smoke", "passed": False, "message": "Skipped: an earlier check failed."})
         overall_valid = False

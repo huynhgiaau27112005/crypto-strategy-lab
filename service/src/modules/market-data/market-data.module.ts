@@ -1,34 +1,18 @@
 import { Module } from '@nestjs/common';
 
-import { MarketDataController }
-  from './market-data.controller';
+import { MarketDataCoreModule } from './market-data-core.module';
+import { MarketDataController } from './market-data.controller';
+import { MarketDataGateway } from './market-data.gateway';
 
-import { MarketDataService }
-  from './market-data.service';
-
-import { MarketDataGateway }
-  from './market-data.gateway';
-
-import { BinanceClient }
-  from './clients/binance.client';
-
-import { CandleRepository }
-  from './repositories/candle.repository';
-
+/**
+ * The network-facing half of market data: the REST controller and the
+ * `/market` WebSocket gateway. Providers live in MarketDataCoreModule so a
+ * non-HTTP process (the worker) can depend on the service alone.
+ */
 @Module({
-  controllers: [
-    MarketDataController,
-  ],
-
-  providers: [
-    MarketDataService,
-    MarketDataGateway,
-    BinanceClient,
-    CandleRepository,
-  ],
-
-  exports: [
-    MarketDataService,
-  ],
+  imports: [MarketDataCoreModule],
+  controllers: [MarketDataController],
+  providers: [MarketDataGateway],
+  exports: [MarketDataCoreModule],
 })
-export class MarketDataModule { }
+export class MarketDataModule {}

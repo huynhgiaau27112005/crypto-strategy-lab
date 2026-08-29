@@ -1,6 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ChildProcess, spawn } from 'child_process';
-import { getPythonBin, getTimeoutMs, getWorkerDir, getWorkerScript } from './news-crawl.config';
+import { describeSpawnFailure } from '../../../common/python-bin';
+import {
+  NEWS_PYTHON_BIN_ENV,
+  getPythonBin,
+  getTimeoutMs,
+  getWorkerDir,
+  getWorkerScript,
+} from './news-crawl.config';
 
 // Capped so a runaway stderr stream from the worker cannot grow this
 // in-memory buffer unboundedly for the lifetime of a long crawl.
@@ -40,7 +47,11 @@ export class NewsCrawlService {
       try {
         child = spawn(pythonBin, [script], { cwd: workerDir, env: process.env });
       } catch (err) {
-        reject(new Error(`Failed to start worker process: ${this.errorMessage(err)}`));
+        reject(
+          new Error(
+            `Failed to start worker process: ${describeSpawnFailure(err, pythonBin, NEWS_PYTHON_BIN_ENV)}`,
+          ),
+        );
         return;
       }
 
@@ -70,7 +81,11 @@ export class NewsCrawlService {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        reject(new Error(`Worker process error: ${this.errorMessage(err)}`));
+        reject(
+          new Error(
+            `Worker process error: ${describeSpawnFailure(err, pythonBin, NEWS_PYTHON_BIN_ENV)}`,
+          ),
+        );
       });
 
       child.on('close', (code) => {

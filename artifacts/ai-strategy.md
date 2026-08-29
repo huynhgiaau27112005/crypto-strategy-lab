@@ -66,6 +66,23 @@ Bốn bước, kết quả hiện thẳng lên panel `Kiểm tra & validation`:
 Bước 3 **duyệt cây AST chứ không regex source code**. Regex kiểu `/import os/` bị né dễ dàng bằng
 `__import__('o'+'s')`; duyệt AST thì không.
 
+### Interpreter Python và timeout — chạy được trên cả Windows lẫn POSIX
+
+**Chọn interpreter** (`getAiStrategyPythonBin`), dừng ở cái đầu tiên tồn tại:
+`AI_STRATEGY_PYTHON_BIN` → venv `workers/news/.venv` **nếu có** (đúng layout của HĐH:
+`Scripts\python.exe` trên Windows, `bin/python` trên POSIX) → `python` / `python3` trên PATH.
+Worker chỉ dùng thư viện chuẩn nên bất kỳ CPython 3.10+ nào cũng chạy; venv là tiện lợi chứ không
+bắt buộc. Trước đây đường dẫn venv POSIX bị hard-code vô điều kiện nên trên Windows mọi lần validate
+đều chết với `spawn ... ENOENT` (xem `artifacts/decisions.md` mục F17).
+
+**Timeout hai tầng:**
+- *Tầng ngoài, bắt buộc:* `python-process.util.ts` bọc mọi subprocess bằng timeout cứng
+  (`AI_STRATEGY_VALIDATE_TIMEOUT_MS` 10s / `AI_STRATEGY_RUN_TIMEOUT_MS` 30s) rồi SIGKILL. Đây mới
+  là biên thật sự.
+- *Tầng trong, defense in depth:* `sandbox.time_limit()` — `signal.alarm` trên POSIX,
+  `threading.Timer` + `_thread.interrupt_main()` trên Windows (vì Windows không có `SIGALRM`).
+  Không tầng nào ngắt được một lời gọi C dài, nên tầng ngoài vẫn là thứ không được bỏ.
+
 ### ⚠️ Đây là cổng kiểm duyệt, KHÔNG phải sandbox bảo mật
 
 Nói thẳng để nhóm chủ động trả lời khi bị hỏi: chạy code do LLM sinh trong subprocess kèm timeout

@@ -122,6 +122,7 @@ describe('MarketDataGateway', () => {
                 low: '90',
                 close: '105',
                 volume: '12.5',
+                closed: true,
             }),
         );
         expect(candleRepository.insertCandles).toHaveBeenCalledWith([
@@ -129,7 +130,7 @@ describe('MarketDataGateway', () => {
         ]);
     });
 
-    it('does not broadcast or persist an unclosed (in-progress) candle', () => {
+    it('broadcasts an unclosed (in-progress) candle as closed: false, but never persists it', () => {
         const client = makeSocket('socket-1');
         gateway.handleSubscribe(client as any, { interval: '1m' });
 
@@ -144,9 +145,12 @@ describe('MarketDataGateway', () => {
             isClosed: false,
         });
 
-        expect(server.emit).not.toHaveBeenCalledWith(
+        // Broadcasting the forming bar is what makes the chart move within
+        // an interval instead of jumping once per timeframe; persisting it
+        // would write a partial OHLCV row every backtest then reads.
+        expect(server.emit).toHaveBeenCalledWith(
             'candle',
-            expect.anything(),
+            expect.objectContaining({ interval: '1m', close: '105', closed: false }),
         );
         expect(candleRepository.insertCandles).not.toHaveBeenCalled();
     });

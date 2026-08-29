@@ -105,6 +105,26 @@ export class CandleRepository {
         });
     }
 
+    /**
+     * How many candles are stored for `timeframe` inside `[startTime,
+     * endTime)` — the same window predicate ExperimentRepository.candles()
+     * uses, so "does this window have enough history to backtest" can be
+     * answered without loading every row.
+     */
+    async countInWindow(
+        timeframe: string,
+        startTime: Date,
+        endTime: Date,
+    ): Promise<number> {
+        const result = await this.database.query<{ count: string }>(
+            `SELECT COUNT(*)::text AS count
+               FROM candles
+              WHERE timeframe = $1 AND timestamp >= $2 AND timestamp < $3`,
+            [timeframe, startTime, endTime],
+        );
+        return Number(result.rows[0]?.count ?? 0);
+    }
+
     /** Row count per timeframe — used to report backfill progress and results. */
     async countByTimeframe(): Promise<Record<string, number>> {
         const result = await this.database.query<{ timeframe: string; count: string }>(

@@ -42,8 +42,14 @@ function signalKind(signal: StrategySignal | null): SignalKind {
 export default function LeaderboardPage() {
   const navigate = useNavigate()
   const { strategies } = useStrategySelection()
-  const { experimentId, setBacktestCandidateId, lastConfig, setLastConfig, leaderboardRev } =
-    useExperimentContext()
+  const {
+    experimentId,
+    setBacktestCandidateId,
+    lastConfig,
+    setLastConfig,
+    leaderboardRev,
+    myVersionCandidates,
+  } = useExperimentContext()
 
   // Bumped after a successful POST .../extend to restart useExperiment's
   // polling in place (see the hook's `resumeToken` doc) — the experiment
@@ -290,6 +296,74 @@ export default function LeaderboardPage() {
           )}
         </div>
 
+        {experimentId && myVersionCandidates.length > 0 ? (
+          <div className="leaderboard-panel blueprint">
+            <BlueprintCorners />
+            <div className="leaderboard-panel-head">
+              <h4 style={{ fontSize: 16, margin: 0 }}>Version của tôi</h4>
+              <div style={{ flex: 1 }} />
+              <span className="text-muted mono" style={{ fontSize: 12 }}>
+                Sinh lại từ tham số bạn vừa lưu
+              </span>
+            </div>
+            <p className="text-muted" style={{ fontSize: 12, margin: '0 0 10px' }}>
+              Các tổ hợp được sinh lại theo version tham số bạn tự chỉnh, kèm thứ hạng thật so với
+              TOÀN BỘ candidate của lần chạy này — hiển thị kể cả khi chưa lọt Top-{lastConfig?.topK ?? 10}.
+            </p>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th style={{ width: 96 }}>Hạng</th>
+                  <th>Tổ hợp</th>
+                  <th style={{ textAlign: 'right' }}>Profit (USD)</th>
+                  <th style={{ textAlign: 'right' }}>Winrate</th>
+                  <th style={{ textAlign: 'right' }}>Max DD</th>
+                  <th style={{ textAlign: 'right' }}>Trades</th>
+                  <th style={{ width: 150 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {myVersionCandidates.map((row) => (
+                  <tr key={row.candidateId}>
+                    <td className="mono">
+                      #{row.rank}
+                      <span className="text-muted"> / {row.total}</span>
+                    </td>
+                    <td className="mono" style={{ fontSize: 13 }}>
+                      {row.combo}
+                    </td>
+                    <td className="mono" style={{ textAlign: 'right' }}>
+                      {row.profitLoss == null ? '—' : fmtUsd(row.profitLoss)}
+                    </td>
+                    <td className="mono" style={{ textAlign: 'right' }}>
+                      {row.winRate == null ? '—' : fmtPct(row.winRate)}
+                    </td>
+                    <td className="mono text-down" style={{ textAlign: 'right' }}>
+                      {row.maxDrawdown == null ? '—' : fmtPctRaw(row.maxDrawdown)}
+                    </td>
+                    <td className="mono" style={{ textAlign: 'right' }}>
+                      {row.numberOfTrades}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button
+                        type="button"
+                        className="btn btn-go"
+                        style={{ height: 28, fontSize: 12 }}
+                        onClick={() => {
+                          setBacktestCandidateId(row.candidateId)
+                          navigate('/app/backtest')
+                        }}
+                      >
+                        Xem kết quả →
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+
         {experimentId ? (
           <div className="leaderboard-panel blueprint">
             <BlueprintCorners />
@@ -299,9 +373,11 @@ export default function LeaderboardPage() {
               </h4>
               {selectedId ? <span className="tag tag-accent mono">{versionLabel(selectedId)}</span> : null}
               <div style={{ flex: 1 }} />
+              {/* The primary action of this panel — coloured, not another
+                  grey secondary button lost among the rest. */}
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="btn btn-go"
                 style={{ height: 34 }}
                 disabled={!selectedId}
                 onClick={() => {
@@ -310,7 +386,7 @@ export default function LeaderboardPage() {
                   navigate('/app/backtest')
                 }}
               >
-                Xem kết quả backtest
+                Xem kết quả backtest →
               </button>
             </div>
             <p className="text-muted" style={{ fontSize: 12, margin: '0 0 12px' }}>

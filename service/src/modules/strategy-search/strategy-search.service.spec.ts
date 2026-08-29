@@ -3,6 +3,7 @@ import { CandleEntity, ExperimentEntity } from '../../database/types';
 import { CandidateDefinition, StartSearchRequest } from './domain/search.types';
 import { StrategySearchService } from './strategy-search.service';
 import { MetricsService } from '../../observability/metrics/metrics.service';
+import { DomainEventNames } from '../../domain-events';
 
 function makeCandles(count: number): CandleEntity[] {
   return Array.from({ length: count }, (_, index) => ({
@@ -84,6 +85,7 @@ describe('StrategySearchService', () => {
         created_at: new Date(),
       }),
       listTopCandidateMembers: jest.fn().mockResolvedValue([]),
+      rankedSummaries: jest.fn().mockResolvedValue([]),
     };
     const strategies = {
       findByName: jest.fn(),
@@ -114,8 +116,12 @@ describe('StrategySearchService', () => {
       complete: jest.fn().mockResolvedValue(undefined),
       fail: jest.fn().mockResolvedValue(undefined),
     };
-    const leaderboard = {
-      rebuildForExperiment: jest.fn().mockResolvedValue(undefined),
+    // Search no longer holds a LeaderboardService reference at all: it
+    // emits, and LeaderboardEventsHandler rebuilds. These tests therefore
+    // assert on the ANNOUNCEMENT, and leaderboard-events.handler.spec.ts
+    // covers what the announcement causes.
+    const events = {
+      emitAsync: jest.fn().mockResolvedValue([]),
     };
     const searchQueue = {
       enqueue: jest.fn().mockResolvedValue(undefined),
@@ -141,9 +147,17 @@ describe('StrategySearchService', () => {
     const sentimentPrecompute = {
       precompute: jest.fn().mockResolvedValue([]),
     };
+    // start() backfills candles before checking the window; the mock makes
+    // that a no-op so these tests stay offline and deterministic.
+    const marketData = {
+      ensureCandleCoverage: jest
+        .fn()
+        .mockResolvedValue({ interval: '5m', before: 0, after: 0, fetched: 0 }),
+    };
 
     const mocks = {
       database,
+      marketData,
       experiments,
       experimentConfigs,
       iterations,
@@ -153,7 +167,7 @@ describe('StrategySearchService', () => {
       fingerprintService,
       backtesting,
       backtestRuns,
-      leaderboard,
+      events,
       searchQueue,
       cache,
       metrics,
@@ -166,6 +180,7 @@ describe('StrategySearchService', () => {
 
     const service = new StrategySearchService(
       mocks.database as any,
+      mocks.marketData as any,
       mocks.experiments as any,
       mocks.experimentConfigs as any,
       mocks.iterations as any,
@@ -175,7 +190,6 @@ describe('StrategySearchService', () => {
       mocks.fingerprintService as any,
       mocks.backtesting as any,
       mocks.backtestRuns as any,
-      mocks.leaderboard as any,
       mocks.searchQueue as any,
       mocks.cache as any,
       mocks.metrics as any,
@@ -183,10 +197,115 @@ describe('StrategySearchService', () => {
       mocks.aiPrecompute as any,
       mocks.strategyPlugin as any,
       mocks.sentimentPrecompute as any,
+      mocks.events as any,
     );
 
     return { service, mocks };
   }
+
+  describe('run() domain events', () => {
+    function pendingExperiment(): ExperimentEntity {
+      return {
+        id: 'exp-1',
+        user_id: 'user-1',
+        name: null,
+        status: 'PENDING',
+        started_at: null,
+        completed_at: null,
+        created_at: new Date(),
+      } as ExperimentEntity;
+    }
+
+    it('announces backtest.completed with the iteration identifiers and the experiment search config', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findByIdOrThrow.mockResolvedValue(pendingExperiment());
+      mocks.backtesting.run.mockReturnValue({
+        evaluation: { overallScore: 9, numberOfTrades: 5 },
+      });
+
+      await (service as any).run('exp-1');
+
+      expect(mocks.events.emitAsync).toHaveBeenCalledWith(
+        DomainEventNames.BacktestCompleted,
+        expect.objectContaining({
+          experimentId: 'exp-1',
+          candidateId: 'candidate-1',
+          iterationId: 'iteration-1',
+        }),
+      );
+      const [, payload] = mocks.events.emitAsync.mock.calls[0];
+      // The handler rebuilds from these; if they stopped riding along it
+      // would have to re-read the experiment on every single iteration.
+      expect(typeof payload.topK).toBe('number');
+      expect(typeof payload.minimumTrades).toBe('number');
+    });
+
+    // Behavior-preservation guard for the whole refactor. run() rebuilt the
+    // leaderboard after EVERY iteration, deliberately outside its backtest
+    // try/catch — so a failed iteration still announced a boundary. A
+    // success-only event would quietly reduce both the rebuild count and
+    // the leaderboard cache-version bumps.
+    it('still announces on a FAILED iteration, so the rebuild count matches the direct-call behavior it replaced', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findByIdOrThrow.mockResolvedValue(pendingExperiment());
+      mocks.backtesting.run.mockImplementation(() => {
+        throw new Error('backtest exploded');
+      });
+
+      await (service as any).run('exp-1');
+
+      expect(mocks.events.emitAsync).toHaveBeenCalledWith(
+        DomainEventNames.BacktestFailed,
+        expect.objectContaining({
+          experimentId: 'exp-1',
+          iterationId: 'iteration-1',
+          reason: expect.stringContaining('backtest exploded'),
+        }),
+      );
+    });
+
+    // Mirrors the old try/catch around rebuildForExperiment: the backtest
+    // rows are committed by then, so a listener blowing up must not fail
+    // the search job or leave the experiment stuck.
+    it('completes the search even when announcing throws', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findByIdOrThrow.mockResolvedValue(pendingExperiment());
+      mocks.events.emitAsync.mockRejectedValue(new Error('listener exploded'));
+
+      await (service as any).run('exp-1');
+
+      expect(mocks.experiments.finish).toHaveBeenCalledWith(
+        'exp-1',
+        'COMPLETED',
+        expect.any(String),
+      );
+    });
+
+    // emit() would let the loop race ahead of the rebuild and finish the
+    // experiment before the last one committed; the direct call it replaced
+    // was awaited, so the emit must be too.
+    it('awaits the announcement rather than firing and forgetting', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findByIdOrThrow.mockResolvedValue(pendingExperiment());
+      mocks.backtesting.run.mockReturnValue({
+        evaluation: { overallScore: 9, numberOfTrades: 5 },
+      });
+      let listenerFinished = false;
+      mocks.events.emitAsync.mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => {
+              listenerFinished = true;
+              resolve([]);
+            }, 10),
+          ),
+      );
+
+      await (service as any).run('exp-1');
+
+      expect(listenerFinished).toBe(true);
+    });
+  });
 
   describe('run()', () => {
     it('marks the iteration and backtest run FAILED when the backtest throws after the candidate row exists', async () => {
@@ -454,7 +573,10 @@ describe('StrategySearchService', () => {
         { type: 'MA', domain: 'TREND', pluginVersion: 8, parameters: { fastPeriod: 11, slowPeriod: 30 } },
         { type: 'RSI', domain: 'MOMENTUM', pluginVersion: 1, parameters: { period: 14 } },
       ]);
-      expect(mocks.leaderboard.rebuildForExperiment).toHaveBeenCalled();
+      expect(mocks.events.emitAsync).toHaveBeenCalledWith(
+        DomainEventNames.CandidatesRegenerated,
+        expect.objectContaining({ experimentId: 'exp-1', candidateIds: ['candidate-1'] }),
+      );
     });
 
     it('never touches the Search generator — regeneration is deliberate, not a random sample', async () => {
@@ -488,7 +610,10 @@ describe('StrategySearchService', () => {
 
       expect(result.regenerated).toBe(0);
       expect(mocks.candidates.createForIteration).not.toHaveBeenCalled();
-      expect(mocks.leaderboard.rebuildForExperiment).not.toHaveBeenCalled();
+      expect(mocks.events.emitAsync).not.toHaveBeenCalledWith(
+        DomainEventNames.CandidatesRegenerated,
+        expect.anything(),
+      );
     });
 
     it('skips a combination already running the new version instead of duplicating it', async () => {
@@ -525,7 +650,10 @@ describe('StrategySearchService', () => {
 
       expect(result.regenerated).toBe(0);
       expect(mocks.candidates.createForIteration).not.toHaveBeenCalled();
-      expect(mocks.leaderboard.rebuildForExperiment).not.toHaveBeenCalled();
+      expect(mocks.events.emitAsync).not.toHaveBeenCalledWith(
+        DomainEventNames.CandidatesRegenerated,
+        expect.anything(),
+      );
     });
 
     it('marks a failed regeneration FAILED and keeps going rather than failing the whole cascade', async () => {
@@ -547,7 +675,10 @@ describe('StrategySearchService', () => {
         'candidate-1',
         expect.stringContaining('backtest exploded'),
       );
-      expect(mocks.leaderboard.rebuildForExperiment).not.toHaveBeenCalled();
+      expect(mocks.events.emitAsync).not.toHaveBeenCalledWith(
+        DomainEventNames.CandidatesRegenerated,
+        expect.anything(),
+      );
     });
   });
 
@@ -660,6 +791,15 @@ describe('StrategySearchService', () => {
           maxNoImprovement: 5,
           topK: 3,
           minimumTrades: 0,
+          // The cost model travels with the rest of the config so a
+          // re-run in any process reproduces the same trades.
+          costs: {
+            initialCapital: 10_000,
+            transactionCostPct: 0,
+            slippageBps: 0,
+            stopLossPct: null,
+            takeProfitPct: null,
+          },
         },
       );
 
@@ -897,8 +1037,8 @@ describe('StrategySearchService', () => {
     // Regression test for the API/worker leaderboard-size divergence: the
     // worker persists leaderboards.top_k / leaderboard_entries using the
     // experiment's own search_config.topK (see run()'s
-    // `this.leaderboard.rebuildForExperiment(experimentId, config.topK, ...)`
-    // call). getTop() must default to that SAME value when the caller omits
+    // config.topK carried on the `backtest.completed` event payload).
+    // getTop() must default to that SAME value when the caller omits
     // `limit`, not a hard-coded row count — otherwise a fresh page load (no
     // client-side lastConfig) disagrees with what was actually persisted.
     it('defaults to the experiment persisted topK when limit is omitted, not a hard-coded default', async () => {

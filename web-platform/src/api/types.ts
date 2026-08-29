@@ -77,6 +77,22 @@ export interface MarketCandleEvent {
   low: string
   close: string
   volume: string
+  /**
+   * `false` while the candle is still forming. The gateway broadcasts both
+   * states so the chart moves within an interval instead of only when a
+   * bar closes; only `closed: true` bars are persisted server-side.
+   */
+  closed: boolean
+}
+
+/** Server -> client `trade` event on the /market namespace (Binance aggTrade). */
+export interface MarketTradeEvent {
+  tradeId: number
+  timestamp: string
+  price: string
+  quantity: string
+  /** True when the buyer was the maker, i.e. the aggressor was a seller. */
+  buyerIsMaker: boolean
 }
 
 /** Server -> client `status` event on the /market namespace. */
@@ -218,6 +234,8 @@ export interface RegenerateForStrategyResponse {
   regenerated: number
   skipped: number
   candidateIds: string[]
+  /** Where each regenerated combination landed among ALL candidates. */
+  summaries: RankedCandidateSummary[]
 }
 
 /**
@@ -254,8 +272,49 @@ export interface StartSearchRequest {
   startTime: string
   endTime: string
   topK?: number
+  /** Starting equity in USD. */
+  initialCapital?: number
+  /** Commission per side, percent of notional. */
+  transactionCostPct?: number
+  /** Execution slippage per side, basis points. */
+  slippageBps?: number
+  /** Stop-loss distance below entry in percent; `null`/omitted disables it. */
+  stopLossPct?: number | null
+  /** Take-profit distance above entry in percent; `null`/omitted disables it. */
+  takeProfitPct?: number | null
   enabledDomains?: StrategyDomain[]
   strategyWeights?: StrategyWeight[]
+}
+
+/**
+ * One regenerated candidate's placement against EVERY completed candidate
+ * of the experiment (not just the Top-K) — returned by
+ * `POST /strategy-search/experiments/:id/regenerate`.
+ *
+ * A parameter version the user saved often scores outside the leaderboard,
+ * which used to make it look like nothing had been created. `rank`/`total`
+ * give it a real, comparable placement instead.
+ */
+export interface RankedCandidateSummary {
+  candidateId: string
+  combo: string
+  rank: number
+  total: number
+  overallScore: number | null
+  profitLoss: number | null
+  winRate: number | null
+  maxDrawdown: number | null
+  numberOfTrades: number
+}
+
+/** Response of `GET /ai-strategy/provider`. */
+export interface AiProviderInfo {
+  name: string
+  /** False when no API key is configured and canned code is being returned. */
+  live: boolean
+  keySource: 'OPENAI_API_KEY' | 'OPENROUTER_API_KEY' | null
+  baseUrl: string | null
+  model: string | null
 }
 
 /** Response `202` of `POST /strategy-search/experiments`. */

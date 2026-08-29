@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
-import type { MarketInterval } from '../api/types'
+import type { MarketInterval, RankedCandidateSummary } from '../api/types'
 
 /**
  * The applied config of the most recent `POST /strategy-search/experiments`
@@ -19,6 +19,44 @@ export interface LastRunConfig {
   runSeq: number
 }
 
+/**
+ * The Backtest tab's config FORM, lifted out of the page component.
+ *
+ * It used to be `useState` inside BacktestPage, so navigating to another
+ * tab unmounted the page and threw the half-filled form away — the user
+ * came back to defaults every time. It lives here, alongside the run it
+ * produces, so the form survives tab switches for as long as the `/app`
+ * route is mounted.
+ *
+ * Cost fields are strings because they are bound straight to inputs; they
+ * are parsed once, at submit.
+ */
+export interface BacktestFormState {
+  timeframe: MarketInterval
+  fromDate: string
+  toDate: string
+  capital: string
+  transactionCostPct: string
+  slippageBps: string
+  stopLossPct: string
+  takeProfitPct: string
+  topK: string
+}
+
+export const DEFAULT_BACKTEST_FORM: BacktestFormState = {
+  timeframe: '5m',
+  fromDate: '2026-08-07',
+  toDate: '2026-08-24',
+  capital: '1000',
+  transactionCostPct: '0.08',
+  slippageBps: '5',
+  // Empty = disabled. Defaulting these to a number would silently change
+  // what every run simulates.
+  stopLossPct: '',
+  takeProfitPct: '',
+  topK: '8',
+}
+
 interface ExperimentContextValue {
   experimentId: string | null
   setExperimentId: (id: string | null) => void
@@ -27,6 +65,19 @@ interface ExperimentContextValue {
   setBacktestCandidateId: (id: string | null) => void
   lastConfig: LastRunConfig | null
   setLastConfig: (config: LastRunConfig) => void
+  /**
+   * Candidates regenerated from a parameter version the user saved, with
+   * their placement among ALL candidates. The Leaderboard renders these in
+   * their own section so a version that scored outside the Top-K is still
+   * visible and comparable instead of silently disappearing.
+   */
+  myVersionCandidates: RankedCandidateSummary[]
+  setMyVersionCandidates: (summaries: RankedCandidateSummary[]) => void
+  /** The Backtest tab's config form — persisted across tab switches. */
+  backtestForm: BacktestFormState
+  setBacktestForm: (
+    update: BacktestFormState | ((prev: BacktestFormState) => BacktestFormState),
+  ) => void
   /**
    * Bumped whenever something outside the Leaderboard tab changes what the
    * Leaderboard should show — currently ParameterPanel's save-a-version
@@ -51,6 +102,8 @@ export function ExperimentProvider({ children }: { children: ReactNode }) {
   const [experimentId, setExperimentId] = useState<string | null>(null)
   const [backtestCandidateId, setBacktestCandidateId] = useState<string | null>(null)
   const [lastConfig, setLastConfig] = useState<LastRunConfig | null>(null)
+  const [backtestForm, setBacktestForm] = useState<BacktestFormState>(DEFAULT_BACKTEST_FORM)
+  const [myVersionCandidates, setMyVersionCandidates] = useState<RankedCandidateSummary[]>([])
   const [leaderboardRev, setLeaderboardRev] = useState(0)
   const bumpLeaderboard = useCallback(() => setLeaderboardRev((n) => n + 1), [])
 
@@ -62,10 +115,22 @@ export function ExperimentProvider({ children }: { children: ReactNode }) {
       setBacktestCandidateId,
       lastConfig,
       setLastConfig,
+      myVersionCandidates,
+      setMyVersionCandidates,
+      backtestForm,
+      setBacktestForm,
       leaderboardRev,
       bumpLeaderboard,
     }),
-    [experimentId, backtestCandidateId, lastConfig, leaderboardRev, bumpLeaderboard],
+    [
+      experimentId,
+      backtestCandidateId,
+      lastConfig,
+      backtestForm,
+      myVersionCandidates,
+      leaderboardRev,
+      bumpLeaderboard,
+    ],
   )
 
   return <ExperimentContext.Provider value={value}>{children}</ExperimentContext.Provider>

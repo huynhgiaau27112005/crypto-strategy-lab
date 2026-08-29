@@ -52,6 +52,31 @@ export interface KlineUpdate {
     isClosed: boolean;
 }
 
+/**
+ * One executed aggregate trade (`<symbol>@aggTrade`), normalized the same
+ * way {@link KlineUpdate} is. This is the real per-tick feed: a candle
+ * stream only ever reports the state of the bar being built, so a
+ * "Recent ticks" table fed from klines can never show more than one row
+ * per interval — which is exactly the staleness this stream removes.
+ */
+export interface TradeUpdate {
+    tradeId: number;
+    timestamp: number;
+    price: string;
+    quantity: string;
+    /**
+     * True when the BUYER was the market maker, i.e. the aggressor was a
+     * seller. Reported as Binance reports it; naming it here keeps the
+     * wire field (`m`) out of every caller.
+     */
+    buyerIsMaker: boolean;
+}
+
+export interface TradeStreamCallbacks {
+    onTrade: (trade: TradeUpdate) => void;
+    onConnectionChange?: (connected: boolean) => void;
+}
+
 export interface KlineStreamCallbacks {
     onUpdate: (update: KlineUpdate) => void;
     /** Fired whenever the upstream WebSocket transitions between open and closed. */
@@ -84,11 +109,12 @@ export class BinanceClient {
         interval: string,
         limit = 500,
         endTime?: number,
+        startTime?: number,
     ): Promise<BinanceKline[]> {
         const endpoint = 'GET /api/v3/klines';
         const stopTimer = this.metrics.binanceRequestDurationSeconds.startTimer({ endpoint });
         try {
-            const result = await this.fetchKlines(symbol, interval, limit, endTime);
+            const result = await this.fetchKlines(symbol, interval, limit, endTime, startTime);
             stopTimer();
             this.metrics.binanceRequestsTotal.inc({ endpoint, outcome: 'success' });
             return result;
@@ -104,6 +130,7 @@ export class BinanceClient {
         interval: string,
         limit: number,
         endTime?: number,
+        startTime?: number,
     ): Promise<BinanceKline[]> {
         const url = new URL(
             '/api/v3/klines',
@@ -132,6 +159,17 @@ export class BinanceClient {
             url.searchParams.set(
                 'endTime',
                 String(endTime),
+            );
+        }
+
+        // Lower bound of the requested window. Combined with `endTime` this
+        // turns the endpoint into a true historical range query, which is
+        // what the Backtest tab's result chart needs: it must show the
+        // candles the run was actually configured over, not "the latest N".
+        if (startTime !== undefined) {
+            url.searchParams.set(
+                'startTime',
+                String(startTime),
             );
         }
 
@@ -185,7 +223,46 @@ export class BinanceClient {
         interval: string,
         callbacks: KlineStreamCallbacks,
     ): KlineStreamHandle {
-        const streamName = `${symbol.toLowerCase()}@kline_${interval}`;
+        return this.openStream(
+            `${symbol.toLowerCase()}@kline_${interval}`,
+            (raw) => {
+                const update = this.parseKlineMessage(raw);
+                if (update) callbacks.onUpdate(update);
+            },
+            callbacks.onConnectionChange,
+        );
+    }
+
+    /**
+     * Opens Binance's aggregate-trade stream for `symbol` — the tick-level
+     * counterpart to {@link streamCandles}, sharing the same reconnect
+     * behaviour and the same "no Binance wire format escapes this file"
+     * rule.
+     */
+    streamTrades(
+        symbol: string,
+        callbacks: TradeStreamCallbacks,
+    ): KlineStreamHandle {
+        return this.openStream(
+            `${symbol.toLowerCase()}@aggTrade`,
+            (raw) => {
+                const trade = this.parseTradeMessage(raw);
+                if (trade) callbacks.onTrade(trade);
+            },
+            callbacks.onConnectionChange,
+        );
+    }
+
+    /**
+     * Shared reconnecting-WebSocket plumbing for every Binance stream this
+     * client exposes (klines, aggregate trades). Exponential backoff resets
+     * once a connection is re-established; `stop()` is permanent.
+     */
+    private openStream(
+        streamName: string,
+        onMessage: (raw: unknown) => void,
+        onConnectionChange?: (connected: boolean) => void,
+    ): KlineStreamHandle {
         const url = `${this.streamBaseUrl}/${streamName}`;
 
         let stopped = false;
@@ -202,13 +279,9 @@ export class BinanceClient {
         };
 
         const scheduleReconnect = () => {
-            if (stopped) {
-                return;
-            }
+            if (stopped) return;
             clearReconnectTimer();
-            reconnectTimer = setTimeout(() => {
-                connect();
-            }, reconnectDelayMs);
+            reconnectTimer = setTimeout(() => connect(), reconnectDelayMs);
             reconnectDelayMs = Math.min(
                 reconnectDelayMs * 2,
                 MAX_RECONNECT_DELAY_MS,
@@ -216,32 +289,21 @@ export class BinanceClient {
         };
 
         const connect = () => {
-            if (stopped) {
-                return;
-            }
-
+            if (stopped) return;
             socket = new WebSocket(url);
-
             socket.addEventListener('open', () => {
                 reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
-                callbacks.onConnectionChange?.(true);
+                onConnectionChange?.(true);
             });
-
             socket.addEventListener('message', (event: MessageEvent) => {
                 lastMessageAt = new Date();
-                const update = this.parseKlineMessage(event.data);
-                if (update) {
-                    callbacks.onUpdate(update);
-                }
+                onMessage(event.data);
             });
-
             socket.addEventListener('error', () => {
-                // The subsequent 'close' event drives reconnect; this only
-                // silences unhandled-error noise from the WebSocket.
+                // The subsequent 'close' event drives reconnect.
             });
-
             socket.addEventListener('close', () => {
-                callbacks.onConnectionChange?.(false);
+                onConnectionChange?.(false);
                 scheduleReconnect();
             });
         };
@@ -256,6 +318,27 @@ export class BinanceClient {
             },
             getLastMessageAt: () => lastMessageAt,
         };
+    }
+
+    private parseTradeMessage(raw: unknown): TradeUpdate | null {
+        try {
+            const payload: unknown = typeof raw === 'string' ? JSON.parse(raw) : null;
+            if (!payload || typeof payload !== 'object') return null;
+            const message = payload as Record<string, unknown>;
+            if (message.p === undefined || message.q === undefined) return null;
+            return {
+                tradeId: Number(message.a),
+                timestamp: Number(message.T),
+                price: String(message.p),
+                quantity: String(message.q),
+                buyerIsMaker: Boolean(message.m),
+            };
+        } catch (error) {
+            this.logger.warn(
+                `Failed to parse Binance aggTrade message: ${String(error)}`,
+            );
+            return null;
+        }
     }
 
     private parseKlineMessage(raw: unknown): KlineUpdate | null {

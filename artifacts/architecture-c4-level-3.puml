@@ -1,5 +1,5 @@
-@startuml crypto-strategy-lab-architecture
-' Crypto Strategy Lab — Component architecture (AS BUILT)
+@startuml architecture-c4-level-3
+' C4 Level 3 — Component (AS BUILT)
 ' Nguồn sự thật: service/src, web-platform/src, workers/, database/migrations
 ' Mọi tên trong sơ đồ là tên class/file có thật trong code.
 
@@ -144,8 +144,13 @@ package "Modular Monolith — NestJS (service/)" as BE {
     BT_S --> BT_R
   }
 
+  package "Domain Events" as M_EV {
+    rectangle "EventEmitter2\n(@nestjs/event-emitter)\nin-process, KHÔNG bền vững,\nKHÔNG xuyên tiến trình.\nKhác BullMQ — xem\nartifacts/event-catalog.md" as EV_BUS
+  }
+
   package "Leaderboard Module" as M_LB {
-    rectangle "LeaderboardService\nrebuildForExperiment\n(topK, minimumTrades)\n→ cache.incr(version)\nsau khi ghi xong (task-17)" as LB_S
+    rectangle "LeaderboardEventsHandler\nonIterationBoundary → nuốt lỗi\nonCandidatesRegenerated →\nsuppressErrors:false, lỗi lan\nra HTTP 5xx" as LB_H
+    rectangle "LeaderboardService\nCQRS write side:\nmaterialise leaderboard_entries\n→ cache.incr(version)\nĐược gọi bởi LB_H, KHÔNG\ncòn bởi StrategySearchService" as LB_S
   }
 
   package "News Module" as M_NEWS {
@@ -195,7 +200,10 @@ ENG_S --> PLUG_REG : registry.resolve(type)\n.analyze() (task-15:\nkhông if the
 COMP_S --> ENG_S
 BT_S --> COMP_S
 SR_S --> BT_S
-SR_S --> LB_S
+SR_S --> EV_BUS : **await** emitAsync\n"backtest.completed" /\n"backtest.failed" /\n"candidates.regenerated"
+EV_BUS --> LB_H : @OnEvent
+LB_H --> LB_S : rebuildForExperiment\n(topK, minimumTrades\nlấy từ payload)
+LB_S --> EV_BUS : emit "leaderboard.updated"\n(không await)
 SR_S --> PLUG_REG
 SR_FP --> PLUG_REG : displayName
 SR_S --> AI_R : findOwnedActiveById\n(resolve "AI:<id>" ở start())
@@ -289,6 +297,15 @@ note bottom of WK
   tự nhiên đọc key version mới → cache miss →
   query lại. Không cần event/message riêng.
   Xem artifacts/cache.md mục 4.
+
+  **Domain event chỉ sống trong 1 tiến trình (2026-08-29):**
+  backtest.completed được emit Ở ĐÂY (worker), nên
+  LeaderboardEventsHandler cũng phải tồn tại Ở ĐÂY.
+  Vì vậy WorkerModule import LeaderboardModule TƯỜNG
+  MINH — trước đây nó chỉ có gián tiếp qua Strategy
+  SearchModule, mà module đó nay không còn cần tới
+  Leaderboard nữa. Bỏ import này thì event bắn vào hư
+  vô: leaderboard ngừng cập nhật, KHÔNG test nào đỏ.
 end note
 
 note bottom of M_OBS

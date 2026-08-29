@@ -10,6 +10,7 @@ import {
   validateStrategySchema,
 } from './dto/ai-strategy.dto';
 import { PROMPT_SAMPLES } from './contract-prompt';
+import { resolveLlmProvider } from './providers/llm-provider.factory';
 
 function parseOrThrow<T>(schema: { safeParse: (v: unknown) => { success: boolean; data?: T; error?: any } }, body: unknown): T {
   const result = schema.safeParse(body ?? {});
@@ -28,6 +29,24 @@ export class AiStrategyController {
   @Get('health')
   health() {
     return { status: 'ok', module: 'ai-strategy' };
+  }
+
+  /**
+   * Which LLM is actually wired up right now. The AI Strategy tab shows
+   * this next to the generated code: without it, a missing/misnamed API
+   * key was indistinguishable from a working one, because
+   * FakeLlmProvider's canned Python is perfectly valid Python.
+   */
+  @Get('provider')
+  provider() {
+    const resolved = resolveLlmProvider();
+    return {
+      name: resolved.provider.name,
+      live: resolved.keySource !== null,
+      keySource: resolved.keySource,
+      baseUrl: resolved.baseUrl,
+      model: resolved.model,
+    };
   }
 
   // Static sample prompts shown in the "Mẫu mô tả" panel — kept on the

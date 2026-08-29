@@ -1,27 +1,32 @@
 import * as path from 'path';
+import { resolvePythonBin } from '../../common/python-bin';
+
+export const AI_STRATEGY_PYTHON_BIN_ENV = 'AI_STRATEGY_PYTHON_BIN';
 
 /**
  * Python interpreter for the validation/execution workers in
- * workers/ai-strategy/. Defaults to the same venv the news worker already
- * set up (workers/news/.venv) — validate.py/run.py only use the Python
- * standard library (ast, json, signal), so no extra dependency install is
- * needed there. Never hard-code an absolute machine path; override via
- * AI_STRATEGY_PYTHON_BIN for a different environment (e.g. a dedicated venv).
+ * workers/ai-strategy/.
+ *
+ * Resolution order is shared with the news crawler — see `resolvePythonBin`:
+ * `AI_STRATEGY_PYTHON_BIN` -> the news worker's venv if it exists (in this
+ * platform's layout) -> a PATH interpreter.
+ *
+ * The PATH fallback is fully sufficient here, unlike for the news crawler:
+ * validate.py/run.py only use the standard library (ast, json, signal,
+ * threading), so any CPython 3.10+ works and the venv is a convenience.
  */
 export function getAiStrategyPythonBin(): string {
-  return (
-    process.env.AI_STRATEGY_PYTHON_BIN ??
-    path.resolve(process.cwd(), '..', 'workers', 'news', '.venv', 'bin', 'python')
-  );
+  const venvDir = path.resolve(process.cwd(), '..', 'workers', 'news', '.venv');
+  return resolvePythonBin(venvDir, process.env[AI_STRATEGY_PYTHON_BIN_ENV]);
 }
 
 export function getAiStrategyWorkerDir(): string {
   return process.env.AI_STRATEGY_WORKER_DIR ?? path.resolve(process.cwd(), '..', 'workers', 'ai-strategy');
 }
 
-// The smoke run inside validate.py already bounds itself to 5s via
-// signal.alarm; this is the outer process-level bound (interpreter
-// startup + AST work + the smoke run), matching the
+// The smoke run inside validate.py already bounds itself to 5s (SIGALRM on
+// POSIX, a watchdog thread on Windows); this is the outer process-level
+// bound (interpreter startup + AST work + the smoke run), matching the
 // "uncontrolled infinite loop" anti-pattern this project forbids.
 export function getValidateTimeoutMs(): number {
   const configured = Number(process.env.AI_STRATEGY_VALIDATE_TIMEOUT_MS);

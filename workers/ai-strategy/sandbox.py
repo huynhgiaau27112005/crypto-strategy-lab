@@ -16,8 +16,12 @@ this as "sandboxed" in code, docs, or UI copy.
 """
 from __future__ import annotations
 
+import _thread
 import ast
 import builtins as _builtins
+import contextlib
+import signal
+import threading
 
 CONTRACT_FUNCTION = "generate_signals"
 
@@ -109,3 +113,61 @@ def build_restricted_globals() -> dict:
         name: getattr(_builtins, name) for name in ALLOWED_BUILTIN_NAMES if hasattr(_builtins, name)
     }
     return {"__builtins__": safe_builtins}
+
+
+class TimeLimitExceeded(Exception):
+    """Raised inside `time_limit` when the guarded block runs too long."""
+
+
+@contextlib.contextmanager
+def time_limit(seconds: int, message: str):
+    """Bounds the wall-clock time of the guarded block, on any platform.
+
+    POSIX gets `signal.alarm`, which interrupts the main thread from the
+    kernel. Windows has no `SIGALRM` at all — referencing `signal.SIGALRM`
+    there raises `AttributeError`, which is exactly what used to crash
+    validate.py/run.py on Windows before they could print any JSON, so the
+    AI Strategy tab reported "Validation worker could not run" for every
+    single strategy. There, a watchdog thread calls
+    `_thread.interrupt_main()`, which raises KeyboardInterrupt in the main
+    thread between bytecodes — enough to break out of the pure-Python loops
+    generated strategies are made of.
+
+    Either way this stays DEFENSE IN DEPTH, not the primary bound: neither
+    mechanism can interrupt a single long-running C call, and the Node
+    caller (service/src/modules/ai-strategy/python-process.util.ts) always
+    wraps this process in its own hard timeout and SIGKILLs on overrun.
+    """
+    if hasattr(signal, "SIGALRM"):
+        def _on_alarm(signum, frame):  # noqa: ARG001
+            raise TimeLimitExceeded(message)
+
+        old_handler = signal.signal(signal.SIGALRM, _on_alarm)
+        signal.alarm(seconds)
+        try:
+            yield
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+        return
+
+    timed_out = False
+
+    def _interrupt() -> None:
+        nonlocal timed_out
+        timed_out = True
+        _thread.interrupt_main()
+
+    timer = threading.Timer(seconds, _interrupt)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield
+    except KeyboardInterrupt:
+        # Only OUR watchdog can have raised this here: the worker is a
+        # non-interactive subprocess with stdin already consumed.
+        if timed_out:
+            raise TimeLimitExceeded(message) from None
+        raise
+    finally:
+        timer.cancel()

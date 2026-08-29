@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import {
   CandlestickSeries,
   ColorType,
+  HistogramSeries,
   LineSeries,
   LineStyle,
   createChart,
@@ -11,6 +12,20 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 import type { Candle } from '../hooks/useMarketSocket'
+
+/** One moving-average overlay: period + the design token to colour it with. */
+export interface MaOverlay {
+  period: number
+  colorVar: string
+}
+
+/** A price level to mark on the chart (entry / stop-loss / take-profit). */
+export interface PriceMarker {
+  price: number
+  label: string
+  /** `up` = green (take profit), `down` = red (stop loss), `neutral` = accent (entry). */
+  tone: 'up' | 'down' | 'neutral'
+}
 
 function toSeconds(iso: string): UTCTimestamp {
   return Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp
@@ -62,43 +77,70 @@ function resolveColor(varName: string, fallback: string): string {
   }
 }
 
+/** Semi-transparent variant of a resolved `rgb(...)`/`rgba(...)` string. */
+function withAlpha(color: string, alpha: number): string {
+  const match = /^rgba?\(([^)]+)\)$/.exec(color)
+  if (!match) return color
+  const [r, g, b] = match[1].split(',').map((part) => part.trim())
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
 export default function CandleChart({
   candles,
-  maPeriod = 20,
-  maColorVar = '--color-accent',
-  secondaryMaPeriod,
-  secondaryMaColorVar = '--color-accent-400',
+  maOverlays,
   showLevels = false,
+  showVolume = true,
+  markers,
   height = 220,
 }: {
   candles: Candle[]
-  maPeriod?: number
-  /** CSS custom property to resolve for the primary MA line — see resolveColor() below. */
-  maColorVar?: string
-  /** A second SMA overlay (e.g. MA(50) for the Backtest chart) — omitted entirely when unset. */
-  secondaryMaPeriod?: number
-  secondaryMaColorVar?: string
+  /**
+   * Moving averages to draw. Empty array = none. Defaults to Binance's own
+   * MA(7)/MA(25)/MA(99) set rather than a single unexplained MA(20).
+   */
+  maOverlays?: MaOverlay[]
   /** Draws two horizontal reference lines at the visible window's high/low — the "Hỗ trợ"/"Kháng cự" legend entries. Simple chart annotations (min/max of what's already rendered), not a computed trading signal. */
   showLevels?: boolean
+  /**
+   * Volume histogram under the price series, in its own scale pinned to
+   * the bottom 22% of the pane — the brief lists Volume among the required
+   * chart overlays and it was missing entirely.
+   */
+  showVolume?: boolean
+  /** Extra horizontal price lines (entry / stop-loss / take-profit of a backtested trade). */
+  markers?: PriceMarker[]
   height?: number
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<IChartApi | null>(null)
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
-  const maSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const secondaryMaSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const supportLineRef = useRef<IPriceLine | null>(null)
-  const resistanceLineRef = useRef<IPriceLine | null>(null)
+  const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
+  // Keyed by MA period so a changed overlay set adds/removes only the
+  // series that actually changed.
+  const maSeriesRef = useRef<Map<number, ISeriesApi<'Line'>>>(new Map())
+  const priceLinesRef = useRef<IPriceLine[]>([])
+
+  const overlays = useMemo<MaOverlay[]>(
+    () =>
+      maOverlays ?? [
+        { period: 7, colorVar: '--color-accent-400' },
+        { period: 25, colorVar: '--color-accent' },
+        { period: 99, colorVar: '--color-accent-700' },
+      ],
+    [maOverlays],
+  )
 
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
+    // Captured for the cleanup below: reading `maSeriesRef.current` there
+    // directly would read whatever the ref points at by teardown time.
+    const maSeries = maSeriesRef.current
 
     const upColor = resolveColor('--color-up', '#3f8f5f')
     const downColor = resolveColor('--color-down', '#b3453a')
     const textColor = resolveColor('--color-text', '#1d1f20')
     const dividerColor = resolveColor('--color-divider', 'rgba(29,31,32,0.16)')
-    const accentColor = resolveColor(maColorVar, '#5980a6')
-    const secondaryAccentColor = resolveColor(secondaryMaColorVar, '#94bce3')
 
     const chart: IChartApi = createChart(container, {
       autoSize: true,
@@ -123,40 +165,75 @@ export default function CandleChart({
       wickUpColor: upColor,
       wickDownColor: downColor,
     })
-    const maSeries = chart.addSeries(LineSeries, {
-      color: accentColor,
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    })
-    const secondaryMaSeries = chart.addSeries(LineSeries, {
-      color: secondaryAccentColor,
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    })
 
+    chartRef.current = chart
     candleSeriesRef.current = candleSeries
-    maSeriesRef.current = maSeries
-    secondaryMaSeriesRef.current = secondaryMaSeries
 
     return () => {
       chart.remove()
+      chartRef.current = null
       candleSeriesRef.current = null
-      maSeriesRef.current = null
-      secondaryMaSeriesRef.current = null
-      supportLineRef.current = null
-      resistanceLineRef.current = null
+      volumeSeriesRef.current = null
+      maSeries.clear()
+      priceLinesRef.current = []
     }
   }, [])
 
+  // Volume histogram lives on its own overlay price scale so its magnitudes
+  // (hundreds of BTC) never squash the price scale.
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    if (!showVolume) {
+      if (volumeSeriesRef.current) {
+        chart.removeSeries(volumeSeriesRef.current)
+        volumeSeriesRef.current = null
+      }
+      return
+    }
+    if (volumeSeriesRef.current) return
+
+    const series = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'volume',
+      priceLineVisible: false,
+      lastValueVisible: false,
+    })
+    chart.priceScale('volume').applyOptions({
+      scaleMargins: { top: 0.78, bottom: 0 },
+      borderVisible: false,
+    })
+    volumeSeriesRef.current = series
+  }, [showVolume])
+
+  // Add/remove MA line series to match `overlays`.
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    const wanted = new Map(overlays.map((o) => [o.period, o]))
+
+    for (const [period, series] of [...maSeriesRef.current]) {
+      if (!wanted.has(period)) {
+        chart.removeSeries(series)
+        maSeriesRef.current.delete(period)
+      }
+    }
+    for (const overlay of overlays) {
+      if (maSeriesRef.current.has(overlay.period)) continue
+      const series = chart.addSeries(LineSeries, {
+        color: resolveColor(overlay.colorVar, '#5980a6'),
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      })
+      maSeriesRef.current.set(overlay.period, series)
+    }
+  }, [overlays])
+
   useEffect(() => {
     const candleSeries = candleSeriesRef.current
-    const maSeries = maSeriesRef.current
-    const secondaryMaSeries = secondaryMaSeriesRef.current
-    if (!candleSeries || !maSeries || !secondaryMaSeries) return
+    if (!candleSeries) return
 
     const sorted = [...candles].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
     const ohlc = sorted.map((c) => ({
@@ -165,68 +242,84 @@ export default function CandleChart({
       high: Number(c.high),
       low: Number(c.low),
       close: Number(c.close),
+      volume: Number(c.volume),
     }))
     candleSeries.setData(ohlc)
 
-    const sma = computeSma(
-      ohlc.map((c) => c.close),
-      maPeriod,
-    )
-    maSeries.setData(
-      ohlc
-        .map((c, i) => (sma[i] == null ? null : { time: c.time, value: sma[i] as number }))
-        .filter((point): point is { time: UTCTimestamp; value: number } => point != null),
-    )
-
-    if (secondaryMaPeriod != null) {
-      const sma2 = computeSma(
-        ohlc.map((c) => c.close),
-        secondaryMaPeriod,
+    const volumeSeries = volumeSeriesRef.current
+    if (volumeSeries) {
+      const upColor = withAlpha(resolveColor('--color-up', '#3f8f5f'), 0.45)
+      const downColor = withAlpha(resolveColor('--color-down', '#b3453a'), 0.45)
+      volumeSeries.setData(
+        ohlc.map((c) => ({
+          time: c.time,
+          value: c.volume,
+          color: c.close >= c.open ? upColor : downColor,
+        })),
       )
-      secondaryMaSeries.setData(
+    }
+
+    const closes = ohlc.map((c) => c.close)
+    for (const [period, series] of maSeriesRef.current) {
+      const sma = computeSma(closes, period)
+      series.setData(
         ohlc
-          .map((c, i) => (sma2[i] == null ? null : { time: c.time, value: sma2[i] as number }))
+          .map((c, i) => (sma[i] == null ? null : { time: c.time, value: sma[i] as number }))
           .filter((point): point is { time: UTCTimestamp; value: number } => point != null),
       )
-    } else {
-      secondaryMaSeries.setData([])
     }
+
+    for (const line of priceLinesRef.current) candleSeries.removePriceLine(line)
+    priceLinesRef.current = []
+
+    const upColor = resolveColor('--color-up', '#3f8f5f')
+    const downColor = resolveColor('--color-down', '#b3453a')
+    const accentColor = resolveColor('--color-accent', '#5980a6')
 
     // Support/resistance reference lines: the visible window's low/high,
     // the same simple min/max convention the approved prototype uses for
     // this legend entry — a chart annotation, not a recomputed strategy
     // signal (the real SUPPORT_RESISTANCE plugin signal never runs here).
-    if (supportLineRef.current) {
-      candleSeries.removePriceLine(supportLineRef.current)
-      supportLineRef.current = null
-    }
-    if (resistanceLineRef.current) {
-      candleSeries.removePriceLine(resistanceLineRef.current)
-      resistanceLineRef.current = null
-    }
     if (showLevels && ohlc.length > 0) {
-      const upColor = resolveColor('--color-up', '#3f8f5f')
-      const downColor = resolveColor('--color-down', '#b3453a')
       const high = Math.max(...ohlc.map((c) => c.high))
       const low = Math.min(...ohlc.map((c) => c.low))
-      resistanceLineRef.current = candleSeries.createPriceLine({
-        price: high,
-        color: downColor,
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: 'Kháng cự',
-      })
-      supportLineRef.current = candleSeries.createPriceLine({
-        price: low,
-        color: upColor,
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: 'Hỗ trợ',
-      })
+      priceLinesRef.current.push(
+        candleSeries.createPriceLine({
+          price: high,
+          color: downColor,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'Kháng cự',
+        }),
+        candleSeries.createPriceLine({
+          price: low,
+          color: upColor,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'Hỗ trợ',
+        }),
+      )
     }
-  }, [candles, maPeriod, secondaryMaPeriod, showLevels])
+
+    // Entry / Stop Loss / Take Profit of the trade being inspected. These
+    // are real values persisted with the backtested trade, not derived
+    // here — the chart just draws where they sit.
+    for (const marker of markers ?? []) {
+      if (!Number.isFinite(marker.price)) continue
+      priceLinesRef.current.push(
+        candleSeries.createPriceLine({
+          price: marker.price,
+          color: marker.tone === 'up' ? upColor : marker.tone === 'down' ? downColor : accentColor,
+          lineWidth: 2,
+          lineStyle: LineStyle.Dotted,
+          axisLabelVisible: true,
+          title: marker.label,
+        }),
+      )
+    }
+  }, [candles, overlays, showLevels, showVolume, markers])
 
   return <div ref={containerRef} style={{ width: '100%', height }} />
 }

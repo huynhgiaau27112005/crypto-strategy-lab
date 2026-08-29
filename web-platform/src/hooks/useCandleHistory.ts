@@ -4,7 +4,7 @@ import type { Candle } from './useMarketSocket'
 import type { CandleDto, MarketInterval } from '../api/types'
 
 const SYMBOL = 'BTCUSDT'
-const HISTORY_LIMIT = 300
+const HISTORY_LIMIT = 500
 
 export interface UseCandleHistoryResult {
   candles: Candle[]
@@ -14,18 +14,21 @@ export interface UseCandleHistoryResult {
 
 /**
  * One-shot (non-live) fetch of `GET /market-data/candles` for the Backtest
- * tab's "02" chart — same endpoint and shape `useMarketSocket` uses for its
- * initial history, minus the `/market` socket subscription: this chart is a
- * snapshot, not a live feed. `GET /market-data/candles` has no
- * startTime/endTime filter (artifacts/api-contract.md §3 — only
- * symbol/interval/limit, reads straight from Binance), so this returns the
- * latest closed candles for the experiment's own timeframe rather than the
- * exact historical window the search backtested over. That is real
- * BTCUSDT price data (never fabricated), just not date-pinned to the run —
- * the only alternative would be inventing OHLC bars client-side, which is
- * worse. Refetches when `interval` changes; aborts on unmount.
+ * tab's "02" chart — same endpoint `useMarketSocket` uses for its initial
+ * history, minus the `/market` socket subscription: this chart is a
+ * snapshot, not a live feed.
+ *
+ * `startTime`/`endTime` pin it to the window the run was configured over.
+ * Without them the chart showed the latest 300 candles regardless of the
+ * backtest's date range, so the trades listed underneath frequently sat
+ * outside the visible price series entirely. Omit both to get the latest
+ * closed candles instead.
  */
-export function useCandleHistory(interval: MarketInterval): UseCandleHistoryResult {
+export function useCandleHistory(
+  interval: MarketInterval,
+  startTime?: string,
+  endTime?: string,
+): UseCandleHistoryResult {
   const [candles, setCandles] = useState<Candle[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -37,10 +40,17 @@ export function useCandleHistory(interval: MarketInterval): UseCandleHistoryResu
     setLoading(true)
     setError(null)
 
-    apiFetch<CandleDto[]>(
-      `/market-data/candles?symbol=${SYMBOL}&interval=${interval}&limit=${HISTORY_LIMIT}`,
-      { signal: controller.signal },
-    )
+    const params = new URLSearchParams({
+      symbol: SYMBOL,
+      interval,
+      limit: String(HISTORY_LIMIT),
+    })
+    if (startTime) params.set('startTime', startTime)
+    if (endTime) params.set('endTime', endTime)
+
+    apiFetch<CandleDto[]>(`/market-data/candles?${params.toString()}`, {
+      signal: controller.signal,
+    })
       .then((data) => {
         if (cancelled) return
         setCandles(
@@ -51,6 +61,7 @@ export function useCandleHistory(interval: MarketInterval): UseCandleHistoryResu
             low: c.low,
             close: c.close,
             volume: c.volume,
+            closed: true,
           })),
         )
       })
@@ -66,7 +77,7 @@ export function useCandleHistory(interval: MarketInterval): UseCandleHistoryResu
       cancelled = true
       controller.abort()
     }
-  }, [interval])
+  }, [interval, startTime, endTime])
 
   return { candles, loading, error }
 }

@@ -6,10 +6,23 @@ import {
   NotFoundException,
   OnApplicationBootstrap,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { getCorrelationId } from '../../observability/correlation/correlation-context';
+import {
+  BacktestCompletedPayload,
+  BacktestFailedPayload,
+  CandidatesRegeneratedPayload,
+  DomainEventNames,
+} from '../../domain-events';
 import { BacktestingService } from '../backtesting/backtesting.service';
+import {
+  BacktestCosts,
+  DEFAULT_BACKTEST_COSTS,
+} from '../backtesting/backtesting.types';
+import { MarketDataService } from '../market-data/market-data.service';
+import { MIN_CANDLES_PER_TIMEFRAME } from '../market-data/config';
 import { BacktestRunRepository } from '../backtesting/repositories/backtest-run.repository';
 import { StrategyWeightMap } from '../composite-strategy/composite-strategy.service';
-import { LeaderboardService } from '../leaderboard/leaderboard.service';
 import {
   aiStrategyIdFromType,
   DEFAULT_SEARCH_CONFIG,
@@ -37,6 +50,7 @@ import {
 import {
   CandidateDetail,
   CandidateRepository,
+  RankedCandidateSummary,
   TopCandidateMemberRow,
 } from './repositories/candidate.repository';
 import {
@@ -58,6 +72,11 @@ import {
   leaderboardVersionKey,
 } from '../leaderboard/leaderboard-cache-keys';
 import type { SearchTopRow } from './repositories/experiment.repository';
+
+// Upper bound for the caller-supplied Top-K. The leaderboard is a
+// shortlist meant to be read at a glance; letting a client ask for 100
+// rows only produced a table nobody scrolls.
+const MAX_TOP_K = 20;
 import { MetricsService } from '../../observability/metrics/metrics.service';
 import { AiStrategyRepository } from '../ai-strategy/repositories/ai-strategy.repository';
 import { AiStrategySignalPrecomputeService } from '../ai-strategy/ai-strategy-signal-precompute.service';
@@ -79,6 +98,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
 
   constructor(
     private readonly database: DatabaseService,
+    private readonly marketData: MarketDataService,
     private readonly experiments: ExperimentRepository,
     private readonly experimentConfigs: ExperimentConfigRepository,
     private readonly iterations: ExperimentIterationRepository,
@@ -88,7 +108,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
     private readonly fingerprintService: CandidateFingerprintService,
     private readonly backtesting: BacktestingService,
     private readonly backtestRuns: BacktestRunRepository,
-    private readonly leaderboard: LeaderboardService,
     private readonly searchQueue: SearchQueueService,
     private readonly cache: CacheService,
     private readonly metrics: MetricsService,
@@ -96,7 +115,17 @@ export class StrategySearchService implements OnApplicationBootstrap {
     private readonly aiPrecompute: AiStrategySignalPrecomputeService,
     private readonly strategyPlugin: StrategyPluginService,
     private readonly sentimentPrecompute: NewsSentimentPrecomputeService,
+    // Replaces the former direct LeaderboardService dependency. Search no
+    // longer knows the Leaderboard exists; it announces what happened and
+    // LeaderboardEventsHandler decides what that means. See
+    // artifacts/event-catalog.md.
+    private readonly events: EventEmitter2,
   ) {}
+
+  // Market scope is fixed for this project (Binance BTCUSDT), the same
+  // constant MarketDataGateway pins; kept here so the auto-backfill below
+  // does not have to invent a symbol.
+  private static readonly SYMBOL = 'BTCUSDT';
 
   // Runs in BOTH the API process and the worker process (StrategySearchModule
   // is imported by both AppModule and WorkerModule) — deliberately: a
@@ -121,15 +150,42 @@ export class StrategySearchService implements OnApplicationBootstrap {
 
   async start(userId: string, request: StartSearchRequest) {
     const { startTime, endTime, config } = this.validateRequest(request);
+    const minimumCandles = this.minimumCandles(config.enabledDomains);
+
+    // Fill the local `candles` table from Binance before deciding the
+    // window is unusable. Every "Dataset has N candles; at least 202 are
+    // required" failure came from here: the requested window was fine, the
+    // database had simply never been backfilled for that timeframe (worst
+    // on 1h/4h, where a month of history is only a few hundred rows and
+    // nothing but the manual seed script ever wrote them). Idempotent and
+    // page-bounded - see MarketDataService.ensureCandleCoverage.
+    try {
+      await this.marketData.ensureCandleCoverage(
+        StrategySearchService.SYMBOL,
+        request.timeframe,
+        startTime,
+        endTime,
+        Math.max(minimumCandles, MIN_CANDLES_PER_TIMEFRAME),
+      );
+    } catch (error) {
+      // A Binance outage must not make an otherwise-runnable window fail:
+      // fall through to the candle count check, which reports the real
+      // situation either way.
+      this.logger.warn(
+        `Candle backfill for ${request.timeframe} failed: ${this.errorMessage(error)}`,
+      );
+    }
+
     const candles = await this.experiments.candles(
       request.timeframe,
       startTime,
       endTime,
     );
-    const minimumCandles = this.minimumCandles(config.enabledDomains);
     if (candles.length < minimumCandles) {
       throw new BadRequestException(
-        `Dataset has ${candles.length} candles; at least ${minimumCandles} are required.`,
+        `Khoảng thời gian đã chọn chỉ có ${candles.length} nến ${request.timeframe} ` +
+          `(cần tối thiểu ${minimumCandles}). Hãy chọn khoảng ngày dài hơn, ` +
+          'hoặc đổi sang timeframe nhỏ hơn.',
       );
     }
 
@@ -288,7 +344,12 @@ export class StrategySearchService implements OnApplicationBootstrap {
     experimentId: string,
     userId: string,
     strategyName: string,
-  ): Promise<{ regenerated: number; skipped: number; candidateIds: string[] }> {
+  ): Promise<{
+    regenerated: number;
+    skipped: number;
+    candidateIds: string[];
+    summaries: RankedCandidateSummary[];
+  }> {
     const experiment = await this.experiments.findOwned(experimentId, userId);
     if (!experiment) throw new NotFoundException('Experiment not found.');
 
@@ -357,7 +418,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
     }
 
     if (combinations.size === 0) {
-      return { regenerated: 0, skipped: 0, candidateIds: [] };
+      return { regenerated: 0, skipped: 0, candidateIds: [], summaries: [] };
     }
 
     const candles = await this.experiments.candles(
@@ -494,6 +555,8 @@ export class StrategySearchService implements OnApplicationBootstrap {
           candles,
           weightMap,
           aiSignals,
+          undefined,
+          config.costs,
         );
         this.metrics.backtestsRunTotal.inc();
         await this.backtestRuns.complete(candidateEntity.id, result);
@@ -510,14 +573,38 @@ export class StrategySearchService implements OnApplicationBootstrap {
     }
 
     if (created.length > 0) {
-      await this.leaderboard.rebuildForExperiment(
+      // Deliberately NOT wrapped in try/catch, unlike the per-iteration
+      // events in run(): this cascade is a synchronous user action, and a
+      // rebuild failure here has always surfaced as a 5xx rather than a
+      // 200 carrying a stale leaderboard. emitAsync propagates a listener
+      // rejection, which is what preserves that. See
+      // artifacts/event-catalog.md, "consumer failure".
+      const payload: CandidatesRegeneratedPayload = {
         experimentId,
-        config.topK,
-        config.minimumTrades,
-      );
+        candidateIds: created,
+        topK: config.topK,
+        minimumTrades: config.minimumTrades,
+        correlationId: getCorrelationId(),
+      };
+      await this.events.emitAsync(DomainEventNames.CandidatesRegenerated, payload);
     }
 
-    return { regenerated: created.length, skipped, candidateIds: created };
+    // The regenerated combinations are exactly what the user asked to
+    // see, so return where each one landed against the whole population -
+    // a version that scored outside the Top-K is otherwise invisible on
+    // the Leaderboard and looks like it was never created.
+    const summaries = await this.candidates.rankedSummaries(
+      experimentId,
+      userId,
+      created,
+    );
+
+    return {
+      regenerated: created.length,
+      skipped,
+      candidateIds: created,
+      summaries,
+    };
   }
 
 
@@ -579,11 +666,16 @@ export class StrategySearchService implements OnApplicationBootstrap {
   // it) so this can tell "caller omitted it" from "caller asked for N" —
   // when omitted, the experiment's own persisted `topK` (same value
   // leaderboards.top_k / leaderboard_entries was rebuilt with — see
-  // config.topK in run()'s `this.leaderboard.rebuildForExperiment` call)
+  // config.topK carried on run()'s `backtest.completed` event payload)
   // is the default, so a fresh page load with no explicit choice sees
   // exactly the persisted leaderboard, not a hard-coded row count that can
   // disagree with it. An explicit `limit` still overrides (legitimate
   // pagination) and is still clamped to [1, 100].
+  // CQRS read side (tactical — see artifacts/cqrs.md). This method never
+  // computes a ranking: it serves the `leaderboard_entries` read model that
+  // the write side materialised, cache-aside behind a key versioned by
+  // `leaderboardVersionKey`. Write and read share one database; only the
+  // paths are separated, which is the whole claim being made.
   async getTop(experimentId: string, userId: string, limit?: number) {
     const experiment = await this.experiments.findOwned(experimentId, userId);
     if (!experiment) throw new NotFoundException('Experiment not found.');
@@ -707,6 +799,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
       maxNoImprovement: config.maxNoImprovement,
       topK: config.topK,
       minimumTrades: config.minimumTrades,
+      costs: config.costs,
     };
   }
 
@@ -719,7 +812,11 @@ export class StrategySearchService implements OnApplicationBootstrap {
     raw: unknown,
   ): Pick<
     SearchConfig,
-    'maxDurationSeconds' | 'maxNoImprovement' | 'topK' | 'minimumTrades'
+    | 'maxDurationSeconds'
+    | 'maxNoImprovement'
+    | 'topK'
+    | 'minimumTrades'
+    | 'costs'
   > {
     const obj =
       raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
@@ -748,13 +845,48 @@ export class StrategySearchService implements OnApplicationBootstrap {
         10_000,
         DEFAULT_SEARCH_CONFIG.maxNoImprovement,
       ),
-      topK: boundedOrDefault(obj.topK, 1, 100, DEFAULT_SEARCH_CONFIG.topK),
+      topK: boundedOrDefault(obj.topK, 1, MAX_TOP_K, DEFAULT_SEARCH_CONFIG.topK),
       minimumTrades: boundedOrDefault(
         obj.minimumTrades,
         0,
         10_000,
         DEFAULT_SEARCH_CONFIG.minimumTrades,
       ),
+      costs: this.sanitizeCosts(obj.costs),
+    };
+  }
+
+  /**
+   * Same defensive parse for the cost model. A row written before costs
+   * were configurable has no `costs` key at all and falls back to
+   * DEFAULT_BACKTEST_COSTS, which is exactly the behaviour that run
+   * originally had - so re-running an old experiment reproduces it.
+   */
+  private sanitizeCosts(raw: unknown): BacktestCosts {
+    const obj =
+      raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+    const num = (value: unknown, fallback: number): number =>
+      typeof value === 'number' && Number.isFinite(value) && value >= 0
+        ? value
+        : fallback;
+    const optional = (value: unknown): number | null =>
+      typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? value
+        : null;
+    return {
+      initialCapital:
+        typeof obj.initialCapital === 'number' &&
+        Number.isFinite(obj.initialCapital) &&
+        obj.initialCapital > 0
+          ? obj.initialCapital
+          : DEFAULT_BACKTEST_COSTS.initialCapital,
+      transactionCostPct: num(
+        obj.transactionCostPct,
+        DEFAULT_BACKTEST_COSTS.transactionCostPct,
+      ),
+      slippageBps: num(obj.slippageBps, DEFAULT_BACKTEST_COSTS.slippageBps),
+      stopLossPct: optional(obj.stopLossPct),
+      takeProfitPct: optional(obj.takeProfitPct),
     };
   }
 
@@ -955,6 +1087,10 @@ export class StrategySearchService implements OnApplicationBootstrap {
         let candidateEntity:
           | Awaited<ReturnType<CandidateRepository['createForIteration']>>
           | undefined;
+        // Undefined means the iteration succeeded. Recorded here rather
+        // than emitted inside the try/catch below so that the emit stays
+        // OUTSIDE it — see the comment at the emit site.
+        let iterationFailure: string | undefined;
 
         try {
           candidateEntity = await this.database.withTransaction((client) =>
@@ -985,6 +1121,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
             weightMap,
             aiSignals,
             sentimentScores,
+            config.costs,
           );
           this.metrics.backtestsRunTotal.inc();
           await this.backtestRuns.complete(candidateEntity.id, result);
@@ -1014,17 +1151,49 @@ export class StrategySearchService implements OnApplicationBootstrap {
           this.logger.warn(
             `Iteration ${iteration.id} failed: ${this.errorMessage(error)}`,
           );
+          iterationFailure = this.errorMessage(error);
         }
 
-        // Rebuild the leaderboard outside the backtest/persist try block: a
-        // rebuild failure (e.g. transient DB error) must not retroactively
-        // flip an already-COMPLETED backtest run / iteration to FAILED.
+        // Announced outside the backtest/persist try block, exactly where
+        // the direct leaderboard rebuild this replaced used to sit: a
+        // listener failure (e.g. transient DB error during the rebuild)
+        // must not retroactively flip an already-COMPLETED backtest run /
+        // iteration to FAILED.
+        //
+        // Emitted on BOTH outcomes, and that is load-bearing rather than
+        // tidy: the rebuild used to run after EVERY iteration, failures
+        // included, so a success-only event would quietly cut the number
+        // of rebuilds (and of `leaderboard:version` cache bumps) below
+        // what this codebase has always done. `backtest.failed` therefore
+        // means "iteration boundary reached", not "new data to rank".
+        //
+        // emitAsync, never emit: emit() does not await async listeners, so
+        // the loop would race ahead and experiments.finish(COMPLETED)
+        // could land before the final rebuild committed. The direct call
+        // was awaited; this stays awaited.
         try {
-          await this.leaderboard.rebuildForExperiment(
-            experimentId,
-            config.topK,
-            config.minimumTrades,
-          );
+          if (iterationFailure === undefined && candidateEntity) {
+            const payload: BacktestCompletedPayload = {
+              experimentId,
+              candidateId: candidateEntity.id,
+              iterationId: iteration.id,
+              topK: config.topK,
+              minimumTrades: config.minimumTrades,
+              correlationId: getCorrelationId(),
+            };
+            await this.events.emitAsync(DomainEventNames.BacktestCompleted, payload);
+          } else {
+            const payload: BacktestFailedPayload = {
+              experimentId,
+              candidateId: candidateEntity?.id,
+              iterationId: iteration.id,
+              reason: iterationFailure ?? 'Unknown iteration failure',
+              topK: config.topK,
+              minimumTrades: config.minimumTrades,
+              correlationId: getCorrelationId(),
+            };
+            await this.events.emitAsync(DomainEventNames.BacktestFailed, payload);
+          }
         } catch (error) {
           this.logger.warn(
             `Leaderboard rebuild failed for experiment ${experimentId}: ${this.errorMessage(error)}`,
@@ -1342,7 +1511,10 @@ export class StrategySearchService implements OnApplicationBootstrap {
         50,
         'maxNoImprovement',
       ),
-      topK: this.integerInRange(request.topK, 1, 100, 10, 'topK'),
+      // Capped at MAX_TOP_K so the leaderboard a run produces stays a
+      // readable shortlist rather than an unbounded dump the UI has to
+      // render (the field is a free-text input in the Backtest tab).
+      topK: this.integerInRange(request.topK, 1, MAX_TOP_K, 10, 'topK'),
       minimumTrades: this.integerInRange(
         request.minimumTrades,
         0,
@@ -1350,6 +1522,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
         20,
         'minimumTrades',
       ),
+      costs: this.validateCosts(request),
     };
     const hasDirectional = config.enabledDomains.some(
       (item) => item === 'TREND' || item === 'STRUCTURE',
@@ -1367,6 +1540,83 @@ export class StrategySearchService implements OnApplicationBootstrap {
       config.enabledDomains.length,
     );
     return { startTime, endTime, config };
+  }
+
+  /**
+   * Validates the caller-supplied cost model. Every field is optional and
+   * falls back to DEFAULT_BACKTEST_COSTS, so a client that does not know
+   * about costs yet behaves exactly as before. Bounds are deliberately
+   * generous but finite - the point is to reject nonsense (negative
+   * capital, a 500% fee) rather than to prescribe a trading style.
+   */
+  private validateCosts(request: StartSearchRequest): BacktestCosts {
+    return {
+      initialCapital: this.numberInRange(
+        request.initialCapital,
+        1,
+        1_000_000_000,
+        DEFAULT_BACKTEST_COSTS.initialCapital,
+        'initialCapital',
+      ),
+      transactionCostPct: this.numberInRange(
+        request.transactionCostPct,
+        0,
+        10,
+        DEFAULT_BACKTEST_COSTS.transactionCostPct,
+        'transactionCostPct',
+      ),
+      slippageBps: this.numberInRange(
+        request.slippageBps,
+        0,
+        1_000,
+        DEFAULT_BACKTEST_COSTS.slippageBps,
+        'slippageBps',
+      ),
+      stopLossPct: this.optionalNumberInRange(
+        request.stopLossPct,
+        0.01,
+        100,
+        'stopLossPct',
+      ),
+      takeProfitPct: this.optionalNumberInRange(
+        request.takeProfitPct,
+        0.01,
+        1_000,
+        'takeProfitPct',
+      ),
+    };
+  }
+
+  private numberInRange(
+    value: number | undefined,
+    minimum: number,
+    maximum: number,
+    fallback: number,
+    field: string,
+  ): number {
+    const resolved = value ?? fallback;
+    if (!Number.isFinite(resolved) || resolved < minimum || resolved > maximum) {
+      throw new BadRequestException(
+        `${field} must be a number from ${minimum} to ${maximum}.`,
+      );
+    }
+    return resolved;
+  }
+
+  /** Same as numberInRange, but `undefined`/`null` means "disabled". */
+  private optionalNumberInRange(
+    value: number | null | undefined,
+    minimum: number,
+    maximum: number,
+    field: string,
+  ): number | null {
+    if (value === undefined || value === null) return null;
+    if (!Number.isFinite(value) || value < minimum || value > maximum) {
+      throw new BadRequestException(
+        `${field} must be a number from ${minimum} to ${maximum}, or omitted to disable it.`,
+      );
+    }
+    return value;
   }
 
   private integerInRange(

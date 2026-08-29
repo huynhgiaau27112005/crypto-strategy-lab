@@ -224,6 +224,12 @@ Status PENDING / RUNNING / COMPLETED / FAILED + `error_message`. Nhờ bảng n�
 
 `side` (LONG/SHORT), `entry_time`/`entry_price`, `quantity`, `stop_loss`/`take_profit` (nullable), `exit_time`/`exit_price`, `profit_loss`, `return_pct`, `exit_reason` (SIGNAL / STOP_LOSS / TAKE_PROFIT / END_OF_BACKTEST).
 
+`stop_loss`/`take_profit` **được ghi từ 2026-08-28** (trước đó luôn NULL vì
+`BacktestingService` chưa có khái niệm SL/TP). Chúng NULL khi lần chạy đó cấu hình
+tắt SL/TP — đó là mặc định, xem `artifacts/decisions.md` mục F8. `entry_price` và
+`exit_price` là **giá khớp đã tính slippage**, không phải `close` của nến; phí giao
+dịch nằm trong `profit_loss`/`return_pct` chứ không có cột riêng.
+
 **`evaluations`** — chỉ số đánh giá, 1:1 với backtest run.
 
 `total_return`, `profit_loss`, `win_rate`, `max_drawdown`, `number_of_trades`, `profit_factor`, `sharpe_ratio`, `overall_score`.
