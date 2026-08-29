@@ -12,6 +12,9 @@ Mục đích: nhóm dùng tài liệu này để hiểu hệ thống và chuẩn
 | `database.md` | Schema DB thực tế (bảng, cột, quan hệ, constraint) đã migrate, kèm giải thích khác biệt so với `docs/database/` nếu có. |
 | `api-contract.md` | Danh sách endpoint REST + WebSocket event thực tế: method, path, request/response shape, mã lỗi. Đây là nguồn sự thật cho FE/BE khi cả hai cùng phát triển song song. |
 | `module-spec/` | Nếu 1 module cần giải thích dài, tách file riêng ở đây (vd `module-spec/strategy-engine.md`, `module-spec/backtesting.md`) thay vì nhồi hết vào 1 file. |
+| `event-catalog.md` | Hợp đồng của mọi event: owner, thời điểm emit, consumer, schema version, ordering, xử lý trùng, chính sách lỗi. Phân biệt rõ 2 tầng event (BullMQ xuyên tiến trình vs `@nestjs/event-emitter` trong tiến trình). |
+| `cqrs.md` | Tactical CQRS: đường ghi (`backtest_runs`/`evaluations` → materialize `leaderboard_entries`) vs đường đọc (`GET .../top` + cache theo version). Nêu rõ **không** tách database. |
+| `service-mesh-evolution.md` | ADR: vì sao chưa deploy service mesh, điều kiện kích hoạt, lộ trình 3 bước. |
 | `decisions.md` | Nhật ký các quyết định phải hỏi người dùng trong lúc code (theo skill `resolve-before-coding`) và câu trả lời nhận được — để buổi present khỏi phải nhớ lại tại sao chọn phương án này. |
 
 ## Sơ đồ kiến trúc (PlantUML)

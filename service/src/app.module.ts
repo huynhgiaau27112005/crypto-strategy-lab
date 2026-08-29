@@ -1,4 +1,5 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { MarketDataModule } from './modules/market-data';
@@ -22,6 +23,14 @@ import { ObservabilityMiddleware } from './observability/correlation/observabili
 
 @Module({
   imports: [
+    // In-process domain events (see artifacts/event-catalog.md). This is the
+    // SECOND of the two event layers in this codebase and must not be
+    // confused with the first: BullMQ (QueueModule) carries work ACROSS the
+    // API/worker process boundary via Redis, while this emitter only ever
+    // reaches listeners inside the same process. WorkerModule registers its
+    // own forRoot() for exactly that reason — an emit in the worker is
+    // invisible to the API and vice versa.
+    EventEmitterModule.forRoot({ wildcard: false, verboseMemoryLeak: true }),
     QueueModule,
     CacheModule,
     ObservabilityModule,

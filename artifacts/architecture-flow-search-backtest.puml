@@ -19,6 +19,8 @@ participant "Backtesting\nService" as BT
 participant "Composite\nStrategyService" as CS
 participant "StrategyEngine\nService" as ENG
 participant "Strategy\nRegistry" as REG
+participant "EventEmitter2\n(in-process)" as EV
+participant "LeaderboardEvents\nHandler" as LBH
 participant "Leaderboard\nService" as LB
 database "PostgreSQL" as DB
 
@@ -95,14 +97,37 @@ loop mỗi iteration, tới khi đủ số lượng / hết thời gian / bị h
 
   S -> DB : UPDATE experiment_iterations → COMPLETED
 
-  S -> LB : rebuildForExperiment(id, topK, minimumTrades)
+  S -> EV : **await** emitAsync("backtest.completed")\n{ experimentId, candidateId, iterationId,\n  topK, minimumTrades, correlationId }
+  activate EV
+  note right of S
+    Search **không** giữ tham chiếu tới
+    LeaderboardService — nó chỉ thông báo.
+    Xem artifacts/event-catalog.md.
+  end note
+  EV -> LBH : onIterationBoundary(payload)
+  activate LBH
+  LBH -> LB : rebuildForExperiment(id, topK, minimumTrades)
   activate LB
   LB -> DB : xếp hạng lại **toàn bộ** candidate\n→ leaderboards + leaderboard_entries
+  LB -> LB : INCR leaderboard:version:<id>\n(vô hiệu hoá cache xuyên tiến trình)
+  LB -> EV : emit("leaderboard.updated")\n(không await — fire-and-forget)
   deactivate LB
-  note right of LB
-    Rebuild nằm ngoài try/catch của backtest:
+  LBH --> EV : nuốt lỗi + log warn
+  deactivate LBH
+  deactivate EV
+  note right of LBH
+    **await emitAsync**, không phải emit:
+    emit() không đợi listener bất đồng bộ,
+    vòng lặp sẽ chạy trước khi rebuild xong.
+
+    Emit nằm ngoài try/catch của backtest:
     lỗi rebuild không được lật một
     backtest_run đã COMPLETED thành FAILED.
+
+    Iteration LỖI phát "backtest.failed" —
+    cùng handler, vẫn rebuild. Rebuild là
+    ranh giới ITERATION, không phải
+    "có dữ liệu mới".
   end note
 end
 

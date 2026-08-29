@@ -613,3 +613,63 @@ không chứng minh sản phẩm dùng được". Lần này tôi lặp lại đ
 kiểu khác — sửa một module rồi tuyên bố xong, mà không grep xem cùng pattern còn
 ở đâu nữa. Khi sửa một lỗi do giả định môi trường (đường dẫn, HĐH, layout), việc
 đầu tiên phải là **grep toàn repo tìm bản sao của cùng giả định đó**.
+
+
+---
+
+## 2026-08-29 — Event-Driven / Event Catalog / Tactical CQRS / Service Mesh ADR
+
+Đợt refactor **chỉ đổi kiến trúc, không đổi behavior**. Mốc kiểm chứng: trước refactor `npx jest` = 46 suite / 307 test xanh; sau refactor = 47 suite / 325 test xanh, cộng một lần chạy thật end-to-end.
+
+### Bảng chốt phạm vi
+
+| Kỹ thuật | Quyết định | Lý do |
+|---|---|---|
+| **Event-Driven** (in-process) | **Làm** | Search không còn gọi thẳng Leaderboard. `@nestjs/event-emitter` cho domain event trong process; BullMQ vẫn giữ vai trò xuyên tiến trình |
+| **Event Catalog** | **Làm** | [event-catalog.md](event-catalog.md) — mỗi event có owner, schema version, consumer, idempotency, chính sách lỗi |
+| **Tactical CQRS** | **Làm (ghi nhận + tài liệu hoá)** | [cqrs.md](cqrs.md) — đường ghi/đọc vốn đã tách sẵn qua `leaderboard_entries` + cache theo version; đợt này chỉ đặt tên đúng và viết lại cho rõ |
+| **Service Mesh** | **Chỉ ADR, KHÔNG deploy** | [service-mesh-evolution.md](service-mesh-evolution.md) — API và Worker không gọi nhau qua HTTP, nên mesh sẽ không chặn được traffic nào |
+| **Event Sourcing** | **Từ chối** | Provenance đã đủ qua các dòng quan hệ immutable: `candidates` + `candidate_strategies` + `strategies.version` + `backtest_runs`/`evaluations` ghi mới mỗi iteration. Event Sourcing sẽ thêm projection + replay + versioning cho một bài toán đã giải xong |
+| **Full CQRS** (tách DB đọc/ghi) | **Từ chối** | Đúng 1 read model, 1 bảng. Tách DB sẽ thêm replication lag và mất tính transactional mà chưa đổi lại được gì |
+| **Kafka** | **Từ chối** | BullMQ + event in-process đủ cho quy mô đồ án |
+
+### Bốn cạm bẫy phá behavior — phần đáng nói nhất khi vấn đáp
+
+Plan gốc được viết trước khi đọc code. Khi đọc code thật thì thấy 4 chỗ mà làm y theo plan sẽ **âm thầm đổi behavior**. Đây là nội dung có giá trị nhất của đợt này: refactor kiến trúc mà **chứng minh được** hành vi không đổi.
+
+**1. `emit()` là fire-and-forget.**
+`EventEmitter2.emit()` không await listener bất đồng bộ. Lời gọi cũ `await this.leaderboard.rebuildForExperiment(...)` chặn vòng lặp search. Nếu dùng `emit`, vòng lặp chạy tiếp trong khi rebuild dang dở → `experiments.finish('COMPLETED')` có thể xảy ra trước lần rebuild cuối → Leaderboard thiếu candidate cuối cùng.
+→ **Bắt buộc `await emitAsync`.** Có test canh riêng.
+
+**2. Rebuild vốn chạy cả khi backtest FAIL.**
+Trong `run()`, khối rebuild nằm cố ý **ngoài** try/catch của backtest, tức là chạy sau **mọi** iteration. Nếu chỉ emit `backtest.completed`, số lần rebuild và số lần `INCR leaderboard:version` sẽ giảm.
+→ Emit thêm **`backtest.failed`**, cùng một handler subscribe cả hai. `backtest.failed` mang nghĩa *"iteration đã kết thúc"*, không phải *"có dữ liệu mới"*.
+→ **Đã đo:** chạy thật `maxCandidates: 5` → `leaderboard:version` = **5**, đúng 1 bump/iteration như hệ thống cũ.
+→ *Đây là chỗ cố ý lệch khỏi plan gốc* (plan nói "không emit khi fail"), vì người dùng yêu cầu giữ behavior tuyệt đối.
+
+**3. Hai call-site có chính sách lỗi ngược nhau.**
+`run()` bọc try/catch quanh rebuild (lỗi → log warn, search vẫn COMPLETED). `regenerateForStrategyVersion()` thì **không** bọc (lỗi → HTTP 5xx). Gộp cả hai vào một handler nuốt lỗi sẽ âm thầm đổi endpoint regenerate từ 500 → 200 kèm leaderboard cũ.
+→ Hai event, hai method handler, hai chính sách. Và: `@nestjs/event-emitter` mặc định **`suppressErrors: true`** — tự nuốt lỗi listener — nên handler regenerate phải khai báo `{ suppressErrors: false }`, nếu không lỗi biến mất giữa handler và điểm emit. **Test wiring bắt được đúng chỗ này.**
+
+**4. Listener biến mất khi dọn import.**
+`WorkerModule` trước đây có `LeaderboardService` **gián tiếp** qua `StrategySearchModule`. Sau refactor, `StrategySearchModule` không cần `LeaderboardModule` nữa (đó chính là bằng chứng decoupling) → xoá import là phản xạ tự nhiên. Nhưng làm vậy thì `LeaderboardEventsHandler` **không được khởi tạo trong worker**: event bắn vào hư vô, Leaderboard vĩnh viễn không cập nhật, **mọi unit test vẫn xanh** (tất cả đều mock emitter), build vẫn sạch.
+→ `WorkerModule` phải import `LeaderboardModule` **tường minh**, kèm comment. Đã kiểm chứng bằng cách boot worker thật và xem log `LeaderboardModule dependencies initialized`.
+
+### Bẫy phụ thuộc: `@nestjs/event-emitter` v12 là ESM-only
+
+`npm install @nestjs/event-emitter` kéo về **v12.0.0**, package ESM thuần. Jest (cấu hình CJS) đổ ngay `SyntaxError: Unexpected token 'export'`, và runtime CJS cũng sẽ chết theo.
+→ Ghim **v3.1.0** (CJS, peer dep `@nestjs/common ^10 || ^11`). Đừng nâng lên v12 nếu chưa chuyển toàn bộ service sang ESM.
+
+### Bẫy phụ: `@OnEvent([a, b])` không hoạt động
+
+Dạng array có trong type signature nhưng được truyền thẳng cho `eventemitter2.on()`, nơi array bị hiểu là **đường dẫn event lồng nhau**; với `wildcard: false` thì không khớp event nào — im lặng, không báo lỗi.
+→ Dùng **hai decorator `@OnEvent` xếp chồng**. Lỗi này chỉ lộ ra nhờ test dựng `EventEmitterModule` thật; test mock hoàn toàn không thấy.
+
+### Đã verify chạy thật, không chỉ test xanh
+
+1. Boot cả hai tiến trình với TimescaleDB + Redis thật → log có `EventEmitterModule dependencies initialized` và `LeaderboardModule dependencies initialized` trong **WorkerModule**.
+2. `POST /strategy-search/experiments` (`maxCandidates: 5`, `topK: 3`) → search chạy trong worker, dừng `MAX_CANDIDATES`.
+3. `leaderboard:version:<expId>` = **5** → đúng 1 rebuild/iteration, khớp behavior trước refactor.
+4. `leaderboard_entries` có đúng 3 dòng (`top_k = 3`), rank 1..3 giảm dần theo score.
+5. `GET /experiments/:id/top` trả đúng Top-3 qua đường đọc cache-aside.
+6. `correlationId` xuyên suốt từ HTTP request → job BullMQ → log trong worker (`cid=36da2e4e-...`).

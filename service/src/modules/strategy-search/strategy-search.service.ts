@@ -6,6 +6,14 @@ import {
   NotFoundException,
   OnApplicationBootstrap,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { getCorrelationId } from '../../observability/correlation/correlation-context';
+import {
+  BacktestCompletedPayload,
+  BacktestFailedPayload,
+  CandidatesRegeneratedPayload,
+  DomainEventNames,
+} from '../../domain-events';
 import { BacktestingService } from '../backtesting/backtesting.service';
 import {
   BacktestCosts,
@@ -15,7 +23,6 @@ import { MarketDataService } from '../market-data/market-data.service';
 import { MIN_CANDLES_PER_TIMEFRAME } from '../market-data/config';
 import { BacktestRunRepository } from '../backtesting/repositories/backtest-run.repository';
 import { StrategyWeightMap } from '../composite-strategy/composite-strategy.service';
-import { LeaderboardService } from '../leaderboard/leaderboard.service';
 import {
   aiStrategyIdFromType,
   DEFAULT_SEARCH_CONFIG,
@@ -101,7 +108,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
     private readonly fingerprintService: CandidateFingerprintService,
     private readonly backtesting: BacktestingService,
     private readonly backtestRuns: BacktestRunRepository,
-    private readonly leaderboard: LeaderboardService,
     private readonly searchQueue: SearchQueueService,
     private readonly cache: CacheService,
     private readonly metrics: MetricsService,
@@ -109,6 +115,11 @@ export class StrategySearchService implements OnApplicationBootstrap {
     private readonly aiPrecompute: AiStrategySignalPrecomputeService,
     private readonly strategyPlugin: StrategyPluginService,
     private readonly sentimentPrecompute: NewsSentimentPrecomputeService,
+    // Replaces the former direct LeaderboardService dependency. Search no
+    // longer knows the Leaderboard exists; it announces what happened and
+    // LeaderboardEventsHandler decides what that means. See
+    // artifacts/event-catalog.md.
+    private readonly events: EventEmitter2,
   ) {}
 
   // Market scope is fixed for this project (Binance BTCUSDT), the same
@@ -562,11 +573,20 @@ export class StrategySearchService implements OnApplicationBootstrap {
     }
 
     if (created.length > 0) {
-      await this.leaderboard.rebuildForExperiment(
+      // Deliberately NOT wrapped in try/catch, unlike the per-iteration
+      // events in run(): this cascade is a synchronous user action, and a
+      // rebuild failure here has always surfaced as a 5xx rather than a
+      // 200 carrying a stale leaderboard. emitAsync propagates a listener
+      // rejection, which is what preserves that. See
+      // artifacts/event-catalog.md, "consumer failure".
+      const payload: CandidatesRegeneratedPayload = {
         experimentId,
-        config.topK,
-        config.minimumTrades,
-      );
+        candidateIds: created,
+        topK: config.topK,
+        minimumTrades: config.minimumTrades,
+        correlationId: getCorrelationId(),
+      };
+      await this.events.emitAsync(DomainEventNames.CandidatesRegenerated, payload);
     }
 
     // The regenerated combinations are exactly what the user asked to
@@ -646,11 +666,16 @@ export class StrategySearchService implements OnApplicationBootstrap {
   // it) so this can tell "caller omitted it" from "caller asked for N" —
   // when omitted, the experiment's own persisted `topK` (same value
   // leaderboards.top_k / leaderboard_entries was rebuilt with — see
-  // config.topK in run()'s `this.leaderboard.rebuildForExperiment` call)
+  // config.topK carried on run()'s `backtest.completed` event payload)
   // is the default, so a fresh page load with no explicit choice sees
   // exactly the persisted leaderboard, not a hard-coded row count that can
   // disagree with it. An explicit `limit` still overrides (legitimate
   // pagination) and is still clamped to [1, 100].
+  // CQRS read side (tactical — see artifacts/cqrs.md). This method never
+  // computes a ranking: it serves the `leaderboard_entries` read model that
+  // the write side materialised, cache-aside behind a key versioned by
+  // `leaderboardVersionKey`. Write and read share one database; only the
+  // paths are separated, which is the whole claim being made.
   async getTop(experimentId: string, userId: string, limit?: number) {
     const experiment = await this.experiments.findOwned(experimentId, userId);
     if (!experiment) throw new NotFoundException('Experiment not found.');
@@ -1062,6 +1087,10 @@ export class StrategySearchService implements OnApplicationBootstrap {
         let candidateEntity:
           | Awaited<ReturnType<CandidateRepository['createForIteration']>>
           | undefined;
+        // Undefined means the iteration succeeded. Recorded here rather
+        // than emitted inside the try/catch below so that the emit stays
+        // OUTSIDE it — see the comment at the emit site.
+        let iterationFailure: string | undefined;
 
         try {
           candidateEntity = await this.database.withTransaction((client) =>
@@ -1122,17 +1151,49 @@ export class StrategySearchService implements OnApplicationBootstrap {
           this.logger.warn(
             `Iteration ${iteration.id} failed: ${this.errorMessage(error)}`,
           );
+          iterationFailure = this.errorMessage(error);
         }
 
-        // Rebuild the leaderboard outside the backtest/persist try block: a
-        // rebuild failure (e.g. transient DB error) must not retroactively
-        // flip an already-COMPLETED backtest run / iteration to FAILED.
+        // Announced outside the backtest/persist try block, exactly where
+        // the direct leaderboard rebuild this replaced used to sit: a
+        // listener failure (e.g. transient DB error during the rebuild)
+        // must not retroactively flip an already-COMPLETED backtest run /
+        // iteration to FAILED.
+        //
+        // Emitted on BOTH outcomes, and that is load-bearing rather than
+        // tidy: the rebuild used to run after EVERY iteration, failures
+        // included, so a success-only event would quietly cut the number
+        // of rebuilds (and of `leaderboard:version` cache bumps) below
+        // what this codebase has always done. `backtest.failed` therefore
+        // means "iteration boundary reached", not "new data to rank".
+        //
+        // emitAsync, never emit: emit() does not await async listeners, so
+        // the loop would race ahead and experiments.finish(COMPLETED)
+        // could land before the final rebuild committed. The direct call
+        // was awaited; this stays awaited.
         try {
-          await this.leaderboard.rebuildForExperiment(
-            experimentId,
-            config.topK,
-            config.minimumTrades,
-          );
+          if (iterationFailure === undefined && candidateEntity) {
+            const payload: BacktestCompletedPayload = {
+              experimentId,
+              candidateId: candidateEntity.id,
+              iterationId: iteration.id,
+              topK: config.topK,
+              minimumTrades: config.minimumTrades,
+              correlationId: getCorrelationId(),
+            };
+            await this.events.emitAsync(DomainEventNames.BacktestCompleted, payload);
+          } else {
+            const payload: BacktestFailedPayload = {
+              experimentId,
+              candidateId: candidateEntity?.id,
+              iterationId: iteration.id,
+              reason: iterationFailure ?? 'Unknown iteration failure',
+              topK: config.topK,
+              minimumTrades: config.minimumTrades,
+              correlationId: getCorrelationId(),
+            };
+            await this.events.emitAsync(DomainEventNames.BacktestFailed, payload);
+          }
         } catch (error) {
           this.logger.warn(
             `Leaderboard rebuild failed for experiment ${experimentId}: ${this.errorMessage(error)}`,

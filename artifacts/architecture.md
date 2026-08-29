@@ -6,16 +6,24 @@
 
 **NestJS Modular Monolith** — một tiến trình Node.js duy nhất, chia thành các module NestJS độc lập theo domain. Đúng theo `docs/software-architecture/decisions.md` ADR-001 (chọn Monolith thay vì Microservices vì team nhỏ, deadline ngắn, không cần network latency giữa các "service" logic).
 
-**Khác với thiết kế ban đầu — chưa có Python Workers, chưa có event bus:**
+**So với thiết kế ban đầu (cập nhật 2026-08-29):**
 
 | Thiết kế ban đầu (`docs/software-architecture/`) | Thực tế hiện tại |
 |---|---|
-| 2 Python worker riêng (Crawler, Sentiment) giao tiếp qua HTTP/Redis Queue | Chưa build — `news`/`sentiment`/`chart`/`continuous-loop` module vẫn là stub rỗng |
-| In-process Event Bus (`@nestjs/event-emitter`), domain event (`MarketPriceUpdated`, `StrategyEvaluatedEvent`...) | **Chưa dùng** — `package.json` không có `@nestjs/event-emitter`. Các module gọi nhau **trực tiếp qua Dependency Injection** (đồng bộ, in-process), không qua event |
-| Redis (cache leaderboard + BullMQ job queue) | Chưa có — search loop chạy tuần tự trong 1 process, dùng `setImmediate` để nhường event loop giữa các iteration thay vì thật sự song song |
-| WebSocket cho realtime | Chưa có — client phải poll `GET /experiments/:id` |
+| 2 Python worker riêng (Crawler, Sentiment) giao tiếp qua HTTP/Redis Queue | Crawler đã build (`workers/news/`, gọi qua BullMQ). Sentiment degrade về `NoopSentimentProvider` khi chưa cài FinBERT |
+| In-process Event Bus (`@nestjs/event-emitter`), domain event | **Đã dùng** — `@nestjs/event-emitter` v3.1.0. 4 domain event, xem [event-catalog.md](event-catalog.md). Search **không còn** gọi thẳng Leaderboard |
+| Redis (cache leaderboard + BullMQ job queue) | **Đã có cả hai** — BullMQ 2 queue (`search`, `news-crawl`), cache Top-K theo version. Xem [queue.md](queue.md), [cache.md](cache.md) |
+| WebSocket cho realtime | **Đã có** — `MarketDataGateway` push nến/tick BTCUSDT qua socket.io |
 
-**Vì sao chấp nhận lệch:** MVP hiện tại ưu tiên đúng luồng dữ liệu (Search → Backtest → Leaderboard) và đúng mô hình dữ liệu (Candidate tách biệt) trước, vì đây là phần đề bài chấm nặng nhất (reproducibility, tách biệt trách nhiệm). Event bus / queue / WebSocket là cải tiến hạ tầng có thể thêm sau mà không đổi lại domain logic — đúng tinh thần "logical module ≠ deployable service" nhưng ở mức đơn giản hơn thiết kế gốc.
+**Hai tầng event — phân biệt bắt buộc:**
+
+| | BullMQ (Redis) | `@nestjs/event-emitter` |
+|---|---|---|
+| Ranh giới | **Xuyên tiến trình** (API ⇄ Worker) | **Trong 1 tiến trình** |
+| Bền vững / retry | Có / có | Không / không |
+| Dùng cho | Đơn vị **công việc** | **Thông báo** việc đã xảy ra |
+
+Chi tiết đầy đủ: [event-catalog.md](event-catalog.md). Đường ghi/đọc của Leaderboard: [cqrs.md](cqrs.md). Vì sao chưa dùng service mesh: [service-mesh-evolution.md](service-mesh-evolution.md).
 
 ## 2. Sơ đồ module thực tế
 
@@ -116,13 +124,22 @@ StrategySearchService.start(userId, request)
                           MaxDrawdown, Sharpe, overall_score...)
                      4. BacktestRunRepository.complete() — lưu
                         backtest_runs + trades + evaluations (1 transaction)
-                     5. LeaderboardService.rebuildForExperiment() —
-                        tính lại Top-K (lọc theo minimumTrades), lưu
-                        leaderboard_entries
-                        (chạy NGOÀI try-block chính — lỗi rebuild không
-                         được phép biến 1 backtest THÀNH CÔNG thành FAILED)
+                     5. emit `backtest.completed` (await emitAsync)
+                        → LeaderboardEventsHandler nhận, gọi
+                          LeaderboardService.rebuildForExperiment():
+                          tính lại Top-K (lọc theo minimumTrades), lưu
+                          leaderboard_entries, INCR leaderboard:version
+                        (emit NGOÀI try-block chính — lỗi rebuild không
+                         được phép biến 1 backtest THÀNH CÔNG thành FAILED;
+                         handler tự nuốt lỗi và log warn)
+                        (Search KHÔNG còn tham chiếu LeaderboardService —
+                         xem event-catalog.md)
                      6. Nếu lỗi ở bước 2-4: đánh dấu iteration FAILED,
-                        và backtest_run FAILED (nếu candidate đã tồn tại)
+                        và backtest_run FAILED (nếu candidate đã tồn tại),
+                        rồi emit `backtest.failed` — vẫn kích hoạt rebuild,
+                        vì rebuild là ranh giới ITERATION chứ không phải
+                        "có dữ liệu mới". Giữ đúng số lần rebuild như
+                        trước khi chuyển sang event.
 ```
 
 ```
@@ -165,6 +182,26 @@ Không cần sửa `StrategyEngineService`, `StrategyRegistry`, `CompositeStrate
 
 **Test:** `strategy-plugin/strategy-registry.spec.ts` (đăng ký/duplicate/unknown-type/list) và `strategy-engine/strategy-engine.service.spec.ts` (engine chỉ delegate, không tự biết logic strategy nào) — cả hai mock hoàn toàn `StrategyPlugin`, không phụ thuộc plugin thật. Ngược lại, `backtesting/backtesting.service.spec.ts` cố tình dùng **registry thật + 4 plugin thật** (không mock) để làm regression guard: nếu số liệu backtest đổi sau refactor này, nghĩa là có nhánh bị sửa logic thay vì chỉ di chuyển vị trí.
 
+## 4c. Event-Driven — cắt phụ thuộc Search → Leaderboard (2026-08-29)
+
+**Trước:** `StrategySearchService` inject thẳng `LeaderboardService` và gọi `rebuildForExperiment()` ở 2 chỗ. Module Search phải biết Leaderboard tồn tại, biết nó cần `topK`/`minimumTrades`, và biết phải bọc try/catch quanh nó.
+
+**Sau:** Search chỉ **thông báo** việc đã xảy ra (`backtest.completed` / `backtest.failed` / `candidates.regenerated`). `LeaderboardEventsHandler` — sống trong module sở hữu read model — quyết định điều đó nghĩa là gì.
+
+Bằng chứng decoupling kiểm tra được:
+
+```bash
+grep -rn "LeaderboardService" service/src/modules/strategy-search/
+# → chỉ còn comment, không còn tham chiếu code
+```
+
+**Thêm strategy mới / thêm consumer mới không phải sửa Search.** Muốn push WebSocket khi leaderboard đổi? Subscribe `leaderboard.updated` — không đụng một dòng nào trong `strategy-search/`.
+
+Hai điểm phải nhớ khi vấn đáp (chi tiết ở [event-catalog.md](event-catalog.md) và [decisions.md](decisions.md)):
+
+- **`await emitAsync`, không phải `emit`** — `emit` không await listener, sẽ làm vòng lặp search chạy trước rebuild.
+- **`WorkerModule` phải import `LeaderboardModule` tường minh** — listener chỉ tồn tại nếu module của nó nằm trong graph của tiến trình đang emit. Bỏ import này thì Leaderboard ngừng cập nhật mà **không** test nào đỏ.
+
 ## 5. Rủi ro đã tìm thấy và vá trong lúc build (đáng nói khi vấn đáp)
 
 Đây là các lỗi **thật, được subagent review tìm ra khi triển khai**, không phải giả định — cho thấy quy trình review nhiều lớp có tác dụng:
@@ -194,7 +231,7 @@ Nợ kiến trúc lớn nhất còn lại sau khi mục này được xử lý: 
 1. ~~Strategy Registry/Plugin refactor~~ — **đã xong (mục 4b)**.
 2. `market-data` chưa có auth guard.
 3. News crawler + Sentiment worker thật (theo `artifacts/decisions.md` mục 3: crawl thật, sentiment dùng model có sẵn — không train từ đầu).
-4. WebSocket realtime cho chart + leaderboard push.
+4. WebSocket push cho leaderboard — nay chỉ còn là việc subscribe `leaderboard.updated` (event đã phát sẵn, chưa có consumer), không phải sửa Search. Chart realtime đã có qua `MarketDataGateway`.
 5. Port UI từ `docs/ui-prototype/` sang `web-platform/` (chưa động tới gì).
 6. Redis + BullMQ nếu quy mô search cần chạy song song thật (hiện tuần tự vẫn đáp ứng MVP).
 7. `CandidateFingerprintService.displayName()` (`strategy-search/services/candidate-fingerprint.service.ts`) vẫn có `switch (member.type)` riêng — nhưng đây là format tên hiển thị (cosmetic), không phải signal engine, và ngoài phạm vi task Registry này. Cân nhắc dọn sau nếu muốn nhất quán tuyệt đối.

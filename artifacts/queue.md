@@ -32,6 +32,23 @@ API (service/src/main.ts)          Worker (service/src/worker.ts)
 
 **Nguyên tắc cốt lõi — tái dùng logic, không fork:** `SearchProcessor.process()` gọi thẳng `StrategySearchService.run(experimentId)` — **đúng method đã có, đã test**, không viết lại vòng lặp search lần thứ hai. Tương tự `NewsCrawlProcessor.process()` gọi `NewsCrawlService.execute()` — phần "spawn process Python + đợi kết quả" giữ nguyên logic cũ (timeout, cắt stderr 8000 ký tự, kill SIGKILL khi quá hạn), chỉ đổi từ callback-đăng-ký-vào-biến-`currentJob` sang một `Promise` mà BullMQ tự quản lý vòng đời.
 
+## 2b. BullMQ khác gì `@nestjs/event-emitter` (đừng gộp hai thứ này)
+
+Từ 2026-08-29 hệ thống có **hai** cơ chế event. Chúng giải quyết hai bài toán khác nhau và không thay thế nhau được.
+
+| | **BullMQ (file này)** | **`@nestjs/event-emitter`** |
+|---|---|---|
+| Ranh giới | **Xuyên tiến trình** — API enqueue, Worker thực thi, qua Redis | **Trong cùng 1 tiến trình** |
+| Bền vững | Có — job nằm trong Redis, sống qua restart | Không — process chết là mất |
+| Retry | Có (`attempts`, backoff) | Không |
+| Dùng cho | Một đơn vị **công việc** cần chạy | **Thông báo** một việc đã xảy ra |
+
+Ví dụ cụ thể trong repo: chạy một search là **job BullMQ** (nặng, cần retry, phải sang tiến trình khác). Còn "backtest của iteration này xong rồi" là **domain event in-process** — nó không rời khỏi worker, và listener của nó (`LeaderboardEventsHandler`) chạy ngay trong tiến trình worker đó.
+
+Hệ quả cần nhớ: một domain event emit trong worker **không bao giờ** tới được tiến trình API. Chỗ nào cần vượt ranh giới đó thì phải dùng Redis — như `INCR leaderboard:version` để vô hiệu hoá cache (xem [cache.md](cache.md), [cqrs.md](cqrs.md)).
+
+Danh mục đầy đủ: [event-catalog.md](event-catalog.md).
+
 ## 3. Vì sao WorkerModule import CÙNG module với AppModule, không phải module riêng
 
 `service/src/worker.module.ts` import `StrategySearchModule` và `NewsModule` — **y hệt** những gì `AppModule` import. Không có `StrategySearchModule` phiên bản 2 cho worker. Khác biệt duy nhất: `WorkerModule` khai báo thêm `SearchProcessor` và `NewsCrawlProcessor` làm provider.
