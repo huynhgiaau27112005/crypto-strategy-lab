@@ -76,6 +76,7 @@ export default function AiStrategyPage() {
               rows={7}
               value={ai.prompt}
               onChange={(e) => ai.setPrompt(e.target.value)}
+              disabled={generating}
               style={{ fontSize: 13, lineHeight: 1.5 }}
             />
             <div

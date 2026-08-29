@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { NEWS_CRAWL_QUEUE, SEARCH_QUEUE } from './queue.constants';
+import { AI_GENERATE_QUEUE, NEWS_CRAWL_QUEUE, SEARCH_QUEUE } from './queue.constants';
 import { withTimeout } from './with-timeout';
 
 export interface QueueSnapshot {
@@ -32,18 +32,20 @@ export class QueueHealthService {
   constructor(
     @InjectQueue(SEARCH_QUEUE) private readonly searchQueue: Queue,
     @InjectQueue(NEWS_CRAWL_QUEUE) private readonly crawlQueue: Queue,
+    @InjectQueue(AI_GENERATE_QUEUE) private readonly generateQueue: Queue,
   ) {}
 
   async snapshot(): Promise<QueueHealthSnapshot> {
     try {
-      const [search, crawl] = await withTimeout(
+      const [search, crawl, generate] = await withTimeout(
         Promise.all([
           this.snapshotQueue(this.searchQueue),
           this.snapshotQueue(this.crawlQueue),
+          this.snapshotQueue(this.generateQueue),
         ]),
         1500,
       );
-      return { redis: 'up', queues: [search, crawl] };
+      return { redis: 'up', queues: [search, crawl, generate] };
     } catch {
       // Redis unreachable (or still connecting) — report degraded instead
       // of throwing or hanging, so this endpoint itself never breaks.
@@ -52,6 +54,7 @@ export class QueueHealthService {
         queues: [
           this.emptySnapshot(SEARCH_QUEUE),
           this.emptySnapshot(NEWS_CRAWL_QUEUE),
+          this.emptySnapshot(AI_GENERATE_QUEUE),
         ],
       };
     }

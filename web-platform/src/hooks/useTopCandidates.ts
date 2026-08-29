@@ -10,6 +10,19 @@ export interface UseTopCandidatesResult {
   error: string | null
 }
 
+async function fetchCandidateDetail(
+  candidateId: string,
+  signal: AbortSignal,
+): Promise<CandidateDetailDto | null> {
+  try {
+    return await apiFetch<CandidateDetailDto>(`/strategy-search/candidates/${candidateId}`, {
+      signal,
+    })
+  } catch {
+    return null
+  }
+}
+
 /**
  * `GET /strategy-search/experiments/:id/top` (artifacts/api-contract.md §2)
  * returns only `candidate_id` + metrics — no combo name, no version, no
@@ -66,13 +79,14 @@ export function useTopCandidates(
         setRows(topRows)
 
         const entries = await Promise.all(
-          topRows.map((row) =>
-            apiFetch<CandidateDetailDto>(`/strategy-search/candidates/${row.candidate_id}`, {
-              signal: controller.signal,
-            })
-              .then((detail): readonly [string, CandidateDetailDto] => [row.candidate_id, detail] as const)
-              .catch(() => null),
-          ),
+          topRows.map(async (row) => {
+            const detail = await fetchCandidateDetail(row.candidate_id, controller.signal)
+            if (detail) return [row.candidate_id, detail] as const
+            // One silent failure often means a transient race while rebuild
+            // is still writing — retry once before giving up on this row.
+            const retry = await fetchCandidateDetail(row.candidate_id, controller.signal)
+            return retry ? ([row.candidate_id, retry] as const) : null
+          }),
         )
         if (cancelled) return
         const map: Record<string, CandidateDetailDto> = {}

@@ -12,7 +12,7 @@
 |---|---|
 | 2 Python worker riêng (Crawler, Sentiment) giao tiếp qua HTTP/Redis Queue | Crawler đã build (`workers/news/`, gọi qua BullMQ). Sentiment degrade về `NoopSentimentProvider` khi chưa cài FinBERT |
 | In-process Event Bus (`@nestjs/event-emitter`), domain event | **Đã dùng** — `@nestjs/event-emitter` v3.1.0. 4 domain event, xem [event-catalog.md](event-catalog.md). Search **không còn** gọi thẳng Leaderboard |
-| Redis (cache leaderboard + BullMQ job queue) | **Đã có cả hai** — BullMQ 2 queue (`search`, `news-crawl`), cache Top-K theo version. Xem [queue.md](queue.md), [cache.md](cache.md) |
+| Redis (cache leaderboard + BullMQ job queue) | **Đã có cả hai** — BullMQ **3 queue** (`search`, `news-crawl`, `ai-generate`), cache Top-K theo version. Xem [queue.md](queue.md), [cache.md](cache.md) |
 | WebSocket cho realtime | **Đã có** — `MarketDataGateway` push nến/tick BTCUSDT qua socket.io |
 
 **Hai tầng event — phân biệt bắt buộc:**
@@ -24,6 +24,18 @@
 | Dùng cho | Đơn vị **công việc** | **Thông báo** việc đã xảy ra |
 
 Chi tiết đầy đủ: [event-catalog.md](event-catalog.md). Đường ghi/đọc của Leaderboard: [cqrs.md](cqrs.md). Vì sao chưa dùng service mesh: [service-mesh-evolution.md](service-mesh-evolution.md).
+
+### Cách đọc C4 Level 2 (tránh hiểu nhầm mũi tên)
+
+Nguồn: [architecture-c4-level-2.puml](architecture-c4-level-2.puml). Đối chiếu code, không đọc như “mọi mũi tên = HTTP”.
+
+| Thắc mắc thường gặp | Sự thật trong code |
+|---|---|
+| Không thấy dây **vào** Background Worker? API có gọi Worker không? | **Không.** API không HTTP-gọi Worker. Job đi `API → Redis → Worker` (BullMQ pull). Sơ đồ vẽ `Redis → Worker : Jobs`. |
+| API **và** Worker cùng spawn AI Strategy Worker? | **Đúng, hai đường khác nhau.** Worker spawn `validate.py` sau LLM trên job `ai-generate`. API spawn `validate.py` / `run.py` cho `POST /validate`, `POST /save`, `POST /:id/run` (vẫn đồng bộ). |
+| Generate code phải từ Python Worker → LLM? | **Sai.** `workers/ai-strategy/` không gọi mạng/LLM. `AiStrategyService.generate()` (NestJS, chạy **trong process Worker**) gọi `OpenAiCompatibleProvider` → LLM, rồi mới spawn `validate.py`. |
+
+Level 3 ([architecture-c4-level-3.puml](architecture-c4-level-3.puml)) chi tiết class: `AiGenerateQueueService`, `AiGenerateProcessor`, 3 queue Redis.
 
 ## 2. Sơ đồ module thực tế
 

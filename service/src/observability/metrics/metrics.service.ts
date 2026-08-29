@@ -102,7 +102,7 @@ export class MetricsService {
   // --- Queues ---------------------------------------------------------
   // Gauge, not Counter: depth is a point-in-time level, refreshed on every
   // /metrics scrape from live BullMQ job counts (see MetricsController).
-  // "queue" and "state" are both small fixed sets (2 queues, 5 states).
+  // "queue" and "state" are both small fixed sets (3 queues, 5 states).
   readonly queueDepth = new Gauge({
     name: 'queue_depth',
     help: 'Current BullMQ job count per queue and state (waiting/active/delayed/failed).',

@@ -16,7 +16,7 @@
 | Strategy Engine | `GET /strategy-engine/signal` + health | ✅ Hoạt động — realtime signal, có auth |
 | Queue | `GET /queue/health` | ✅ Hoạt động — không auth, xem mục 2b |
 | Strategy Plugin | `GET /strategy-plugin/strategies[/:name/versions]` + health | ✅ Hoạt động — từ task-15 gồm cả strategy AI của user, xem mục 2 |
-| AI Strategy | `generate/validate/save/mine/:id/:id/run` + health, `samples` | ✅ Hoạt động — `save` từ task-15 bắt buộc `domain` để combinable trong Strategy Search |
+| AI Strategy | `generate/validate/save/mine/:id/:id/run` + health, `samples`, `provider`, `generate/status` | ✅ Hoạt động — `POST /generate` trả **202** async (queue `ai-generate`); `save` từ task-15 bắt buộc `domain` |
 | Chart / Continuous Loop / Leaderboard / Composite / Backtesting | chỉ có `GET /<module>/health` | ❌ Stub, chưa có API thật |
 
 ## 1. Xác thực
@@ -433,7 +433,8 @@ Không cần auth (giống các endpoint `.../health` khác trong repo — đây
   "redis": "up",
   "queues": [
     { "name": "search", "counts": { "waiting": 0, "active": 1, "completed": 12, "failed": 0, "delayed": 0 }, "workers": 1 },
-    { "name": "news-crawl", "counts": { "waiting": 0, "active": 0, "completed": 3, "failed": 1, "delayed": 0 }, "workers": 1 }
+    { "name": "news-crawl", "counts": { "waiting": 0, "active": 0, "completed": 3, "failed": 1, "delayed": 0 }, "workers": 1 },
+    { "name": "ai-generate", "counts": { "waiting": 0, "active": 0, "completed": 2, "failed": 0, "delayed": 0 }, "workers": 1 }
   ]
 }
 ```
@@ -573,12 +574,82 @@ Toàn bộ endpoint yêu cầu `Authorization: Bearer <accessToken>` trừ `GET 
 | Endpoint | Việc gì |
 |---|---|
 | `GET /ai-strategy/samples` | Vài prompt mẫu tĩnh cho panel "Mẫu mô tả" |
-| `POST /ai-strategy/generate` | `{ prompt }` → gọi LLM provider (`FakeProvider` khi test/không có API key, `OpenAiCompatibleProvider` khi có), trả `{ code, raw, providerName, validation }` — code **chưa được lưu** |
+| `GET /ai-strategy/provider` | LLM nào đang được nối (`live`, `keySource`, `baseUrl`, `model`) |
+| `POST /ai-strategy/generate` | `{ prompt }` → **enqueue** job `ai-generate`, trả `202` + trạng thái job — **không** trả `{ code, validation }` trong body POST |
+| `GET /ai-strategy/generate/status` | Poll trạng thái job generate của user hiện tại; khi `COMPLETED`, `result` chứa `{ code, raw, providerName, validation }` |
 | `POST /ai-strategy/validate` | `{ code }` → chạy lại 4 bước validate (parses/contract/safety/smoke) qua `validate.py`, không lưu |
 | `POST /ai-strategy/save` | Lưu — xem chi tiết dưới |
 | `GET /ai-strategy/mine` | Danh sách strategy AI **của user hiện tại**, không kèm `sourceCode` |
 | `GET /ai-strategy/:id` | Chi tiết 1 strategy (kèm `sourceCode`), chỉ nếu thuộc user hiện tại |
 | `POST /ai-strategy/:id/run` | Chạy thử 1 strategy đã lưu trên nến thật (`{ timeframe, limit }`), trả tín hiệu cho từng nến — endpoint "chạy thử" độc lập, khác với precompute nội bộ mà Strategy Search tự gọi |
+
+### `POST /ai-strategy/generate`
+
+Sinh strategy từ mô tả tự nhiên — **bất đồng bộ** qua queue `ai-generate` (BullMQ/Redis). API chỉ enqueue; gọi LLM + validate chạy trong **tiến trình worker** (`AiGenerateProcessor` → `AiStrategyService.generate()`). Xem `artifacts/queue.md` mục 4.1.
+
+Frontend poll `GET /ai-strategy/generate/status` mỗi **2 giây** cho tới khi `status` khác `RUNNING` (`AiGenerateProvider`, cùng cadence với crawl/experiment).
+
+**Request**
+```json
+{ "prompt": "Chiến lược MA crossover khi RSI quá mua..." }
+```
+
+**Response `202 Accepted`**
+```json
+{
+  "jobId": "9c8b...-gen-1787629110884",
+  "status": "RUNNING",
+  "prompt": "Chiến lược MA crossover khi RSI quá mua...",
+  "startedAt": null,
+  "finishedAt": null,
+  "error": null,
+  "result": null
+}
+```
+
+**Lỗi**
+| Mã | Khi nào |
+|---|---|
+| `400` | `prompt` rỗng hoặc không hợp lệ |
+| `401` | Thiếu/sai token |
+| `409 Conflict` | User đã có job generate đang `RUNNING`/chờ — message chính xác: `"A generate job is already running for this account."` (không enqueue job mới, không thay thế job cũ) |
+
+### `GET /ai-strategy/generate/status`
+
+Trả job generate **in-flight** của user hiện tại, hoặc job **finished gần nhất** (completed/failed) nếu không còn job đang chạy. Client poll endpoint này sau `POST /ai-strategy/generate`.
+
+**Response `200`** — cùng shape với response `202` của POST ở trên. Khi hoàn tất:
+
+```json
+{
+  "jobId": "9c8b...-gen-1787629110884",
+  "status": "COMPLETED",
+  "prompt": "...",
+  "startedAt": "2026-08-29T10:15:02.000Z",
+  "finishedAt": "2026-08-29T10:15:18.000Z",
+  "error": null,
+  "result": {
+    "code": "def generate_signals(candles):\n    ...",
+    "raw": "...",
+    "providerName": "openai-compatible",
+    "validation": {
+      "valid": true,
+      "checks": [
+        { "key": "parses", "passed": true, "message": "OK" },
+        { "key": "contract", "passed": true, "message": "OK" },
+        { "key": "safety", "passed": true, "message": "OK" },
+        { "key": "smoke", "passed": true, "message": "OK" }
+      ]
+    }
+  }
+}
+```
+
+`status = FAILED` → `error` chứa lý do (LLM lỗi, timeout worker, v.v.), `result = null`.
+
+**Response khi chưa từng generate** (không có job nào của user trong queue): trả `null` — trạng thái bình thường trước lần sinh đầu tiên.
+
+**Lỗi:** `401` nếu thiếu/sai token.
 
 ### `POST /ai-strategy/save`
 

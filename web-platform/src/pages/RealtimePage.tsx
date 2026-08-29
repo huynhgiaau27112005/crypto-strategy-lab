@@ -8,6 +8,7 @@ import CandleChart, { type MaOverlay } from '../components/CandleChart'
 import { useMarketSocket } from '../hooks/useMarketSocket'
 import { useMarketTicks } from '../hooks/useMarketTicks'
 import { useStrategySignal } from '../hooks/useStrategySignal'
+import { fmtClockVN, fmtTimeVN } from '../lib/datetime'
 import type { MarketInterval, MarketTradeEvent, StrategySignal } from '../api/types'
 
 const TF_ALL: MarketInterval[] = ['1m', '5m', '15m', '1h', '4h']
@@ -38,11 +39,10 @@ function fmtQty(v: string | number, digits = 3): string {
   return Number(v).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })
 }
 function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-GB', { hour12: false })
+  return fmtTimeVN(iso)
 }
 function fmtClock(iso: string): string {
-  const d = new Date(iso)
-  return `${d.toLocaleTimeString('en-GB', { hour12: false })}.${String(d.getMilliseconds()).padStart(3, '0')}`
+  return fmtClockVN(iso)
 }
 
 /** BUY/SELL/HOLD -> badge color. Neutral (no color claim) while the signal hasn't loaded yet. */

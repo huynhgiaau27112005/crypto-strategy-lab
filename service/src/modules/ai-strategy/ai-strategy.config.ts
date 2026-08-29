@@ -40,6 +40,11 @@ export function getRunTimeoutMs(): number {
   return Number.isFinite(configured) && configured > 0 ? configured : 30_000;
 }
 
+export function getGenerateTimeoutMs(): number {
+  const configured = Number(process.env.AI_STRATEGY_GENERATE_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0 ? configured : 90_000;
+}
+
 // Caps how much stdout we buffer from the worker process, so a strategy
 // that returns a pathologically large payload cannot grow this in-memory
 // buffer unboundedly.

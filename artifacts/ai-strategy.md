@@ -31,11 +31,45 @@ LlmProviderFactory
 Đổi model hay đổi nhà cung cấp = đổi biến môi trường, **không sửa dòng code nào**. Endpoint hiện
 dùng là GitHub Models (tương thích OpenAI), nhưng OpenAI/OpenRouter/Azure đều cắm được.
 
-`FakeProvider` được chọn tự động khi không có API key. Nhờ vậy **toàn bộ 238 test chạy không cần
-key, không cần mạng, không tốn tiền** — điều kiện bắt buộc để CI có ý nghĩa.
+`FakeProvider` được chọn tự động khi không có API key. Nhờ vậy **toàn bộ test chạy không cần key, không cần mạng, không tốn tiền** — điều kiện bắt buộc để CI có ý nghĩa.
 
-Khi không có key mà người dùng bấm *sinh strategy*, API trả lỗi rõ ràng — **không** âm thầm trả code
-mẫu giả vờ là model sinh ra.
+Khi không có key mà người dùng bấm *sinh strategy*, worker trả lỗi rõ ràng qua job `FAILED` — **không** âm thầm trả code mẫu giả vờ là model sinh ra. Xem thêm `GET /ai-strategy/provider`.
+
+---
+
+## 2b. Luồng sinh strategy — API enqueue, worker thực thi (2026-08-29)
+
+Trước đây `POST /ai-strategy/generate` gọi LLM + validate **đồng bộ** trong tiến trình API — request HTTP treo tới khi LLM và subprocess Python xong. Nay chỉ **`generate`** đi queue; `validate`/`save`/`run` vẫn đồng bộ trên API.
+
+```
+POST /ai-strategy/generate  (API, Bearer token)
+        │
+        ├─ AiGenerateQueueService.enqueue(userId, prompt)
+        │     payload Redis: { userId, prompt, correlationId }
+        └─ trả 202 ngay (jobId, status: RUNNING)
+                │
+                ▼  (tiến trình worker — queue "ai-generate")
+        AiGenerateProcessor.process()
+                │
+                └─ AiStrategyService.generate(prompt)
+                       ├─ 1. LlmProvider.generateStrategy(prompt)  → gọi LLM API
+                       └─ 2. AiStrategyValidatorService.validate(code)
+                              → spawn workers/ai-strategy/validate.py
+                       → returnvalue BullMQ: { code, raw, providerName, validation }
+
+GET /ai-strategy/generate/status  (API poll 2s)
+        └─ đọc job in-flight hoặc finished gần nhất của user
+           → khi COMPLETED, client lấy result từ Redis returnvalue
+```
+
+**Phân ranh giới spawn Python trên sơ đồ C4 (level 2):**
+- **Worker → LLM API:** NestJS `LlmProvider` trong tiến trình worker (không phải script Python).
+- **Worker → AI Strategy Worker (Python):** chỉ đường `generate` — spawn `validate.py` **sau** khi LLM trả source.
+- **API → AI Strategy Worker (Python):** `POST /validate`, `POST /save` (re-validate), `POST /:id/run` — spawn `validate.py` / `run.py` từ request đồng bộ. API **không** gọi LLM trên các path này.
+
+Python `workers/ai-strategy/` **không** nối tới LLM. Hai mũi tên spawn API + Worker cùng vào box Python là cố ý, không phải vẽ trùng.
+
+Chi tiết queue (409, attempts 1, lockDuration 120s, 1 job/user): `artifacts/queue.md` mục 4.1. Quyết định thiết kế: `artifacts/decisions.md` mục F20.
 
 ---
 

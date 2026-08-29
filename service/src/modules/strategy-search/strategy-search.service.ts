@@ -20,7 +20,10 @@ import {
   DEFAULT_BACKTEST_COSTS,
 } from '../backtesting/backtesting.types';
 import { MarketDataService } from '../market-data/market-data.service';
-import { MIN_CANDLES_PER_TIMEFRAME } from '../market-data/config';
+import {
+  intervalMs,
+  MIN_CANDLES_PER_TIMEFRAME,
+} from '../market-data/config';
 import { BacktestRunRepository } from '../backtesting/repositories/backtest-run.repository';
 import { StrategyWeightMap } from '../composite-strategy/composite-strategy.service';
 import {
@@ -150,22 +153,27 @@ export class StrategySearchService implements OnApplicationBootstrap {
 
   async start(userId: string, request: StartSearchRequest) {
     const { startTime, endTime, config } = this.validateRequest(request);
-    const minimumCandles = this.minimumCandles(config.enabledDomains);
+    const warmupBars = this.minimumCandles(config.enabledDomains);
+    const dataStartTime = this.candleDataStart(
+      request.timeframe,
+      startTime,
+      warmupBars,
+    );
+    const requiredCandles = warmupBars + 2;
 
     // Fill the local `candles` table from Binance before deciding the
-    // window is unusable. Every "Dataset has N candles; at least 202 are
-    // required" failure came from here: the requested window was fine, the
-    // database had simply never been backfilled for that timeframe (worst
-    // on 1h/4h, where a month of history is only a few hundred rows and
-    // nothing but the manual seed script ever wrote them). Idempotent and
-    // page-bounded - see MarketDataService.ensureCandleCoverage.
+    // window is unusable. Strategies need warmup bars BEFORE the user's
+    // configured start date, plus the backtest window itself — fetching
+    // only [startTime, endTime] left long lookbacks (MA/STRUCTURE) without
+    // history and made runs look like they "completed" with no visible
+    // results. Idempotent and page-bounded — see ensureCandleCoverage.
     try {
       await this.marketData.ensureCandleCoverage(
         StrategySearchService.SYMBOL,
         request.timeframe,
-        startTime,
+        dataStartTime,
         endTime,
-        Math.max(minimumCandles, MIN_CANDLES_PER_TIMEFRAME),
+        Math.max(requiredCandles, MIN_CANDLES_PER_TIMEFRAME),
       );
     } catch (error) {
       // A Binance outage must not make an otherwise-runnable window fail:
@@ -178,14 +186,14 @@ export class StrategySearchService implements OnApplicationBootstrap {
 
     const candles = await this.experiments.candles(
       request.timeframe,
-      startTime,
+      dataStartTime,
       endTime,
     );
-    if (candles.length < minimumCandles) {
+    if (candles.length < requiredCandles) {
       throw new BadRequestException(
         `Khoảng thời gian đã chọn chỉ có ${candles.length} nến ${request.timeframe} ` +
-          `(cần tối thiểu ${minimumCandles}). Hãy chọn khoảng ngày dài hơn, ` +
-          'hoặc đổi sang timeframe nhỏ hơn.',
+          `(cần tối thiểu ${requiredCandles}, bao gồm ${warmupBars} nến warmup trước ngày bắt đầu). ` +
+          'Hãy chọn khoảng ngày dài hơn, hoặc đổi sang timeframe nhỏ hơn.',
       );
     }
 
@@ -421,9 +429,15 @@ export class StrategySearchService implements OnApplicationBootstrap {
       return { regenerated: 0, skipped: 0, candidateIds: [], summaries: [] };
     }
 
-    const candles = await this.experiments.candles(
+    const warmupBars = this.minimumCandles(config.enabledDomains);
+    const dataStartTime = this.candleDataStart(
       experimentConfig.timeframe,
       experimentConfig.start_time,
+      warmupBars,
+    );
+    const candles = await this.experiments.candles(
+      experimentConfig.timeframe,
+      dataStartTime,
       experimentConfig.end_time,
     );
 
@@ -557,6 +571,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
           aiSignals,
           undefined,
           config.costs,
+          experimentConfig.start_time,
         );
         this.metrics.backtestsRunTotal.inc();
         await this.backtestRuns.complete(candidateEntity.id, result);
@@ -984,14 +999,21 @@ export class StrategySearchService implements OnApplicationBootstrap {
 
       const seed = Date.now() >>> 0;
       const random = createSeededRandom(seed);
-      const candles = await this.experiments.candles(
+      const warmupBars = this.minimumCandles(config.enabledDomains);
+      const dataStartTime = this.candleDataStart(
         experimentConfig.timeframe,
         experimentConfig.start_time,
+        warmupBars,
+      );
+      const candles = await this.experiments.candles(
+        experimentConfig.timeframe,
+        dataStartTime,
         experimentConfig.end_time,
       );
-      if (candles.length < this.minimumCandles(config.enabledDomains)) {
+      const requiredCandles = warmupBars + 2;
+      if (candles.length < requiredCandles) {
         throw new Error(
-          'The experiment dataset no longer contains enough candles.',
+          `The experiment dataset no longer contains enough candles (have ${candles.length}, need ${requiredCandles}).`,
         );
       }
 
@@ -1122,6 +1144,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
             aiSignals,
             sentimentScores,
             config.costs,
+            experimentConfig.start_time,
           );
           this.metrics.backtestsRunTotal.inc();
           await this.backtestRuns.complete(candidateEntity.id, result);
@@ -1646,6 +1669,16 @@ export class StrategySearchService implements OnApplicationBootstrap {
       INFORMATION: 2,
     };
     return Math.max(...domains.map((domain) => requirements[domain]));
+  }
+
+  /** Earliest timestamp to load so indicators have warmup history before the user's window. */
+  private candleDataStart(
+    timeframe: string,
+    userStart: Date,
+    warmupBars: number,
+  ): Date {
+    const step = intervalMs(timeframe) ?? 60_000;
+    return new Date(userStart.getTime() - warmupBars * step);
   }
 
   private errorMessage(error: unknown): string {

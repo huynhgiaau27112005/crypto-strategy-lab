@@ -10,6 +10,7 @@ import { useTopCandidates } from '../hooks/useTopCandidates'
 import { useExperimentContext } from '../state/ExperimentContext'
 import { useStrategySelection } from '../state/StrategySelectionContext'
 import type { MarketInterval, StartSearchRequest, StartSearchResponse, TradeDto } from '../api/types'
+import { fmtDateTimeVN, vietnamDateRangeToIso } from '../lib/datetime'
 
 const TF_OPTIONS: MarketInterval[] = ['1m', '5m', '15m', '1h', '4h']
 const TRADE_PAGE_SIZE = 8
@@ -40,7 +41,7 @@ function fmtPctRaw(n: number): string {
   return `${fmtNum(n)}%`
 }
 function fmtDateTime(iso: string): string {
-  return new Date(iso).toLocaleString('en-GB', { hour12: false })
+  return fmtDateTimeVN(iso)
 }
 
 /** Parses a numeric input; returns null when blank or not a finite number. */
@@ -152,10 +153,11 @@ export default function BacktestPage() {
   async function confirmRun() {
     setSubmitting(true)
     setSubmitError(null)
+    const range = vietnamDateRangeToIso(form.fromDate, form.toDate)
     const body: StartSearchRequest = {
       timeframe: form.timeframe,
-      startTime: `${form.fromDate}T00:00:00.000Z`,
-      endTime: `${form.toDate}T23:59:59.000Z`,
+      startTime: range.startTime,
+      endTime: range.endTime,
       topK: topK ?? undefined,
       initialCapital: capital ?? undefined,
       transactionCostPct: cost ?? undefined,
@@ -260,8 +262,9 @@ export default function BacktestPage() {
 
   const chartMarkers = useMemo<PriceMarker[]>(() => {
     if (!selectedTrade) return []
+    const entryLabel = selectedTrade.side === 'LONG' ? 'LONG ENTRY' : 'SHORT ENTRY'
     const out: PriceMarker[] = [
-      { price: selectedTrade.entryPrice, label: 'Entry', tone: 'neutral' },
+      { price: selectedTrade.entryPrice, label: entryLabel, tone: 'neutral' },
     ]
     if (selectedTrade.stopLoss != null) {
       out.push({ price: selectedTrade.stopLoss, label: 'Stop Loss', tone: 'down' })
@@ -271,6 +274,28 @@ export default function BacktestPage() {
     }
     return out
   }, [selectedTrade])
+
+  const chartTimeMarkers = useMemo(
+    () =>
+      trades.map((t) => ({
+        time: t.entryTime,
+        label: t.side === 'LONG' ? 'LONG ENTRY' : 'SHORT ENTRY',
+        side: t.side,
+      })),
+    [trades],
+  )
+
+  const resultStatusMessage = useMemo(() => {
+    if (!experimentId || pollState === 'polling') return null
+    if (topRows.length > 0) return null
+    if (expStatus?.failed && expStatus.failed > 0) {
+      return `Search đã chạy nhưng ${expStatus.failed} iteration lỗi — không có candidate hoàn tất đủ điều kiện để xem. Kiểm tra log worker hoặc thử khoảng ngày/timeframe khác.`
+    }
+    if (pollState === 'terminal' && expStatus?.completed === 0) {
+      return 'Không có candidate backtest thành công. Thường do thiếu nến lịch sử (warmup) hoặc khoảng ngày quá ngắn — hãy mở rộng khoảng thời gian hoặc chọn timeframe nhỏ hơn.'
+    }
+    return null
+  }, [experimentId, pollState, topRows.length, expStatus])
 
   const hasProtectiveLevels = trades.some((t) => t.stopLoss != null || t.takeProfit != null)
 
@@ -534,6 +559,8 @@ export default function BacktestPage() {
 
         {!experimentId ? (
           <p className="text-muted">Chưa có Leaderboard nào — chạy Search &amp; Backtest ở mục 01 phía trên trước.</p>
+        ) : resultStatusMessage ? (
+          <p className="text-muted backtest-run-hint-warn" style={{ fontSize: 13 }}>{resultStatusMessage}</p>
         ) : candidateLoading && !candidate ? (
           <p className="text-muted">Đang tải chi tiết candidate…</p>
         ) : !candidate ? (
@@ -582,6 +609,7 @@ export default function BacktestPage() {
                   ]}
                   showLevels
                   markers={chartMarkers}
+                  timeMarkers={chartTimeMarkers}
                   height={280}
                 />
                 <p className="text-muted" style={{ fontSize: 11, margin: '6px 0 0' }}>
