@@ -1,5 +1,5 @@
-@startuml crypto-strategy-lab-architecture
-' Crypto Strategy Lab — Component architecture (AS BUILT)
+@startuml architecture-c4-level-3
+' C4 Level 3 — Component (AS BUILT)
 ' Nguồn sự thật: service/src, web-platform/src, workers/, database/migrations
 ' Mọi tên trong sơ đồ là tên class/file có thật trong code.
 

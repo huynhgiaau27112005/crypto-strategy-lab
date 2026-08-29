@@ -1,4 +1,4 @@
-@startuml crypto-strategy-lab-flow-search
+@startuml architecture-flow-search-backtest
 ' Luồng demo bắt buộc: cấu hình Search → sinh Candidate → Backtest → Leaderboard
 ' Mọi tên hàm/bảng trong sơ đồ là tên có thật trong code.
 

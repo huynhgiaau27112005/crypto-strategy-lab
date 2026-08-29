@@ -1,0 +1,74 @@
+@startuml architecture-c4-level-2
+' C4 Level 2 — Container
+' Chi tiết component: architecture-c4-level-3.puml
+
+skinparam shadowing false
+skinparam linetype ortho
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 13
+skinparam TitleFontSize 16
+skinparam package {
+  BackgroundColor #FFFFFF
+  BorderColor #444444
+  FontStyle bold
+}
+skinparam component {
+  BackgroundColor #438DD5
+  FontColor #FFFFFF
+  BorderColor #438DD5
+}
+skinparam database {
+  BackgroundColor #438DD5
+  FontColor #FFFFFF
+  BorderColor #438DD5
+}
+skinparam queue {
+  BackgroundColor #438DD5
+  FontColor #FFFFFF
+  BorderColor #438DD5
+}
+skinparam cloud {
+  BackgroundColor #999999
+  FontColor #FFFFFF
+  BorderColor #666666
+}
+skinparam actor {
+  BackgroundColor #08427B
+  FontColor #FFFFFF
+  BorderColor #08427B
+}
+
+title Container — Crypto Strategy Lab
+
+actor "Trader" as USER
+
+package "Crypto Strategy Lab [Software System]" as CSL {
+
+  component "Web Application\n[React, TypeScript]" as SPA
+  component "API Application\n[NestJS]" as API
+  component "Background Worker\n[NestJS]" as WORKER
+  database "Database\n[PostgreSQL, TimescaleDB]" as PG
+  queue "Message Broker & Cache\n[Redis, BullMQ]" as REDIS
+  component "News Worker\n[Python]" as W_NEWS
+  component "AI Strategy Worker\n[Python]" as W_AI
+}
+
+cloud "Binance\n[External System]" as BINANCE
+cloud "News Providers\n[External System]" as NEWS_EXT
+cloud "LLM API\n[External System]" as LLM
+
+USER --> SPA : HTTPS
+SPA --> API : REST / WebSocket
+API --> PG : SQL
+API --> REDIS : Enqueue jobs / cache
+API --> BINANCE : Market data
+API --> LLM : Generate code
+API --> W_AI : Spawn
+WORKER --> REDIS : Dequeue jobs
+WORKER --> PG : SQL
+WORKER --> W_NEWS : Spawn
+W_NEWS --> PG : SQL
+W_NEWS --> NEWS_EXT : Crawl
+W_AI -[hidden]right- W_NEWS
+
+@enduml

@@ -14,7 +14,17 @@ Mục đích: nhóm dùng tài liệu này để hiểu hệ thống và chuẩn
 | `module-spec/` | Nếu 1 module cần giải thích dài, tách file riêng ở đây (vd `module-spec/strategy-engine.md`, `module-spec/backtesting.md`) thay vì nhồi hết vào 1 file. |
 | `decisions.md` | Nhật ký các quyết định phải hỏi người dùng trong lúc code (theo skill `resolve-before-coding`) và câu trả lời nhận được — để buổi present khỏi phải nhớ lại tại sao chọn phương án này. |
 
-Các file khác có thể thêm nếu cần thiết (vd `acceptance-criteria.md` cho tiêu chí review từng module) — không giới hạn cứng vào danh sách trên.
+## Sơ đồ kiến trúc (PlantUML)
+
+| File | Mô tả |
+|---|---|
+| `architecture-c4-level-1.puml` → `.png` | C4 Level 1 — System Context |
+| `architecture-c4-level-2.puml` → `.png` | C4 Level 2 — Container |
+| `architecture-c4-level-3.puml` → `.png` | C4 Level 3 — Component |
+| `architecture-flow-search-backtest.puml` → `.png` | Sequence Search → Backtest → Leaderboard |
+
+Render: `cd artifacts` rồi `plantuml -tpng architecture-c4-level-*.puml architecture-flow-search-backtest.puml` (hoặc dùng Docker — xem `README.md` ở root).
+
 
 ## Quy tắc cập nhật
 

@@ -128,9 +128,10 @@ Không có key thì mọi thứ khác vẫn chạy; chỉ riêng nút *sinh stra
 
 | File | Nội dung |
 |---|---|
-| `architecture-container.puml` → `.png` | Sơ đồ tổng quan C4 mức 2 — **dùng mở đầu vấn đáp** |
-| `architecture.puml` → `.png` | Sơ đồ component chi tiết, mọi tên là class/file có thật |
-| `flow-search-backtest.puml` → `.png` | Sequence luồng demo bắt buộc |
+| `architecture-c4-level-1.puml` → `.png` | C4 Level 1 — System Context |
+| `architecture-c4-level-2.puml` → `.png` | C4 Level 2 — Container (**mở đầu vấn đáp**) |
+| `architecture-c4-level-3.puml` → `.png` | C4 Level 3 — Component (class/file có thật) |
+| `architecture-flow-search-backtest.puml` → `.png` | Sequence luồng Search → Backtest → Leaderboard |
 | `decisions.md` | Nhật ký quyết định kiến trúc kèm lý do |
 | `api-contract.md` | Hợp đồng API thật |
 | `database.md` | Schema thật + giải thích 4 khái niệm Strategy/Experiment/Config/Candidate |
@@ -139,10 +140,15 @@ Không có key thì mọi thứ khác vẫn chạy; chỉ riêng nút *sinh stra
 | `observability.md` | Log có cấu trúc, correlation id xuyên tiến trình, metrics |
 | `ai-strategy.md` | Provider LLM, contract code sinh ra, cổng validate và giới hạn của nó |
 
-Sửa `.puml` rồi render lại:
+Sửa `.puml` rồi render lại (PNG cùng tên file, vd `architecture-c4-level-1.png`):
 
 ```bash
-cd artifacts && PLANTUML_LIMIT_SIZE=16384 plantuml -tpng -DPLANTUML_LIMIT_SIZE=16384 *.puml
+cd artifacts
+# Cách 1 — PlantUML local
+PLANTUML_LIMIT_SIZE=16384 plantuml -tpng -DPLANTUML_LIMIT_SIZE=16384 architecture-c4-level-*.puml architecture-flow-search-backtest.puml
+
+# Cách 2 — Docker (không cần cài PlantUML)
+docker run --rm -v "%cd%:/data" plantuml/plantuml -tpng /data/architecture-c4-level-*.puml /data/architecture-flow-search-backtest.puml
 ```
 
 ---

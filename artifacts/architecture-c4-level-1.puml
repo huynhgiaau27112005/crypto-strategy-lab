@@ -1,0 +1,41 @@
+@startuml architecture-c4-level-1
+' C4 Level 1 — System Context
+' Chi tiết nội bộ: architecture-c4-level-2.puml
+
+skinparam shadowing false
+skinparam linetype ortho
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 14
+skinparam TitleFontSize 16
+skinparam person {
+  BackgroundColor #08427B
+  FontColor #FFFFFF
+  BorderColor #08427B
+}
+skinparam rectangle {
+  BackgroundColor #1168BD
+  FontColor #FFFFFF
+  BorderColor #1168BD
+}
+skinparam cloud {
+  BackgroundColor #999999
+  FontColor #FFFFFF
+  BorderColor #666666
+}
+
+title System Context — Crypto Strategy Lab
+
+person "Trader" as USER
+
+rectangle "Crypto Strategy Lab\n[Software System]\nPhân tích, backtest, search chiến lược crypto" as CSL
+
+cloud "Binance\n[External System]" as BINANCE
+cloud "News Providers\n[External System]" as NEWS
+cloud "LLM API\n[External System]" as LLM
+
+USER --> CSL : Sử dụng
+CSL --> BINANCE : Lấy dữ liệu thị trường
+CSL --> NEWS : Thu thập tin tức
+CSL --> LLM : Sinh strategy AI
+
+@enduml
