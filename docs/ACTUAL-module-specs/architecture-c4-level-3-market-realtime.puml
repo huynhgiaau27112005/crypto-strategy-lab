@@ -1,0 +1,124 @@
+@startuml market-realtime-c4-level-3
+
+title C4 Level 3 — Market Realtime
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam linetype ortho
+skinparam nodesep 30
+skinparam ranksep 55
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 11
+
+actor "User / Browser" as USER
+
+package "Frontend — React 19 + Vite" as FE {
+    rectangle "RealtimePage\n(4 pane, chart nến)" as FE_RT
+    rectangle "hooks/useMarketSocket" as FE_HOOK
+    rectangle "lib/marketSocket.ts\n(socket.io-client)" as FE_SOCKET
+    rectangle "api/client.ts\n(apiFetch)" as FE_API
+}
+
+package "Backend — NestJS" as BE {
+
+    package "Market Data Module" as MARKET {
+        rectangle "MarketDataController\n/market-data/candles\n/market-data/import" as MKT_C
+
+        rectangle "MarketDataService\nassertAllowedInterval()\ngetCandles() = cache-aside" as MKT_S
+
+        rectangle "MarketDataGateway\nSocket.IO /market\n1 upstream / interval\nref-counted teardown" as MKT_GW
+
+        rectangle "BinanceClient\nREST klines + WS stream\nreconnect backoff" as MKT_BIN
+
+        rectangle "CandleRepository" as MKT_REPO
+
+        rectangle "config.ts\nALLOWED_INTERVALS" as MKT_CFG
+    }
+
+    package "Realtime Signal" as SIGNAL {
+        rectangle "RealtimeSignalService" as SIG_S
+        rectangle "RealtimeSignalController\n/strategy-engine/signal" as SIG_C
+
+        rectangle "StrategyEngineService\nanalyze(member, ctx)" as ENG_S
+
+        rectangle "StrategyRegistry\nregister / resolve / analyze" as REG
+
+        rectangle "Built-in Strategy Plugins\nMA · RSI · Bollinger\nSupportResistance\nNewsSentiment" as PLUG
+
+        rectangle "AiStrategyPluginAdapter\nAI:<id>" as AI_ADAPTER
+    }
+}
+
+package "Cache" as CACHE {
+    rectangle "CacheService\nget / set / del / incr" as CACHE_S
+}
+
+package "Infrastructure" as INFRA {
+    database "PostgreSQL + TimescaleDB\ncandles hypertable" as PG
+    queue "Redis\ncache: candles" as REDIS
+}
+
+cloud "Binance\nREST + WebSocket" as BINANCE
+
+USER --> FE_RT
+
+FE_RT --> FE_HOOK
+FE_HOOK --> FE_SOCKET
+
+FE_RT --> FE_API
+FE_API --> MKT_C
+
+FE_SOCKET --> MKT_GW : WebSocket\n/market
+
+MKT_C --> MKT_S
+MKT_S --> MKT_REPO
+MKT_S --> CACHE_S
+MKT_S --> MKT_CFG
+
+MKT_GW --> MKT_BIN
+MKT_GW --> MKT_REPO
+MKT_GW --> MKT_CFG
+
+MKT_BIN --> BINANCE : REST klines
+MKT_BIN --> BINANCE : WebSocket stream
+
+MKT_REPO --> PG
+CACHE_S --> REDIS
+
+MKT_GW --> SIG_S : market/candle context
+
+SIG_C --> SIG_S
+SIG_S --> ENG_S
+ENG_S --> REG
+
+REG --> PLUG
+REG --> AI_ADAPTER
+
+note right of MKT_GW
+    Frontend không gọi Binance trực tiếp.
+
+    Gateway duy trì:
+    • 1 upstream / interval
+    • ref-counted subscribers
+    • teardown khi không còn client
+end note
+
+note bottom of MKT_S
+    Historical candles:
+    Cache-aside
+
+    Redis → hit
+    Redis → miss → PostgreSQL
+end note
+
+note bottom of MKT_BIN
+    Binance là nguồn dữ liệu thị trường.
+
+    REST:
+    historical / initial candles
+
+    WebSocket:
+    realtime candle stream
+end note
+
+@enduml

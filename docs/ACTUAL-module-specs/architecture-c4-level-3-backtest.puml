@@ -1,0 +1,211 @@
+@startuml
+title C4 Level 3 — Backtest Engine
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam linetype ortho
+skinparam nodesep 30
+skinparam ranksep 55
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 11
+
+actor "User / Browser" as USER
+
+package "Frontend" as FE {
+    rectangle "StrategyEnginePage\nWeightedVotingTable\nParameterPanel" as FE_STRAT
+    rectangle "BacktestPage\nConfirmRerunDialog" as FE_BT
+    rectangle "hooks/\nuseExperiment\nuseTopCandidates\nuseCandidateDetail" as FE_HOOK
+    rectangle "api/client.ts" as FE_API
+}
+
+package "Backend — NestJS" as BE {
+
+    package "Strategy Search Module" as SEARCH {
+
+        rectangle "StrategySearchController\nPOST /experiments\nGET /experiments/:id\nPOST /:id/cancel\nPOST /:id/extend\nPOST /:id/regenerate\nGET /candidates/:id" as SEARCH_C
+
+        rectangle "StrategySearchService\nstart / extend / run\nsearch loop" as SEARCH_S
+
+        rectangle "SearchQueueService\nenqueue / cancelIfQueued" as SEARCH_Q
+
+        rectangle "DomainGuidedRandomGenerator" as GENERATOR
+
+        rectangle "CandidateFingerprintService\nSeededRandom" as FINGERPRINT
+
+        rectangle "strategy-catalog.ts\nTREND / MOMENTUM /\nVOLATILITY / STRUCTURE" as CATALOG
+
+        rectangle "ExperimentRepository\nExperimentConfigRepository\nExperimentIterationRepository\nCandidateRepository\nStrategyRepository" as SEARCH_REPO
+    }
+
+    package "Backtesting Module" as BACKTEST {
+
+        rectangle "BacktestingService\nrun(candidate, candles, weights)\nfee + slippage\nSL/TP + metrics" as BT_S
+
+        rectangle "BacktestRunRepository\n1 transaction:\nruns + trades + evaluations" as BT_REPO
+    }
+
+    package "Strategy Engine" as ENGINE {
+
+        rectangle "StrategyEngineService\nanalyze(member, ctx)" as ENG_S
+
+        rectangle "StrategyRegistry\nresolve(type)" as REG
+
+        rectangle "Strategy Plugins\nMA\nRSI\nBollinger\nSupportResistance\nNewsSentiment" as PLUG
+
+        rectangle "AiStrategyPluginAdapter\nAI:<id>" as AI_ADAPTER
+
+        rectangle "CompositeStrategyService\nΣ(weight × signal) / Σweight\n→ BUY / SELL / HOLD" as COMP
+    }
+
+    package "AI Strategy Module" as AI {
+
+        rectangle "AiStrategyRepository" as AI_REPO
+
+        rectangle "AiStrategySignalPrecomputeService\nwhole-series\n1 time / experiment run" as AI_PRE
+
+        rectangle "AiStrategyRunnerService\nPython subprocess\noutput cap + timeout" as AI_RUN
+    }
+
+    package "Leaderboard Module" as LB {
+
+        rectangle "LeaderboardEventsHandler\niteration boundary /\ncandidates regenerated" as LB_HANDLER
+
+        rectangle "LeaderboardService\nmaterialise leaderboard_entries\ncache version++" as LB_S
+    }
+
+    package "Domain Events" as EVENTS {
+        rectangle "EventEmitter2\nin-process only" as EVENT_BUS
+    }
+
+    package "Database" as DB {
+        rectangle "DatabaseService\nraw pg.Pool\nquery / withTransaction" as DB_S
+    }
+}
+
+package "Worker Process" as WORKER {
+    rectangle "SearchProcessor\nBullMQ\nconcurrency = 5" as PROCESSOR
+}
+
+package "Queue / Cache" as INFRA {
+    queue "Redis\nBullMQ search queue\nleaderboard cache version" as REDIS
+}
+
+database "PostgreSQL + TimescaleDB\n\nexperiments\nexperiment_configs\niterations\ncandidates\ncandidate_strategies\nstrategies\nbacktest_runs\ntrades\nevaluations\nleaderboards\nleaderboard_entries\ncandles" as PG
+
+cloud "Python AI Worker\nworkers/ai-strategy" as PY_AI
+
+USER --> FE_STRAT
+USER --> FE_BT
+
+FE_STRAT --> FE_HOOK
+FE_BT --> FE_HOOK
+FE_HOOK --> FE_API
+
+FE_API --> SEARCH_C
+
+SEARCH_C --> SEARCH_S
+
+SEARCH_S --> SEARCH_Q
+SEARCH_S --> GENERATOR
+SEARCH_S --> FINGERPRINT
+GENERATOR --> CATALOG
+GENERATOR --> FINGERPRINT
+
+SEARCH_S --> SEARCH_REPO
+
+SEARCH_Q --> REDIS
+PROCESSOR --> REDIS : pull search job
+
+PROCESSOR --> SEARCH_S : run(experimentId)
+
+SEARCH_S --> AI_PRE
+AI_PRE --> AI_RUN
+AI_RUN --> PY_AI
+
+SEARCH_S --> BT_S
+
+BT_S --> ENG_S
+BT_S --> COMP
+
+ENG_S --> REG
+REG --> PLUG
+REG --> AI_ADAPTER
+
+AI_ADAPTER --> AI_REPO
+
+BT_S --> BT_REPO
+BT_REPO --> DB_S
+
+SEARCH_REPO --> DB_S
+AI_REPO --> DB_S
+LB_S --> DB_S
+
+DB_S --> PG
+
+BT_S --> EVENT_BUS : backtest.completed /\nbacktest.failed
+
+SEARCH_S --> EVENT_BUS : candidates.regenerated
+
+EVENT_BUS --> LB_HANDLER
+
+LB_HANDLER --> LB_S
+
+LB_S --> PG
+LB_S --> REDIS : incr leaderboard version
+
+note right of SEARCH_S
+    Search loop thật chỉ chạy
+    trong Worker.
+
+    API chỉ:
+    • tạo experiment
+    • enqueue job
+    • cancel / extend
+end note
+
+note right of BT_S
+    Mỗi candidate được backtest
+    trên cùng tập candles của experiment.
+
+    Xử lý:
+    • strategy signals
+    • weighted voting
+    • fee
+    • slippage
+    • SL / TP
+    • trades
+    • evaluation metrics
+end note
+
+note bottom of AI_PRE
+    AI strategy KHÔNG chạy Python
+    mỗi candle.
+
+    Whole-series execution:
+        candles → Python → signals[]
+
+    Sau đó StrategyPlugin chỉ lookup
+    SignalContext.aiSignals O(1).
+end note
+
+note bottom of EVENT_BUS
+    EventEmitter2 chỉ là
+    in-process event bus.
+
+    Không dùng để giao tiếp
+    giữa API process và Worker process.
+
+    BullMQ/Redis mới là
+    cross-process boundary.
+end note
+
+note bottom of LB_S
+    Worker rebuild leaderboard.
+
+    Redis version được increment.
+
+    API đọc version mới →
+    cache miss →
+    query leaderboard mới.
+end note
+@enduml
