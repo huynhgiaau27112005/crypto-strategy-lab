@@ -1,7 +1,18 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/decorators/current-user.decorator';
+import { AiGenerateQueueService } from './ai-generate-queue.service';
 import { AiStrategyService } from './ai-strategy.service';
 import {
   generateStrategySchema,
@@ -24,7 +35,10 @@ function parseOrThrow<T>(schema: { safeParse: (v: unknown) => { success: boolean
 
 @Controller('ai-strategy')
 export class AiStrategyController {
-  constructor(private readonly aiStrategyService: AiStrategyService) {}
+  constructor(
+    private readonly aiStrategyService: AiStrategyService,
+    private readonly generateQueue: AiGenerateQueueService,
+  ) {}
 
   @Get('health')
   health() {
@@ -59,9 +73,10 @@ export class AiStrategyController {
 
   @UseGuards(JwtAuthGuard)
   @Post('generate')
-  generate(@Body() body: unknown, @CurrentUser() _user: CurrentUserPayload) {
+  @HttpCode(HttpStatus.ACCEPTED)
+  generate(@Body() body: unknown, @CurrentUser() user: CurrentUserPayload) {
     const { prompt } = parseOrThrow(generateStrategySchema, body);
-    return this.aiStrategyService.generate(prompt);
+    return this.generateQueue.enqueue(user.id, prompt);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -85,6 +100,12 @@ export class AiStrategyController {
   @Get('mine')
   listMine(@CurrentUser() user: CurrentUserPayload) {
     return this.aiStrategyService.listMine(user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('generate/status')
+  generateStatus(@CurrentUser() user: CurrentUserPayload) {
+    return this.generateQueue.getStatus(user.id);
   }
 
   @UseGuards(JwtAuthGuard)

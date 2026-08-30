@@ -49,6 +49,8 @@ export class BacktestingService {
     // (DEFAULT_BACKTEST_COSTS: 10 000 capital, no fee, no slippage, no
     // SL/TP), so every existing caller and test is unaffected.
     costs: BacktestCosts = DEFAULT_BACKTEST_COSTS,
+    /** Indicators use the full candle series; trades only open/close at or after this instant (warmup bars before the user's configured window). */
+    tradingStartTime?: Date,
   ): BacktestResult {
     if (candles.length < 2)
       throw new Error('At least two candles are required.');
@@ -61,6 +63,8 @@ export class BacktestingService {
     for (let index = 0; index < candles.length; index += 1) {
       const candle = candles[index];
       const close = Number(candle.close);
+      const tradingAllowed =
+        !tradingStartTime || candle.timestamp >= tradingStartTime;
 
       // Protective exits are checked BEFORE this candle's signal, and
       // against the candle's own high/low rather than its close: a stop
@@ -69,7 +73,7 @@ export class BacktestingService {
       // When both levels sit inside one candle we take the stop - assuming
       // the favourable one filled first is the classic way a backtest
       // flatters itself.
-      if (position) {
+      if (tradingAllowed && position) {
         const protective = this.protectiveExit(position, candle);
         if (protective) {
           const trade = this.closePosition(
@@ -95,6 +99,7 @@ export class BacktestingService {
         },
         weights,
       );
+      if (!tradingAllowed) continue;
       if (!position && result.signal === 'BUY') {
         position = this.openPosition(candle.timestamp, close, capital, costs);
       } else if (position && result.signal === 'SELL') {

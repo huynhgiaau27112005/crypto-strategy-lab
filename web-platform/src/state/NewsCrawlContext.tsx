@@ -38,6 +38,8 @@ export interface NewsCrawlContextValue {
   job: NewsCrawlJobDto | null
   state: NewsCrawlPollState
   error: string | null
+  /** Crawl restarts automatically after each successful batch until the user stops it. */
+  autoCrawlEnabled: boolean
   /** POST /news/crawl, then starts the poll of /news/crawl/status. */
   triggerCrawl: () => Promise<void>
   /** POST /news/crawl/cancel — see NewsCrawlQueueService.cancel(). */
@@ -66,8 +68,12 @@ function isRunning(status: NewsCrawlJobDto['status']): boolean {
  * so the button reflects what the worker is actually doing rather than
  * what this tab happens to remember.
  */
+/** Pause between automatic crawl batches so the worker can finish scoring. */
+const AUTO_CRAWL_GAP_MS = 3000
+
 export function NewsCrawlProvider({ children }: { children: ReactNode }) {
   const [stopping, setStopping] = useState(false)
+  const [autoCrawlEnabled, setAutoCrawlEnabled] = useState(true)
   const [job, setJob] = useState<NewsCrawlJobDto | null>(null)
   const [state, setState] = useState<NewsCrawlPollState>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -75,9 +81,9 @@ export function NewsCrawlProvider({ children }: { children: ReactNode }) {
   const unmountedRef = useRef(false)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const controllerRef = useRef<AbortController | null>(null)
-  // Guards against two polls running at once (e.g. the resume-on-mount poll
-  // and a poll started by an immediate click).
   const pollingRef = useRef(false)
+  const autoCrawlRef = useRef(true)
+  const triggerCrawlRef = useRef<() => Promise<void>>(async () => {})
 
   const poll = useCallback((failures: number) => {
     if (unmountedRef.current) return
@@ -94,6 +100,17 @@ export function NewsCrawlProvider({ children }: { children: ReactNode }) {
         if (!isRunning(status.status)) {
           pollingRef.current = false
           setState('terminal')
+          if (
+            autoCrawlRef.current &&
+            status.status === 'COMPLETED' &&
+            !unmountedRef.current
+          ) {
+            timerRef.current = setTimeout(() => {
+              if (autoCrawlRef.current && !unmountedRef.current) {
+                void triggerCrawlRef.current()
+              }
+            }, AUTO_CRAWL_GAP_MS)
+          }
           return
         }
         timerRef.current = setTimeout(() => poll(0), POLL_INTERVAL_MS)
@@ -121,11 +138,18 @@ export function NewsCrawlProvider({ children }: { children: ReactNode }) {
 
     apiFetch<NewsCrawlJobDto | null>('/news/crawl/status', { signal: controller.signal })
       .then((status) => {
-        if (unmountedRef.current || !status) return
+        if (unmountedRef.current || !status) {
+          if (!unmountedRef.current && autoCrawlRef.current) {
+            void triggerCrawlRef.current()
+          }
+          return
+        }
         setJob(status)
         if (isRunning(status.status)) {
           setState('polling')
           if (!pollingRef.current) poll(0)
+        } else if (autoCrawlRef.current) {
+          void triggerCrawlRef.current()
         }
       })
       .catch(() => {
@@ -144,6 +168,8 @@ export function NewsCrawlProvider({ children }: { children: ReactNode }) {
 
   const triggerCrawl = useCallback(async (): Promise<void> => {
     if (timerRef.current) clearTimeout(timerRef.current)
+    autoCrawlRef.current = true
+    setAutoCrawlEnabled(true)
     setError(null)
     setState('polling')
 
@@ -154,6 +180,13 @@ export function NewsCrawlProvider({ children }: { children: ReactNode }) {
 
       if (!isRunning(started.status)) {
         setState('terminal')
+        if (autoCrawlRef.current && started.status === 'COMPLETED') {
+          timerRef.current = setTimeout(() => {
+            if (autoCrawlRef.current && !unmountedRef.current) {
+              void triggerCrawlRef.current()
+            }
+          }, AUTO_CRAWL_GAP_MS)
+        }
         return
       }
       poll(0)
@@ -164,8 +197,13 @@ export function NewsCrawlProvider({ children }: { children: ReactNode }) {
     }
   }, [poll])
 
+  triggerCrawlRef.current = triggerCrawl
+
   const stopCrawl = useCallback(async (): Promise<void> => {
     setStopping(true)
+    autoCrawlRef.current = false
+    setAutoCrawlEnabled(false)
+    if (timerRef.current) clearTimeout(timerRef.current)
     try {
       await apiFetch('/news/crawl/cancel', { method: 'POST' })
       // Deliberately does NOT flip `state` to terminal here: an already-
@@ -181,8 +219,8 @@ export function NewsCrawlProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo<NewsCrawlContextValue>(
-    () => ({ job, state, error, triggerCrawl, stopCrawl, stopping }),
-    [job, state, error, triggerCrawl, stopCrawl, stopping],
+    () => ({ job, state, error, autoCrawlEnabled, triggerCrawl, stopCrawl, stopping }),
+    [job, state, error, autoCrawlEnabled, triggerCrawl, stopCrawl, stopping],
   )
 
   return <NewsCrawlContext.Provider value={value}>{children}</NewsCrawlContext.Provider>

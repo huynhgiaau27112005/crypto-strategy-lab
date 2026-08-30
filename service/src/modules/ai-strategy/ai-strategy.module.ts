@@ -8,6 +8,7 @@ import { AiStrategySignalPrecomputeService } from './ai-strategy-signal-precompu
 import { AiStrategyRepository } from './repositories/ai-strategy.repository';
 import { CandleRepository } from '../market-data/repositories/candle.repository';
 import { LLM_PROVIDER, llmProviderFactory } from './providers/llm-provider.factory';
+import { AiGenerateQueueService } from './ai-generate-queue.service';
 
 @Module({
   imports: [DatabaseModule],
@@ -17,6 +18,7 @@ import { LLM_PROVIDER, llmProviderFactory } from './providers/llm-provider.facto
     AiStrategyValidatorService,
     AiStrategyRunnerService,
     AiStrategySignalPrecomputeService,
+    AiGenerateQueueService,
     AiStrategyRepository,
     CandleRepository,
     { provide: LLM_PROVIDER, useFactory: llmProviderFactory },

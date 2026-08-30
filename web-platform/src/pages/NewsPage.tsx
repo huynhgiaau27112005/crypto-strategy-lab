@@ -23,9 +23,7 @@ function sentimentKind(sentiment: SentimentLabel | null): SignalKind {
   return 'neutral'
 }
 
-function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-}
+import { fmtTimeVN } from '../lib/datetime'
 
 function fmtConfidence(score: number | null): string {
   return score != null ? score.toFixed(2) : '—'
@@ -50,6 +48,7 @@ export default function NewsPage() {
     job: crawlJob,
     state: crawlState,
     error: crawlError,
+    autoCrawlEnabled,
     triggerCrawl,
     stopCrawl,
     stopping: crawlStopping,
@@ -82,14 +81,19 @@ export default function NewsPage() {
   }
 
   const crawlStatusText = (): string => {
-    if (crawlState === 'polling') return 'Đang crawl…'
+    if (crawlState === 'polling') return 'Đang crawl tự động — bấm Dừng để tắt.'
     if (crawlState === 'timeout') return 'Hết thời gian chờ trạng thái crawl.'
     if (crawlState === 'error') return crawlError ?? 'Lỗi khi crawl.'
     if (crawlState === 'terminal' && crawlJob) {
-      if (crawlJob.status === 'COMPLETED') return 'Crawl xong — danh sách đã được cập nhật.'
+      if (crawlJob.status === 'COMPLETED') {
+        return autoCrawlEnabled
+          ? 'Crawl xong — sẽ tự chạy lại sau vài giây.'
+          : 'Crawl xong — tự động đã tắt.'
+      }
       return `Crawl thất bại: ${crawlJob.error ?? 'không rõ lỗi'}`
     }
-    return 'Kích hoạt crawler để lấy tin tức mới nhất từ RSS.'
+    if (!autoCrawlEnabled) return 'Crawl tự động đã tắt — bấm nút bên cạnh để bật lại.'
+    return 'Crawler tự chạy khi mở workspace — chỉ dừng khi bạn bấm Dừng.'
   }
 
   return (
@@ -130,11 +134,11 @@ export default function NewsPage() {
                 type="button"
                 className="btn btn-primary btn-block blueprint"
                 style={{ height: 36 }}
-                title="Kích hoạt worker crawl tin tức + phân tích sentiment (chạy tiến trình riêng)."
+                title="Bật crawl tự động — crawler sẽ chạy liên tục cho đến khi bạn dừng."
                 onClick={handleCrawlClick}
               >
                 <BlueprintCorners />
-                Crawl tin tức
+                Bật crawl tự động
               </button>
             )}
             {crawlRunning && (
@@ -194,7 +198,7 @@ export default function NewsPage() {
                           Model: {summary?.model ?? '—'}
                         </span>
                         <span className="text-muted mono" style={{ fontSize: 11 }}>
-                          {n.source} · {fmtTime(n.publishedAt)} · confidence {fmtConfidence(n.sentimentScore)}
+                          {n.source} · {fmtTimeVN(n.publishedAt)} · confidence {fmtConfidence(n.sentimentScore)}
                         </span>
                       </div>
                     </div>

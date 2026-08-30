@@ -19,14 +19,16 @@ API (service/src/main.ts)          Worker (service/src/worker.ts)
   NestFactory.create()               NestFactory.createApplicationContext()
   có HTTP server                     KHÔNG có HTTP server
   chỉ .add() job lên queue            có @Processor() → BullMQ Worker thật,
-  không bao giờ chạy run()/execute()  gọi thẳng StrategySearchService.run()
-                                       và NewsCrawlService.execute()
+  không chạy run()/execute()/         gọi thẳng StrategySearchService.run(),
+  generate() trong HTTP handler       NewsCrawlService.execute(),
+                                       AiStrategyService.generate()
          \                                    /
           \                                  /
            v                                v
          ┌─────────────── Redis ───────────────┐
          │  queue "search"                     │
          │  queue "news-crawl"                 │
+         │  queue "ai-generate"                │
          └──────────────────────────────────────┘
 ```
 
@@ -51,23 +53,41 @@ Danh mục đầy đủ: [event-catalog.md](event-catalog.md).
 
 ## 3. Vì sao WorkerModule import CÙNG module với AppModule, không phải module riêng
 
-`service/src/worker.module.ts` import `StrategySearchModule` và `NewsModule` — **y hệt** những gì `AppModule` import. Không có `StrategySearchModule` phiên bản 2 cho worker. Khác biệt duy nhất: `WorkerModule` khai báo thêm `SearchProcessor` và `NewsCrawlProcessor` làm provider.
+`service/src/worker.module.ts` import `StrategySearchModule`, `NewsModule`, và `AiStrategyModule` — **y hệt** những gì `AppModule` import (cùng service nghiệp vụ, không fork logic). Khác biệt duy nhất: `WorkerModule` khai báo thêm `SearchProcessor`, `NewsCrawlProcessor`, và `AiGenerateProcessor` làm provider.
 
 Đây là điểm kỹ thuật quan trọng của `@nestjs/bullmq`: một class có decorator `@Processor(queueName)` (kế thừa `WorkerHost`) **chỉ thực sự khởi động một BullMQ `Worker` (kết nối Redis, kéo job) khi nó được instantiate như một provider trong module graph của ứng dụng đang chạy**. `StrategySearchModule`/`NewsModule` (dùng chung) không khai báo 2 class này trong `providers` của chính nó — chúng chỉ được khai báo trong `WorkerModule`. Vì vậy:
 
-- Chạy `node dist/main.js` (AppModule) → có HTTP server, có `SearchQueueService`/`NewsCrawlQueueService` (chỉ gọi `.add()`), **không có** `SearchProcessor`/`NewsCrawlProcessor` → không kéo job, không chạy `run()`.
-- Chạy `node dist/worker.js` (WorkerModule) → không có HTTP server, có `SearchProcessor`/`NewsCrawlProcessor` → BullMQ Worker thật khởi động, kéo job từ Redis, gọi vào `StrategySearchService.run()`/`NewsCrawlService.execute()`.
+- Chạy `node dist/main.js` (AppModule) → có HTTP server, có `SearchQueueService`/`NewsCrawlQueueService`/`AiGenerateQueueService` (chỉ gọi `.add()`), **không có** `SearchProcessor`/`NewsCrawlProcessor`/`AiGenerateProcessor` → không kéo job, không chạy `run()`/`execute()`/`generate()`.
+- Chạy `node dist/worker.js` (WorkerModule) → không có HTTP server, có `SearchProcessor`/`NewsCrawlProcessor`/`AiGenerateProcessor` → BullMQ Worker thật khởi động, kéo job từ Redis, gọi vào `StrategySearchService.run()`/`NewsCrawlService.execute()`/`AiStrategyService.generate()`.
 
 Đây chính là "điểm kiến trúc" mà task-16 yêu cầu chứng minh: API enqueue, Worker execute, cùng một class nghiệp vụ, không phải 2 bản sao.
 
-## 4. Hai queue, payload chỉ chứa định danh
+## 4. Ba queue, payload chỉ chứa định danh + tham số nhỏ
 
 | Queue | Job data | Ai add() | Ai process() |
 |---|---|---|---|
 | `search` | `{ experimentId: string }` | `SearchQueueService` (`strategy-search/services/search-queue.service.ts`) | `SearchProcessor` (`strategy-search/search.processor.ts`) |
 | `news-crawl` | `{}` (không cần tham số — worker Python tự biết crawl gì) | `NewsCrawlQueueService` (`news/crawl/news-crawl-queue.service.ts`) | `NewsCrawlProcessor` (`news/crawl/news-crawl.processor.ts`) |
+| `ai-generate` | `{ userId: string, prompt: string, correlationId: string }` | `AiGenerateQueueService` (`ai-strategy/ai-generate-queue.service.ts`) | `AiGenerateProcessor` (`ai-strategy/ai-generate.processor.ts`) |
 
-Payload **không** bao giờ chứa candle data, kết quả backtest, hay secret — chỉ định danh + tham số nhỏ, đúng yêu cầu "never large data blobs and never secrets" của task-16. Toàn bộ dữ liệu thật (nến, candidate, trade) vẫn đọc/ghi qua Postgres bên trong `run()`, y hệt trước đây.
+Payload **không** bao giờ chứa candle data, kết quả backtest, hay secret — chỉ định danh + tham số nhỏ, đúng yêu cầu "never large data blobs and never secrets" của task-16. Toàn bộ dữ liệu thật (nến, candidate, trade) vẫn đọc/ghi qua Postgres bên trong `run()`, y hệt trước đây. Queue `ai-generate` cũng không ghi Postgres: kết quả `{ code, raw, providerName, validation }` nằm trong **returnvalue** của job BullMQ trên Redis (xem mục 4.1).
+
+### 4.1. Queue `ai-generate` — sinh strategy AI bất đồng bộ (2026-08-29)
+
+`POST /ai-strategy/generate` trả `202` ngay sau khi enqueue; vòng gọi LLM + validate chạy trong **tiến trình worker**, không block HTTP request.
+
+| Thuộc tính | Giá trị |
+|---|---|
+| Producer | `AiGenerateQueueService.enqueue(userId, prompt)` |
+| Consumer | `AiGenerateProcessor.process()` → `AiStrategyService.generate(prompt)` (LLM provider, rồi spawn `validate.py`) |
+| `attempts` | **1** — không retry tự động (một lần sinh lỗi do LLM/network nên do người dùng bấm lại, tránh tốn token trùng) |
+| `lockDuration` | **120s** — job có thể chờ LLM + subprocess validate lâu hơn lock mặc định BullMQ |
+| Concurrency worker | `@Processor(..., { concurrency: 5 })` — tối đa 5 job generate song song **của các user khác nhau** |
+| 1 in-flight / user | Producer quét job `active`/`waiting`/… có `data.userId === userId`; nếu đã có → **`409 Conflict`**, message chính xác: `"A generate job is already running for this account."` — **không** coalesce/trả job cũ như `search`/`news-crawl` |
+| Trạng thái cho client | `GET /ai-strategy/generate/status` đọc job in-flight hoặc job finished gần nhất của user; FE poll **2s** (cùng cadence `NewsCrawlContext` / `useExperiment`) |
+| Lưu kết quả | **Redis returnvalue**, không có bảng Postgres cho job generate — client lấy `result` khi `status = COMPLETED` |
+
+`validate` / `save` / `POST /:id/run` **không** đi queue này — vẫn chạy đồng bộ trong tiến trình API và spawn Python (`validate.py` / `run.py`) trực tiếp từ đó.
 
 ## 5. Concurrency — "một search/experiment, một crawl toàn cục"
 

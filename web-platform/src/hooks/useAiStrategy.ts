@@ -4,10 +4,10 @@ import type {
   AiStrategyDetailDto,
   AiStrategySummaryDto,
   AiValidationResultDto,
-  GenerateAiStrategyResponse,
   RunAiStrategyResponse,
   StrategyDomain,
 } from '../api/types'
+import { useAiGenerate } from '../state/AiGenerateContext'
 
 export type AiGenerateState = 'idle' | 'generating' | 'done' | 'error'
 export type AiSaveState = 'idle' | 'saving' | 'done' | 'error'
@@ -23,11 +23,11 @@ export type AiSaveState = 'idle' | 'saving' | 'done' | 'error'
  * frontend).
  */
 export function useAiStrategy() {
+  const { job, state: pollState, error: enqueueError, enqueueGenerate } = useAiGenerate()
+
   const [samples, setSamples] = useState<string[]>([])
   const [prompt, setPrompt] = useState('')
 
-  const [generateState, setGenerateState] = useState<AiGenerateState>('idle')
-  const [generateError, setGenerateError] = useState<string | null>(null)
   const [code, setCode] = useState('')
   const [providerName, setProviderName] = useState<string | null>(null)
   const [validation, setValidation] = useState<AiValidationResultDto | null>(null)
@@ -83,29 +83,52 @@ export function useAiStrategy() {
     setPrompt('')
   }, [])
 
+  const generateState: AiGenerateState =
+    pollState === 'error' || job?.status === 'FAILED'
+      ? 'error'
+      : job?.status === 'RUNNING' || pollState === 'polling'
+        ? 'generating'
+        : job?.result
+          ? 'done'
+          : 'idle'
+
+  const generateError = job?.status === 'FAILED' ? (job.error ?? enqueueError) : enqueueError
+
   const generate = useCallback(async () => {
     if (!prompt.trim() || generateState === 'generating') return
-    setGenerateState('generating')
-    setGenerateError(null)
     setSaveState('idle')
     setSaveError(null)
     setSavedDetail(null)
     setRunState('idle')
     setRunResult(null)
-    try {
-      const res = await apiFetch<GenerateAiStrategyResponse>('/ai-strategy/generate', {
-        method: 'POST',
-        body: JSON.stringify({ prompt: prompt.trim() }),
-      })
-      setCode(res.code)
-      setProviderName(res.providerName)
-      setValidation(res.validation)
-      setGenerateState('done')
-    } catch (err) {
-      setGenerateError(err instanceof Error ? err.message : 'Sinh strategy thất bại.')
-      setGenerateState('error')
+    setCode('')
+    setValidation(null)
+    setProviderName(null)
+    await enqueueGenerate(prompt.trim())
+  }, [prompt, generateState, enqueueGenerate])
+
+  // Hydrate from the workspace-scoped job. Deps are jobId + status only so a
+  // later hand-edit is not overwritten by a late poll of the same completed job.
+  // Remount (tab switch / refresh) starts with empty local code and re-applies.
+  useEffect(() => {
+    if (!job) return
+
+    if (job.status === 'RUNNING') {
+      setPromptBounded(job.prompt)
+      return
     }
-  }, [prompt, generateState])
+
+    if (job.status === 'COMPLETED' && job.result) {
+      setPromptBounded(job.prompt)
+      if (code === '') {
+        setCode(job.result.code)
+        setValidation(job.result.validation)
+        setProviderName(job.result.providerName)
+      }
+    }
+    // jobId + status + code — a late poll of the same COMPLETED job must not wipe a hand-edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- plan: hydrate key is jobId + status; code guards overwrite
+  }, [job?.jobId, job?.status, code, setPromptBounded])
 
   // Re-validate whenever the code panel is hand-edited, so the checklist
   // never shows a stale result for code the user has since changed.

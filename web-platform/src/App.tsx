@@ -8,6 +8,7 @@ import LeaderboardPage from './pages/LeaderboardPage'
 import NewsPage from './pages/NewsPage'
 import RealtimePage from './pages/RealtimePage'
 import StrategyEnginePage from './pages/StrategyEnginePage'
+import { AiGenerateProvider } from './state/AiGenerateContext'
 import { ExperimentProvider } from './state/ExperimentContext'
 import { NewsCrawlProvider } from './state/NewsCrawlContext'
 import { StrategySelectionProvider } from './state/StrategySelectionContext'
@@ -37,7 +38,9 @@ export default function App() {
                     (or the worker finishes), instead of resetting every time
                     the News tab unmounts. */}
                 <NewsCrawlProvider>
-                  <WorkspaceLayout />
+                  <AiGenerateProvider>
+                    <WorkspaceLayout />
+                  </AiGenerateProvider>
                 </NewsCrawlProvider>
               </ExperimentProvider>
             </StrategySelectionProvider>

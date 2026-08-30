@@ -44,8 +44,8 @@ package "Frontend — React 19 + Vite (web-platform/)" as FE {
   rectangle "api/client.ts\n(apiFetch, single-flight refresh)" as FE_API
   rectangle "auth/AuthContext\nRequireAuth" as FE_AUTHCTX
   rectangle "lib/marketSocket.ts\n(socket.io-client)" as FE_SOCK
-  rectangle "hooks/\nuseMarketSocket, useExperiment,\nuseTopCandidates, useCandidateDetail,\nuseAiStrategy" as FE_HOOKS
-  rectangle "state/\nStrategySelectionContext\nExperimentContext" as FE_STATE
+  rectangle "hooks/\nuseMarketSocket, useExperiment,\nuseTopCandidates, useCandidateDetail,\nuseAiStrategy, useAiGenerate" as FE_HOOKS
+  rectangle "state/\nStrategySelectionContext\nExperimentContext\nNewsCrawlContext\nAiGenerateContext" as FE_STATE
 }
 
 USER --> FE_AUTH
@@ -65,6 +65,7 @@ FE_LB --> FE_HOOKS
 FE_AI --> FE_HOOKS
 FE_STRAT --> FE_STATE
 FE_BT --> FE_STATE
+FE_HOOKS --> FE_STATE
 FE_HOOKS --> FE_API
 FE_AUTHCTX --> FE_API
 FE_RT --> FE_SOCK
@@ -173,15 +174,17 @@ package "Modular Monolith — NestJS (service/)" as BE {
   }
 
   package "AI Strategy Module" as M_AI {
-    rectangle "AiStrategyController\nPOST /generate /validate /save\nGET /mine /:id /samples\nPOST /:id/run" as AI_C
-    rectangle "AiStrategyService" as AI_S
+    rectangle "AiStrategyController\nPOST /generate → 202 enqueue\nGET /generate/status (poll)\nPOST /validate /save\nGET /mine /:id /samples\nPOST /:id/run" as AI_C
+    rectangle "AiGenerateQueueService\nenqueue (409 if in-flight)\ngetStatus (filter userId)" as AI_Q
+    rectangle "AiStrategyService\ngenerate() chỉ gọi từ Worker\n(validate/save/run vẫn từ API)" as AI_S
     rectangle "LlmProviderFactory\nOpenAiCompatibleProvider\nFakeProvider (tests, no key)" as AI_P
     rectangle "AiStrategyValidatorService\n(AST gate)" as AI_V
     rectangle "AiStrategyRunnerService\npython-process.util\n(timeout, output cap)" as AI_RUN
     rectangle "contract-prompt.ts\ngenerate_signals(candles)\n→ [BUY|SELL|HOLD]" as AI_CT
     rectangle "AiStrategyRepository\nlistLatestPerName(userId)\nfindOwnedActiveById\n(task-15)" as AI_R
     rectangle "AiStrategySignalPrecomputeService\n(task-15) chạy whole-series\n1 lần/experiment run, tuần tự,\ncatch từng lỗi → loại strategy\nkhỏi run, không throw" as AI_PRE
-    AI_C --> AI_S
+    AI_C --> AI_Q : generate / status
+    AI_C --> AI_S : validate / save / run
     AI_S --> AI_P
     AI_S --> AI_V
     AI_S --> AI_RUN
@@ -228,6 +231,7 @@ package "Queue Module (queue/) — @Global, dùng bởi cả API và Worker" as 
 }
 SR_Q ..> Q_MOD : @InjectQueue("search")
 NW_Q ..> Q_MOD : @InjectQueue("news-crawl")
+AI_Q ..> Q_MOD : @InjectQueue("ai-generate")
 
 package "Cache Module (cache/) — @Global, dùng bởi cả API và Worker (task-17)" as M_CACHE {
   rectangle "redis-connection.ts\nredisConnectionOptions()\n(cùng hàm QueueModule dùng —\nkhông đọc REDIS_HOST/PORT\nlần thứ 2)" as CACHE_CFG
@@ -261,6 +265,7 @@ OBS_HS ..> DB_S : isHealthy()
 OBS_HS ..> CACHE_S : ping()
 CACHE_S ..> OBS_MET : cacheHitsTotal/\ncacheMissesTotal
 SR_Q ..> OBS_CTX : ghi correlationId\nvào job payload
+AI_Q ..> OBS_CTX : ghi correlationId\nvào job payload
 SR_Q ..> OBS_MET : searchJobsEnqueuedTotal
 MKT_BIN ..> OBS_MET : binanceRequestsTotal/\nDurationSeconds
 
@@ -268,24 +273,29 @@ MKT_BIN ..> OBS_MET : binanceRequestsTotal/\nDurationSeconds
 package "Worker Process — service/src/worker.ts\n(tiến trình Node riêng, KHÔNG có HTTP server nghiệp vụ)" as WK {
   rectangle "SearchProcessor\n@Processor(\"search\")\nconcurrency 5" as WK_SR
   rectangle "NewsCrawlProcessor\n@Processor(\"news-crawl\")\nconcurrency 1" as WK_NW
+  rectangle "AiGenerateProcessor\n@Processor(\"ai-generate\")\nconcurrency 5, lockDuration 120s" as WK_GEN
   rectangle "worker-metrics-server.ts\nnode:http riêng :3001\nGET /metrics · /health/live\n(task-18, dùng lại OBS_MET/OBS_HS)" as WK_OBS
 }
 WK_SR ..> Q_MOD : BullMQ Worker\n(pull job)
 WK_NW ..> Q_MOD : BullMQ Worker\n(pull job)
+WK_GEN ..> Q_MOD : BullMQ Worker\n(pull job)
 WK_SR --> SR_S : run(experimentId)\n(cùng 1 class,\nkhông fork logic)
 WK_NW --> NW_X : execute()
+WK_GEN --> AI_S : generate(prompt)\n(cùng 1 class,\nkhông fork logic)
 WK_SR ..> OBS_CTX : runWithCorrelationId(\njob.data.correlationId)
+WK_GEN ..> OBS_CTX : runWithCorrelationId(\njob.data.correlationId)
 WK_SR ..> OBS_MET : searchDurationSeconds/\nCompleted/Failed
 WK_OBS ..> OBS_MET
 WK_OBS ..> OBS_HS
 
 note bottom of WK
-  Worker import CÙNG StrategySearchModule/
-  NewsModule với API (không có module thứ 2).
-  Chỉ khác: Worker có thêm 2 @Processor()
+  Worker import CÙNG StrategySearchModule /
+  NewsModule / AiStrategyModule với API
+  (không có module thứ 2).
+  Chỉ khác: Worker có thêm 3 @Processor()
   làm provider — thứ khiến @nestjs/bullmq
   khởi động BullMQ Worker thật. AppModule
-  (API) không bao giờ khai báo 2 class này.
+  (API) không bao giờ khai báo 3 class này.
 
   **Cross-process cache invalidation (task-17):**
   LeaderboardService.rebuildForExperiment() chạy
@@ -349,8 +359,8 @@ package "Python Workers (workers/) — tiến trình tách biệt" as PW {
     PWN_SENT --> PWN_MODEL
   }
   package "ai-strategy/" as PW_AI {
-    rectangle "validate.py\n(ast walk, allowlist)" as PWA_VAL
-    rectangle "run.py\nsandbox.py\n(whole-series execution)" as PWA_RUN
+    rectangle "validate.py\n(ast walk, allowlist)\nKHÔNG gọi LLM" as PWA_VAL
+    rectangle "run.py\nsandbox.py\n(whole-series execution)\nKHÔNG gọi LLM" as PWA_RUN
   }
 }
 
@@ -361,7 +371,7 @@ AI_RUN --> PWA_RUN : spawn\n(candles in → signals out)
 ' =====================================================================
 package "Infrastructure" as INFRA {
   database "PostgreSQL 18 + TimescaleDB\n\nusers, refresh_tokens\ncandles (hypertable)\nstrategies\nexperiments, experiment_configs,\nexperiment_config_strategies,\nexperiment_iterations\ncandidates, candidate_strategies\nbacktest_runs, trades, evaluations\nleaderboards, leaderboard_entries\nnews" as PG
-  queue "Redis\nBullMQ + Cache\n\nqueue \"search\"\nqueue \"news-crawl\"\ncache: candles,\nleaderboard:version:{id},\nstrategy-search:top:...:v{n}" as REDIS
+  queue "Redis\nBullMQ + Cache\n\nqueue \"search\"\nqueue \"news-crawl\"\nqueue \"ai-generate\"\ncache: candles,\nleaderboard:version:{id},\nstrategy-search:top:...:v{n}" as REDIS
 }
 
 cloud "Binance\nREST klines + WebSocket" as EXT_BIN
@@ -371,7 +381,15 @@ DB_S --> PG
 WK_SR --> PG : SQL (search loop\nghi trực tiếp, xem\nStrategySearchService.run())
 PWN_DB --> PG
 MKT_BIN --> EXT_BIN
-AI_P --> EXT_LLM
+AI_P --> EXT_LLM : HTTP — chỉ từ NestJS\n(generate() chạy ở Worker)
+
+note right of EXT_LLM
+  **Không** vẽ Python → LLM.
+  OpenAiCompatibleProvider (TypeScript)
+  gọi LLM khi AiStrategyService.generate()
+  chạy trong AiGenerateProcessor.
+  validate.py / run.py không gọi mạng.
+end note
 Q_MOD --> REDIS : ioredis\n(maxRetriesPerRequest: null)
 CACHE_MOD --> REDIS : ioredis riêng\n(maxRetriesPerRequest: 1,\nenableOfflineQueue: false)
 

@@ -1,6 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
-import { NEWS_CRAWL_QUEUE, SEARCH_QUEUE } from './queue.constants';
+import { AI_GENERATE_QUEUE, NEWS_CRAWL_QUEUE, SEARCH_QUEUE } from './queue.constants';
 import { QueueHealthService } from './queue-health.service';
 import { QueueHealthController } from './queue-health.controller';
 import { redisConnectionOptions } from '../cache/redis-connection';
@@ -34,7 +34,11 @@ import { redisConnectionOptions } from '../cache/redis-connection';
         },
       }),
     }),
-    BullModule.registerQueue({ name: SEARCH_QUEUE }, { name: NEWS_CRAWL_QUEUE }),
+    BullModule.registerQueue(
+      { name: SEARCH_QUEUE },
+      { name: NEWS_CRAWL_QUEUE },
+      { name: AI_GENERATE_QUEUE },
+    ),
   ],
   controllers: [QueueHealthController],
   providers: [QueueHealthService],

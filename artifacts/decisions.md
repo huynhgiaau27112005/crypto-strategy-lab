@@ -673,3 +673,20 @@ Dạng array có trong type signature nhưng được truyền thẳng cho `even
 4. `leaderboard_entries` có đúng 3 dòng (`top_k = 3`), rank 1..3 giảm dần theo score.
 5. `GET /experiments/:id/top` trả đúng Top-3 qua đường đọc cache-aside.
 6. `correlationId` xuyên suốt từ HTTP request → job BullMQ → log trong worker (`cid=36da2e4e-...`).
+
+---
+
+## F20. AI Strategy generate — queue async, poll, không WebSocket (2026-08-29)
+
+**Bối cảnh:** `POST /ai-strategy/generate` trước đây gọi LLM + spawn `validate.py` **đồng bộ** trong tiến trình API — request treo tới vài chục giây, cạnh tranh event loop, và restart API giữa chừng làm mất luồng sinh đang chạy.
+
+**Chốt:**
+
+| Quyết định | Lựa chọn | Lý do |
+|---|---|---|
+| Theo dõi tiến độ generate | **HTTP poll 2s** (`GET /ai-strategy/generate/status`) | Cùng pattern đã chứng minh với experiment progress và news crawl; không cần thêm WebSocket namespace chỉ cho 1 tab AI Strategy |
+| Phạm vi queue | **Chỉ `generate`** trên queue `ai-generate` | `validate`/`save`/`run` vẫn đồng bộ trên API — nhanh, do người dùng chủ động, không cần tách tiến trình |
+| Job trùng user | **`409 Conflict`**, không replace/coalesce | Message chính xác: `"A generate job is already running for this account."` — tránh 2 lần gọi LLM song song cho cùng account (tốn token, race ghi UI) |
+| Lưu kết quả job | **Redis returnvalue (BullMQ)**, không Postgres | Generate là thao tác ephemeral trước khi user bấm Save; không cần migration/bảng job; client poll đọc `result` khi `COMPLETED` |
+
+**Hệ quả kiến trúc:** Job đi `API → Redis → Worker` (không có HTTP API→Worker). Worker (NestJS) gọi LLM (`WORKER → LLM` trên C4 level 2) — **không** phải Python `workers/ai-strategy/` gọi LLM. Spawn Python cho validate sau generate nằm trong worker; spawn cho validate/run thủ công vẫn từ API. Sơ đồ: `architecture-c4-level-2.puml` / `architecture-c4-level-3.puml`. Chi tiết: `artifacts/queue.md` mục 4.1, `artifacts/ai-strategy.md` mục 2b, `artifacts/api-contract.md` mục 3c.

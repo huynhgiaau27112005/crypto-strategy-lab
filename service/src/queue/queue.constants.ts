@@ -3,3 +3,4 @@
 // disconnected queue.
 export const SEARCH_QUEUE = 'search';
 export const NEWS_CRAWL_QUEUE = 'news-crawl';
+export const AI_GENERATE_QUEUE = 'ai-generate';

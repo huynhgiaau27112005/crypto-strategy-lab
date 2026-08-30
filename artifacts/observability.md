@@ -94,7 +94,7 @@ Phần lớn metric "thú vị" nhất (search completed/failed, duration, candi
 
 - Nội dung `/metrics` là số đếm/độ trễ/tên route — không có PII, không có dữ liệu nghiệp vụ (không leaderboard, không candidate, không user data).
 - Prometheus tự nó cần scrape endpoint không cần auth phức tạp (basic auth/mTLS thêm được, nhưng tăng độ phức tạp không cần thiết cho phạm vi đồ án).
-- **Đánh đổi được thừa nhận rõ ràng**: `/metrics` LÀ rò rỉ cấu trúc nội bộ (route list, tên 2 queue, tên 2 dependency `postgres`/`redis`) cho bất kỳ ai gọi được API. Trong 1 triển khai thật có ingress công khai, cách đúng để giải quyết là **giới hạn ở tầng mạng** (reverse proxy/firewall chỉ cho phép IP của Prometheus scraper gọi `/metrics`), không phải thêm JWT guard vào chính route đó — vì Prometheus scrape không mang theo access token của user. Trong phạm vi đồ án (API chỉ chạy trong docker-compose network / localhost lúc chấm), không áp thêm gì.
+- **Đánh đổi được thừa nhận rõ ràng**: `/metrics` LÀ rò rỉ cấu trúc nội bộ (route list, tên 3 queue, tên 2 dependency `postgres`/`redis`) cho bất kỳ ai gọi được API. Trong 1 triển khai thật có ingress công khai, cách đúng để giải quyết là **giới hạn ở tầng mạng** (reverse proxy/firewall chỉ cho phép IP của Prometheus scraper gọi `/metrics`), không phải thêm JWT guard vào chính route đó — vì Prometheus scrape không mang theo access token của user. Trong phạm vi đồ án (API chỉ chạy trong docker-compose network / localhost lúc chấm), không áp thêm gì.
 
 ## 4. Liveness vs readiness
 

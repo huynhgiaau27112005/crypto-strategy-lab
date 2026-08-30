@@ -6,12 +6,15 @@ import {
   LineSeries,
   LineStyle,
   createChart,
+  createSeriesMarkers,
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
+  type SeriesMarker,
   type UTCTimestamp,
 } from 'lightweight-charts'
 import type { Candle } from '../hooks/useMarketSocket'
+import { chartTimeFormatter } from '../lib/datetime'
 
 /** One moving-average overlay: period + the design token to colour it with. */
 export interface MaOverlay {
@@ -25,6 +28,13 @@ export interface PriceMarker {
   label: string
   /** `up` = green (take profit), `down` = red (stop loss), `neutral` = accent (entry). */
   tone: 'up' | 'down' | 'neutral'
+}
+
+/** Time-based marker (LONG/SHORT entry arrows on the candle series). */
+export interface TimeMarker {
+  time: string
+  label: string
+  side: 'LONG' | 'SHORT'
 }
 
 function toSeconds(iso: string): UTCTimestamp {
@@ -91,6 +101,7 @@ export default function CandleChart({
   showLevels = false,
   showVolume = true,
   markers,
+  timeMarkers,
   height = 220,
 }: {
   candles: Candle[]
@@ -109,6 +120,8 @@ export default function CandleChart({
   showVolume?: boolean
   /** Extra horizontal price lines (entry / stop-loss / take-profit of a backtested trade). */
   markers?: PriceMarker[]
+  /** Entry arrows at trade open times (LONG below bar, SHORT above). */
+  timeMarkers?: TimeMarker[]
   height?: number
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -119,6 +132,9 @@ export default function CandleChart({
   // series that actually changed.
   const maSeriesRef = useRef<Map<number, ISeriesApi<'Line'>>>(new Map())
   const priceLinesRef = useRef<IPriceLine[]>([])
+  const seriesMarkersRef = useRef<{ setMarkers: (markers: SeriesMarker<UTCTimestamp>[]) => void } | null>(
+    null,
+  )
 
   const overlays = useMemo<MaOverlay[]>(
     () =>
@@ -156,6 +172,9 @@ export default function CandleChart({
       },
       rightPriceScale: { borderVisible: false },
       timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
+      localization: {
+        timeFormatter: chartTimeFormatter,
+      },
     })
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -168,8 +187,12 @@ export default function CandleChart({
 
     chartRef.current = chart
     candleSeriesRef.current = candleSeries
+    seriesMarkersRef.current = createSeriesMarkers(candleSeries) as {
+      setMarkers: (markers: SeriesMarker<UTCTimestamp>[]) => void
+    }
 
     return () => {
+      seriesMarkersRef.current = null
       chart.remove()
       chartRef.current = null
       candleSeriesRef.current = null
@@ -319,7 +342,19 @@ export default function CandleChart({
         }),
       )
     }
-  }, [candles, overlays, showLevels, showVolume, markers])
+
+    const markerPlugin = seriesMarkersRef.current
+    if (markerPlugin) {
+      const seriesMarkers: SeriesMarker<UTCTimestamp>[] = (timeMarkers ?? []).map((m) => ({
+        time: toSeconds(m.time),
+        position: m.side === 'LONG' ? 'belowBar' : 'aboveBar',
+        color: m.side === 'LONG' ? upColor : downColor,
+        shape: m.side === 'LONG' ? 'arrowUp' : 'arrowDown',
+        text: m.side === 'LONG' ? 'LONG ENTRY' : 'SHORT ENTRY',
+      }))
+      markerPlugin.setMarkers(seriesMarkers)
+    }
+  }, [candles, overlays, showLevels, showVolume, markers, timeMarkers])
 
   return <div ref={containerRef} style={{ width: '100%', height }} />
 }

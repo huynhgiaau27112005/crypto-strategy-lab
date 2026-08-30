@@ -9,7 +9,8 @@ import { useTopCandidates } from '../hooks/useTopCandidates'
 import { useExperimentContext } from '../state/ExperimentContext'
 import { useStrategySelection } from '../state/StrategySelectionContext'
 import type { ExtendSearchResponse, StrategySignal } from '../api/types'
-import { STOP_REASON_LABEL } from '../api/types'
+import { isAiStrategyType, STOP_REASON_LABEL } from '../api/types'
+import { fmtDateVN } from '../lib/datetime'
 
 /** Fixed count the "Chạy thêm 10 iteration" button always requests — matches the approved UI's fixed label. */
 const EXTEND_ITERATIONS = 10
@@ -30,7 +31,21 @@ function fmtPctRaw(n: number): string {
   return `${fmtNum(n)}%`
 }
 function fmtDate(iso: string): string {
-  return iso.slice(0, 10)
+  return fmtDateVN(iso)
+}
+
+function memberDisplayName(
+  type: string,
+  catalog: Map<string, { displayName: string }>,
+): string {
+  if (isAiStrategyType(type)) {
+    return catalog.get(type)?.displayName ?? `AI Strategy (${type.slice(3, 11)}…)`
+  }
+  return catalog.get(type)?.displayName ?? type
+}
+
+function memberSourceLabel(type: string): string {
+  return isAiStrategyType(type) ? 'AI sinh' : 'Hệ thống'
 }
 
 function signalKind(signal: StrategySignal | null): SignalKind {
@@ -64,7 +79,7 @@ export default function LeaderboardPage() {
   // `leaderboardRev` folds in out-of-tab changes (ParameterPanel's
   // save-a-version cascade adds regenerated candidates from another tab),
   // so those appear here without a manual reload.
-  const { rows, details } = useTopCandidates(
+  const { rows, details, loading: topLoading, error: topError } = useTopCandidates(
     experimentId,
     undefined,
     (expStatus?.completed ?? 0) + leaderboardRev * 100000,
@@ -110,9 +125,15 @@ export default function LeaderboardPage() {
     }
   }, [rows, selectedId])
 
+  const strategyByType = useMemo(() => new Map(strategies.map((s) => [s.type, s])), [strategies])
+
   const comboName = (candidateId: string): string => {
     const detail = details[candidateId]
-    return detail ? detail.members.map((m) => m.type).join(' + ') : '…'
+    return detail
+      ? detail.members.map((m) => memberDisplayName(m.type, strategyByType)).join(' + ')
+      : topLoading
+        ? '…'
+        : '…'
   }
 
   const selectedRow = rows.find((r) => r.candidate_id === selectedId) ?? null
@@ -191,8 +212,6 @@ export default function LeaderboardPage() {
   const perStrategySignalOf = (type: string): StrategySignal | null =>
     liveSignal?.perStrategy.find((p) => p.type === type)?.signal ?? null
 
-  const strategyByType = useMemo(() => new Map(strategies.map((s) => [s.type, s])), [strategies])
-
   // A run that ends below maxCandidates is almost always one of the
   // brief's own stop conditions firing, not a failure — say which one
   // instead of leaving the user staring at "51 / 100".
@@ -237,8 +256,18 @@ export default function LeaderboardPage() {
             <p className="text-muted leaderboard-empty">
               Chưa có Leaderboard nào — chạy Search &amp; Backtest ở tab Backtest trước.
             </p>
+          ) : topError ? (
+            <p className="text-muted leaderboard-empty">Lỗi tải leaderboard: {topError}</p>
+          ) : topLoading && rows.length === 0 ? (
+            <p className="text-muted leaderboard-empty">Đang tải Top-K…</p>
           ) : (
             <>
+              {expStatus?.failed ? (
+                <p className="text-muted" style={{ fontSize: 12, margin: '0 0 10px' }}>
+                  {expStatus.failed} iteration lỗi trong lần chạy này — bảng chỉ hiện candidate backtest
+                  thành công.
+                </p>
+              ) : null}
               <p className="text-muted" style={{ fontSize: 12, margin: '0 0 10px' }}>
                 Chọn một dòng để xem chi tiết từng strategy thành phần trong version của tổ hợp đó.
               </p>
@@ -426,13 +455,14 @@ export default function LeaderboardPage() {
                   </tr>
                 ) : (
                   selectedDetail.members.map((m) => {
-                    const catalog = strategyByType.get(m.type)
                     const sig = perStrategySignalOf(m.type)
                     return (
                       <tr key={m.type}>
-                        <td style={{ fontWeight: 500 }}>{catalog?.displayName ?? m.type}</td>
+                        <td style={{ fontWeight: 500 }}>{memberDisplayName(m.type, strategyByType)}</td>
                         <td>
-                          <span className="tag tag-neutral">Hệ thống</span>
+                          <span className={`tag${isAiStrategyType(m.type) ? ' tag-accent' : ' tag-neutral'}`}>
+                            {memberSourceLabel(m.type)}
+                          </span>
                         </td>
                         <td className="mono" style={{ fontSize: 13 }}>
                           {/* The version pinned to THIS candidate at generation time —

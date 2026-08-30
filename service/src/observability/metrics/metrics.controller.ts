@@ -3,7 +3,7 @@ import type { Response } from 'express';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import { MetricsService } from './metrics.service';
-import { NEWS_CRAWL_QUEUE, SEARCH_QUEUE } from '../../queue/queue.constants';
+import { AI_GENERATE_QUEUE, NEWS_CRAWL_QUEUE, SEARCH_QUEUE } from '../../queue/queue.constants';
 import { withTimeout } from '../../queue/with-timeout';
 
 const DEPTH_STATES = ['waiting', 'active', 'delayed', 'failed'] as const;
@@ -36,6 +36,7 @@ export class MetricsController {
     private readonly metrics: MetricsService,
     @InjectQueue(SEARCH_QUEUE) private readonly searchQueue: Queue,
     @InjectQueue(NEWS_CRAWL_QUEUE) private readonly crawlQueue: Queue,
+    @InjectQueue(AI_GENERATE_QUEUE) private readonly aiGenerateQueue: Queue,
   ) {}
 
   @Get()
@@ -56,6 +57,7 @@ export class MetricsController {
     await Promise.all([
       this.refreshOneQueue(this.searchQueue),
       this.refreshOneQueue(this.crawlQueue),
+      this.refreshOneQueue(this.aiGenerateQueue),
     ]);
   }
 

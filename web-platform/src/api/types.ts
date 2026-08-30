@@ -539,12 +539,30 @@ export interface AiValidationResultDto {
   checks: AiValidationCheckDto[]
 }
 
-/** Response of POST /ai-strategy/generate. */
-export interface GenerateAiStrategyResponse {
+/** Job lifecycle of POST /ai-strategy/generate and GET /ai-strategy/generate/status. */
+export type AiGenerateJobStatus = 'RUNNING' | 'COMPLETED' | 'FAILED'
+
+/** `result` of a COMPLETED generate job — same payload the old sync POST used to return. */
+export interface AiGenerateJobResultDto {
   code: string
   raw: string
   providerName: string
   validation: AiValidationResultDto
+}
+
+/**
+ * `202` of `POST /ai-strategy/generate` and `200` of `GET /ai-strategy/generate/status`.
+ * `GET` returns `null` when this account has never enqueued a generate job.
+ * `error` is non-null only when `status` is `FAILED`; `result` is non-null only when `COMPLETED`.
+ */
+export interface AiGenerateJobDto {
+  jobId: string
+  status: AiGenerateJobStatus
+  prompt: string
+  startedAt: string | null
+  finishedAt: string | null
+  error: string | null
+  result: AiGenerateJobResultDto | null
 }
 
 /** Body of POST /ai-strategy/save — `domain` is required (task-15): a saved AI strategy needs one to be combinable in Strategy Search, never silently defaulted. */

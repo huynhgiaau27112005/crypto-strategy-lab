@@ -33,7 +33,7 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   logger.log(
-    `Worker started (REDIS_HOST=${process.env.REDIS_HOST ?? 'localhost'}, REDIS_PORT=${process.env.REDIS_PORT ?? '6379'}). Listening on "search" and "news-crawl" queues.`,
+    `Worker started (REDIS_HOST=${process.env.REDIS_HOST ?? 'localhost'}, REDIS_PORT=${process.env.REDIS_PORT ?? '6379'}). Listening on "search", "news-crawl", and "ai-generate" queues.`,
   );
 }
 void bootstrap();
