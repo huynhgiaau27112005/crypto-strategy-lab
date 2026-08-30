@@ -9,6 +9,7 @@ import { useMarketSocket } from '../hooks/useMarketSocket'
 import { useMarketTicks } from '../hooks/useMarketTicks'
 import { useStrategySignal } from '../hooks/useStrategySignal'
 import { fmtClockVN, fmtTimeVN } from '../lib/datetime'
+import { MARKET_SYMBOL } from '../lib/marketScope'
 import type { MarketInterval, MarketTradeEvent, StrategySignal } from '../api/types'
 
 const TF_ALL: MarketInterval[] = ['1m', '5m', '15m', '1h', '4h']
@@ -92,7 +93,7 @@ function ChartPane({
     <div className="pane blueprint" data-hov="card">
       <BlueprintCorners />
       <div className="pane-head">
-        <div className="pane-title">BTCUSDT · {interval}</div>
+        <div className="pane-title">{MARKET_SYMBOL} · {interval}</div>
         <div className="pane-flex" />
         <div className="pane-price mono">{price}</div>
         <span

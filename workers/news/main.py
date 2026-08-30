@@ -16,6 +16,7 @@ completion (individual source/article failures are logged and skipped, not
 fatal); any other exit code means the run itself failed and stderr carries
 the reason, which is what the API surfaces back to the caller.
 """
+import json
 import logging
 import sys
 from datetime import datetime
@@ -31,7 +32,7 @@ if str(SRC_ROOT) not in sys.path:
 from core.config.loader import load_all_sources  # noqa: E402
 from core.crawler.crawler import NewsCrawler  # noqa: E402
 from core.db.news_repository import NewsRepository  # noqa: E402
-from core.sentiment.factory import get_sentiment_provider  # noqa: E402
+from core.sentiment.factory import resolve_sentiment_provider  # noqa: E402
 from domain.news import NewsItems  # noqa: E402
 
 logging.basicConfig(
@@ -72,6 +73,26 @@ def dedupe_across_sources(items: list[NewsItems]) -> list[NewsItems]:
     return unique
 
 
+SUMMARY_PREFIX = "NEWS_CRAWL_SUMMARY "
+
+
+def emit_summary(*, new: int, updated: int, scored: int, model: str) -> None:
+    """Report the run's outcome on STDOUT as one machine-readable line.
+
+    The Nest side (`NewsCrawlService`) parses this and carries it onto the
+    BullMQ job result, so the UI can say "+3 tin mới / 39 tin đã có" instead
+    of leaving the user to guess whether a crawl that changed nothing on
+    screen actually worked. Logging goes to stderr (see basicConfig), so
+    stdout carries only this line and can never be polluted by log output.
+
+    `model` is the provider that ACTUALLY scored this batch, not the one
+    that was configured -- FinBERT silently degrading to the lexicon
+    provider is precisely the case the UI has to be able to show.
+    """
+    payload = {"new": new, "updated": updated, "scored": scored, "model": model}
+    print(SUMMARY_PREFIX + json.dumps(payload), flush=True)
+
+
 def run() -> int:
     config_dir = WORKER_ROOT / "config"
     sources = load_all_sources(config_dir)
@@ -100,15 +121,24 @@ def run() -> int:
 
     if not unique_items:
         logger.warning("No articles crawled this run; nothing to persist.")
+        emit_summary(new=0, updated=0, scored=0, model=resolve_sentiment_provider().model_name)
         return 0
 
     # Sentiment sits behind a provider interface (core/sentiment/provider.py)
-    # selected by SENTIMENT_PROVIDER. If the provider is unavailable
-    # (missing model files, load failure), get_sentiment_provider() already
-    # falls back to a no-op provider -- so this call never raises, and
-    # articles that fail scoring simply keep sentiment = NULL rather than
-    # being dropped from the crawl.
-    provider = get_sentiment_provider()
+    # selected by SENTIMENT_PROVIDER. If the configured provider is
+    # unavailable (missing model files, missing torch),
+    # resolve_sentiment_provider() degrades to the dependency-free lexicon
+    # provider -- so this call never raises, and a crawl always produces
+    # real labels instead of a table full of NULLs nobody can explain.
+    resolved = resolve_sentiment_provider()
+    provider = resolved.provider
+    if resolved.degraded_from:
+        logger.warning(
+            "Scoring with %s because %s could not be loaded -- labels are weaker than "
+            "the configured model would produce.",
+            resolved.model_name,
+            resolved.degraded_from,
+        )
     texts = [f"{item.title}. {item.content}" for item in unique_items]
     try:
         results = provider.analyze(texts)
@@ -131,9 +161,21 @@ def run() -> int:
         )
 
     repository = NewsRepository()
-    written = repository.upsert_articles(rows)
+    counts = repository.upsert_articles(rows)
     scored = sum(1 for row in rows if row["sentiment"] is not None)
-    logger.info("Upserted %d article(s) into news (%d with sentiment scored).", written, scored)
+    logger.info(
+        "Upserted %d article(s) into news: %d new, %d already stored (%d with sentiment scored).",
+        counts.total,
+        counts.inserted,
+        counts.updated,
+        scored,
+    )
+    emit_summary(
+        new=counts.inserted,
+        updated=counts.updated,
+        scored=scored,
+        model=resolved.model_name,
+    )
     return 0
 
 

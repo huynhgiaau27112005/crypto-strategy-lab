@@ -12,10 +12,11 @@ import {
   defaultEqualWeights,
 } from '../strategy-search/domain/search.types';
 import { SignalContext, StrategySignal } from './strategy.types';
+import { MARKET_SCOPE } from '../../common/market-scope';
 
-// Backend is currently Binance/BTCUSDT-only everywhere (market-data,
-// realtime gateway) — same scope, not a per-request choice yet.
-const SYMBOL = 'BTCUSDT';
+// One market for the whole deployment — see common/market-scope.ts. Not a
+// per-request choice yet, but no longer a literal repeated per file.
+const SYMBOL = MARKET_SCOPE.symbol;
 // Comfortably above every plugin's default lookback (MA slowPeriod=30 is
 // the largest) while matching the history window the realtime UI already
 // requests via useMarketSocket, so ma20/changePct read on a familiar window.

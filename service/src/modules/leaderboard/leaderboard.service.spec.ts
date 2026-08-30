@@ -30,7 +30,7 @@ describe('LeaderboardService', () => {
     const events = makeEvents();
     const service = new LeaderboardService(database as any, cache as any, events as any);
 
-    await service.rebuildForExperiment('exp-1', 10, 20);
+    await service.rebuildForExperiment('exp-1', 10);
 
     expect(database.withTransaction).toHaveBeenCalledTimes(1);
     expect(cache.incr).toHaveBeenCalledWith(leaderboardVersionKey('exp-1'));
@@ -43,7 +43,7 @@ describe('LeaderboardService', () => {
     const events = makeEvents();
     const service = new LeaderboardService(database as any, cache as any, events as any);
 
-    await service.rebuildForExperiment('exp-1', 10, 20);
+    await service.rebuildForExperiment('exp-1', 10);
 
     expect(events.emitAsync).toHaveBeenCalledWith(DomainEventNames.LeaderboardUpdated, {
       experimentId: 'exp-1',
@@ -62,7 +62,7 @@ describe('LeaderboardService', () => {
     const events = makeEvents();
     const service = new LeaderboardService(database as any, cache as any, events as any);
 
-    await service.rebuildForExperiment('exp-1', 10, 20);
+    await service.rebuildForExperiment('exp-1', 10);
 
     expect(events.emitAsync).toHaveBeenCalledWith(
       DomainEventNames.LeaderboardUpdated,
@@ -79,7 +79,7 @@ describe('LeaderboardService', () => {
     events.emitAsync.mockRejectedValue(new Error('listener exploded'));
     const service = new LeaderboardService(database as any, cache as any, events as any);
 
-    await expect(service.rebuildForExperiment('exp-1', 10, 20)).resolves.toBeUndefined();
+    await expect(service.rebuildForExperiment('exp-1', 10)).resolves.toBeUndefined();
   });
 
   it('still rebuilds the leaderboard even if the cache version bump fails (Redis down)', async () => {
@@ -89,7 +89,7 @@ describe('LeaderboardService', () => {
 
     const service = new LeaderboardService(database as any, cache as any, makeEvents() as any);
 
-    await expect(service.rebuildForExperiment('exp-1', 10, 20)).resolves.toBeUndefined();
+    await expect(service.rebuildForExperiment('exp-1', 10)).resolves.toBeUndefined();
     expect(database.withTransaction).toHaveBeenCalledTimes(1);
   });
 });

@@ -13,18 +13,17 @@ const iterationPayload = {
   candidateId: 'cand-1',
   iterationId: 'iter-1',
   topK: 7,
-  minimumTrades: 20,
 };
 
 describe('LeaderboardEventsHandler', () => {
   describe('iteration boundary (backtest.completed / backtest.failed)', () => {
-    it('rebuilds with the topK and minimumTrades carried on the payload, not defaults of its own', async () => {
+    it('rebuilds with the topK carried on the payload, not a default of its own', async () => {
       const leaderboard = makeLeaderboard();
       const handler = new LeaderboardEventsHandler(leaderboard as any);
 
       await handler.onIterationBoundary(iterationPayload);
 
-      expect(leaderboard.rebuildForExperiment).toHaveBeenCalledWith('exp-1', 7, 20);
+      expect(leaderboard.rebuildForExperiment).toHaveBeenCalledWith('exp-1', 7);
     });
 
     // The rebuild used to run after EVERY iteration, deliberately outside
@@ -40,10 +39,9 @@ describe('LeaderboardEventsHandler', () => {
         iterationId: 'iter-1',
         reason: 'backtest exploded',
         topK: 7,
-        minimumTrades: 20,
       });
 
-      expect(leaderboard.rebuildForExperiment).toHaveBeenCalledWith('exp-1', 7, 20);
+      expect(leaderboard.rebuildForExperiment).toHaveBeenCalledWith('exp-1', 7);
     });
 
     // Preserves run()'s original try/catch: the backtest rows are already
@@ -66,10 +64,9 @@ describe('LeaderboardEventsHandler', () => {
         experimentId: 'exp-9',
         candidateIds: ['c1', 'c2'],
         topK: 5,
-        minimumTrades: 3,
       });
 
-      expect(leaderboard.rebuildForExperiment).toHaveBeenCalledWith('exp-9', 5, 3);
+      expect(leaderboard.rebuildForExperiment).toHaveBeenCalledWith('exp-9', 5);
     });
 
     // The opposite policy to the iteration boundary above, and the reason
@@ -86,7 +83,6 @@ describe('LeaderboardEventsHandler', () => {
           experimentId: 'exp-9',
           candidateIds: ['c1'],
           topK: 5,
-          minimumTrades: 3,
         }),
       ).rejects.toThrow('db down');
     });
@@ -121,7 +117,7 @@ describe('LeaderboardEventsHandler', () => {
 
       await emitter.emitAsync(eventName, { ...iterationPayload, candidateIds: ['c1'], reason: 'x' });
 
-      expect(leaderboard.rebuildForExperiment).toHaveBeenCalledWith('exp-1', 7, 20);
+      expect(leaderboard.rebuildForExperiment).toHaveBeenCalledWith('exp-1', 7);
       await moduleRef.close();
     });
 
@@ -138,7 +134,6 @@ describe('LeaderboardEventsHandler', () => {
           experimentId: 'exp-9',
           candidateIds: ['c1'],
           topK: 5,
-          minimumTrades: 3,
         }),
       ).rejects.toThrow('db down');
       await moduleRef.close();

@@ -4,6 +4,7 @@ import { useStrategySelection } from '../state/StrategySelectionContext'
 import { useAiProvider } from '../hooks/useAiProvider'
 import { useAiStrategy } from '../hooks/useAiStrategy'
 import type { AiValidationCheckDto, StrategyDomain } from '../api/types'
+import { fmtDateVN } from '../lib/datetime'
 
 const CHECK_LABEL: Record<AiValidationCheckDto['key'], string> = {
   parses: 'Cú pháp Python hợp lệ',
@@ -24,7 +25,7 @@ const DOMAIN_OPTIONS: Array<{ value: StrategyDomain; label: string }> = [
 ]
 
 function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('vi-VN', { year: 'numeric', month: '2-digit', day: '2-digit' })
+  return fmtDateVN(iso)
 }
 
 export default function AiStrategyPage() {

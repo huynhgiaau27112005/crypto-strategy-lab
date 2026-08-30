@@ -11,6 +11,7 @@ import { useExperimentContext } from '../state/ExperimentContext'
 import { useStrategySelection } from '../state/StrategySelectionContext'
 import type { MarketInterval, StartSearchRequest, StartSearchResponse, TradeDto } from '../api/types'
 import { fmtDateTimeVN, vietnamDateRangeToIso } from '../lib/datetime'
+import { MARKET_SYMBOL } from '../lib/marketScope'
 
 const TF_OPTIONS: MarketInterval[] = ['1m', '5m', '15m', '1h', '4h']
 const TRADE_PAGE_SIZE = 8
@@ -141,7 +142,7 @@ export default function BacktestPage() {
           : 'Sẵn sàng chạy Search & Backtest với bộ strategy và config hiện tại.'
 
   const runMeta = lastConfig
-    ? `Run #${lastConfig.runSeq} · BTCUSDT · ${lastConfig.timeframe} · ${form.fromDate} → ${form.toDate}`
+    ? `Run #${lastConfig.runSeq} · ${MARKET_SYMBOL} · ${lastConfig.timeframe} · ${form.fromDate} → ${form.toDate}`
     : 'Chưa chạy lần nào trong phiên này'
 
   function askRun() {
@@ -358,7 +359,7 @@ export default function BacktestPage() {
         <div className="backtest-config-grid">
           <div className="field">
             <label>Coin</label>
-            <input className="input" type="text" value="BTCUSDT" readOnly disabled />
+            <input className="input" type="text" value={MARKET_SYMBOL} readOnly disabled />
           </div>
           <div className="field">
             <label>Timeframe</label>
@@ -584,7 +585,7 @@ export default function BacktestPage() {
 
             <div className="chart-head">
               <h5 style={{ fontSize: 15, margin: 0 }}>
-                Biểu đồ backtest (BTCUSDT · {lastConfig?.timeframe ?? form.timeframe}
+                Biểu đồ backtest ({MARKET_SYMBOL} · {lastConfig?.timeframe ?? form.timeframe}
                 {lastConfig ? ` · ${lastConfig.startTime.slice(0, 10)} → ${lastConfig.endTime.slice(0, 10)}` : ''})
               </h5>
               <div style={{ flex: 1 }} />
@@ -660,7 +661,7 @@ export default function BacktestPage() {
                         className={`trade-row${selectedTrade?.id === t.id ? ' trade-row-active' : ''}`}
                         onClick={() => setSelectedTradeId(t.id)}
                       >
-                        <td className="mono">BTCUSDT</td>
+                        <td className="mono">{MARKET_SYMBOL}</td>
                         <td className="mono">{fmtDateTime(t.entryTime)}</td>
                         <td>
                           <span className={t.side === 'LONG' ? 'text-up' : 'text-down'}>{t.side}</span>
@@ -721,7 +722,7 @@ export default function BacktestPage() {
 
       <ConfirmRerunDialog
         open={confirmOpen}
-        meta={`BTCUSDT · ${form.timeframe} · ${form.fromDate} → ${form.toDate} · vốn ${form.capital} USD · phí ${form.transactionCostPct}% · slippage ${form.slippageBps} bps · ${strategyWeights.length} strategy đơn (${strategyWeights
+        meta={`${MARKET_SYMBOL} · ${form.timeframe} · ${form.fromDate} → ${form.toDate} · vốn ${form.capital} USD · phí ${form.transactionCostPct}% · slippage ${form.slippageBps} bps · ${strategyWeights.length} strategy đơn (${strategyWeights
           .map((w) => w.type)
           .join(', ')})`}
         onCancel={() => setConfirmOpen(false)}

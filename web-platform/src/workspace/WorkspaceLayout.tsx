@@ -2,6 +2,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import NavRail from './NavRail'
 import { PAGE_META, routeIdFromPath } from './navConfig'
 import { useMarketSocket } from '../hooks/useMarketSocket'
+import { MARKET_SYMBOL } from '../lib/marketScope'
 
 function fmtPrice(v: string | number): string {
   return Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -38,7 +39,7 @@ export default function WorkspaceLayout() {
               Nguồn dữ liệu: Binance API + WebSocket
             </div>
             <div className="meta-pill mono">
-              BTCUSDT · <span className="text-up">{lastPrice}</span>
+              {MARKET_SYMBOL} · <span className="text-up">{lastPrice}</span>
             </div>
           </div>
         </header>

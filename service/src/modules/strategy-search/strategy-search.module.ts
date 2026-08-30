@@ -7,6 +7,7 @@ import { AiStrategyModule } from '../ai-strategy/ai-strategy.module';
 import { NewsModule } from '../news/news.module';
 import { MarketDataCoreModule } from '../market-data/market-data-core.module';
 import { DomainGuidedRandomGenerator } from './generators/domain-guided-random.generator';
+import { SEARCH_ALGORITHM } from './domain/search.types';
 import { ExperimentRepository } from './repositories/experiment.repository';
 import { ExperimentConfigRepository } from './repositories/experiment-config.repository';
 import { ExperimentIterationRepository } from './repositories/experiment-iteration.repository';
@@ -21,6 +22,15 @@ import { SearchQueueService } from './services/search-queue.service';
 // jobs. SearchProcessor is only registered in WorkerModule (worker.ts) —
 // see that file's comment for why this is the architectural point of
 // task-16 (API enqueues, worker executes).
+// The ONE place that decides which search algorithm runs. Required flow #7
+// ("Search algorithms must remain replaceable without changing downstream
+// backtesting") is satisfied by rebinding this provider, not by editing
+// StrategySearchService.
+const searchAlgorithm = {
+  provide: SEARCH_ALGORITHM,
+  useExisting: DomainGuidedRandomGenerator,
+};
+
 @Module({
   imports: [
     BacktestingModule,
@@ -45,6 +55,7 @@ import { SearchQueueService } from './services/search-queue.service';
   providers: [
     StrategySearchService,
     DomainGuidedRandomGenerator,
+    searchAlgorithm,
     ExperimentRepository,
     ExperimentConfigRepository,
     ExperimentIterationRepository,

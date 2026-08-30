@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { MARKET_SYMBOL } from '../lib/marketScope'
 
 /**
  * Nav rail items and per-route header copy — ported verbatim from the
@@ -106,7 +107,7 @@ export const NAV_ITEMS: NavItem[] = [
 export const PAGE_META: Record<RouteId, { title: string; sub: string }> = {
   realtime: {
     title: 'Realtime chart BTC đa khung thời gian',
-    sub: 'Theo dõi tối đa 4 khung thời gian của BTCUSDT trên một màn hình',
+    sub: `Theo dõi tối đa 4 khung thời gian của ${MARKET_SYMBOL} trên một màn hình`,
   },
   strategy: {
     title: 'Strategy Engine',

@@ -192,7 +192,6 @@ export class ExperimentRepository {
     experimentId: string,
     userId: string,
     limit: number,
-    minimumTrades: number,
   ): Promise<SearchTopRow[]> {
     const result = await this.database.query<Omit<SearchTopRow, 'rank'>>(
       `SELECT c.id AS candidate_id,
@@ -203,10 +202,10 @@ export class ExperimentRepository {
        JOIN candidates c ON c.iteration_id = ei.id
        JOIN backtest_runs br ON br.candidate_id = c.id AND br.status = 'COMPLETED'
        JOIN evaluations ev ON ev.backtest_run_id = br.id
-       WHERE e.id = $1 AND e.user_id = $2 AND ev.number_of_trades >= $3
+       WHERE e.id = $1 AND e.user_id = $2
        ORDER BY ev.overall_score DESC NULLS LAST
-       LIMIT $4`,
-      [experimentId, userId, minimumTrades, limit],
+       LIMIT $3`,
+      [experimentId, userId, limit],
     );
     return result.rows.map((row, index) => ({ rank: index + 1, ...row }));
   }

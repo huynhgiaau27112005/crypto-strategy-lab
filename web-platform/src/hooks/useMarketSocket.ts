@@ -7,8 +7,9 @@ import type {
   MarketInterval,
   MarketStatusEvent,
 } from '../api/types'
+import { MARKET_SYMBOL } from '../lib/marketScope'
 
-const SYMBOL = 'BTCUSDT'
+const SYMBOL = MARKET_SYMBOL
 const HISTORY_LIMIT = 300
 // Cap the in-memory series so a long-lived tab doesn't grow this array
 // without bound as live candles keep arriving.

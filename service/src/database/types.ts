@@ -67,7 +67,7 @@ export interface ExperimentEntity {
   // search_config JSONB NOT NULL DEFAULT '{}'::jsonb`, additive-only —
   // see that file's comment for why 002's same-named column doesn't count:
   // 003 drops and recreates `experiments` without it). Persists the
-  // caller's maxDurationSeconds/maxNoImprovement/topK/minimumTrades so the
+  // caller's maxDurationSeconds/maxNoImprovement/topK so the
   // worker process (which never runs start()) and any post-restart caller
   // of getTop() read the same values the user actually submitted, instead
   // of silently falling back to DEFAULT_SEARCH_CONFIG — see

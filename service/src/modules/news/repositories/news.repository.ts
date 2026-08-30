@@ -68,6 +68,25 @@ export class NewsRepository {
   // by the sentiment worker (sentiment IS NULL) are excluded — they are
   // not "unanalyzed = NEGATIVE" or any other label, they simply have not
   // been counted yet.
+  /**
+   * How many articles fall in the window AT ALL, analyzed or not.
+   *
+   * The panel needs this to say "30/39 tin đã phân tích" instead of just
+   * showing shares of an unstated base: an empty panel next to a full
+   * article list otherwise reads as a broken panel, when the real answer
+   * may be "those articles are older than the window" or "they are not
+   * scored yet".
+   */
+  async countInWindow(hours: number): Promise<number> {
+    const result = await this.database.query<{ count: string }>(
+      `SELECT COUNT(*)::int AS count
+       FROM news
+       WHERE published_at >= now() - make_interval(hours => $1::int)`,
+      [hours],
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
   async summarizeSentiment(hours: number): Promise<SentimentCountRow[]> {
     const result = await this.database.query<{
       sentiment: SentimentLabel;

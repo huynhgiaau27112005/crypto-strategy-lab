@@ -8,9 +8,10 @@ import { useStrategySignal } from '../hooks/useStrategySignal'
 import { useTopCandidates } from '../hooks/useTopCandidates'
 import { useExperimentContext } from '../state/ExperimentContext'
 import { useStrategySelection } from '../state/StrategySelectionContext'
-import type { ExtendSearchResponse, StrategySignal } from '../api/types'
+import type { ExperimentStatusDto, ExtendSearchResponse, StrategySignal } from '../api/types'
 import { isAiStrategyType, STOP_REASON_LABEL } from '../api/types'
 import { fmtDateVN } from '../lib/datetime'
+import { MARKET_SYMBOL } from '../lib/marketScope'
 
 /** Fixed count the "Chạy thêm 10 iteration" button always requests — matches the approved UI's fixed label. */
 const EXTEND_ITERATIONS = 10
@@ -52,6 +53,28 @@ function signalKind(signal: StrategySignal | null): SignalKind {
   if (signal === 'BUY') return 'up'
   if (signal === 'SELL') return 'down'
   return 'neutral'
+}
+
+/**
+ * Why the Top-K table has no rows.
+ *
+ * An empty leaderboard used to be a dead end: the table said "no candidate
+ * has finished a backtest" no matter whether the run had not started, was
+ * still generating, or had produced 100 candidates that all threw. The
+ * ranking query no longer filters anything out (see
+ * LeaderboardService.rebuildForExperiment), so "empty" now has exactly one
+ * meaning — zero COMPLETED backtest runs — and the counters the status
+ * endpoint already returns can say which of the three it is.
+ */
+function emptyLeaderboardReason(status: ExperimentStatusDto | null): string {
+  if (!status) return 'Chưa có candidate nào hoàn tất backtest.'
+  if (status.status === 'PENDING') return 'Đang chờ worker nhận job…'
+  if (status.generated === 0) return 'Đang sinh tổ hợp đầu tiên…'
+  if (status.completed === 0 && status.failed > 0) {
+    return `${status.failed}/${status.generated} iteration đều lỗi — không tổ hợp nào backtest xong. Kiểm tra log worker.`
+  }
+  if (status.completed === 0) return `Đang backtest ${status.generated} tổ hợp…`
+  return 'Chưa có candidate nào hoàn tất backtest.'
 }
 
 export default function LeaderboardPage() {
@@ -227,7 +250,7 @@ export default function LeaderboardPage() {
 
   const cfgRows: { key: string; k: string; v: string }[] = [
     { key: 'scope', k: 'Strategy được Search', v: scopeCount },
-    { key: 'coin', k: 'Coin', v: 'BTCUSDT' },
+    { key: 'coin', k: 'Coin', v: MARKET_SYMBOL },
     { key: 'tf', k: 'Timeframe', v: lastConfig?.timeframe ?? '—' },
     {
       key: 'range',
@@ -248,7 +271,7 @@ export default function LeaderboardPage() {
             <div style={{ flex: 1 }} />
             <span className="text-muted mono" style={{ fontSize: 12 }}>
               {lastConfig
-                ? `Run #${lastConfig.runSeq} · BTCUSDT · ${lastConfig.timeframe} · ${rows.length} tổ hợp`
+                ? `Run #${lastConfig.runSeq} · ${MARKET_SYMBOL} · ${lastConfig.timeframe} · ${rows.length} tổ hợp`
                 : 'Chưa có Leaderboard nào trong phiên này'}
             </span>
           </div>
@@ -287,7 +310,7 @@ export default function LeaderboardPage() {
                   {rows.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="text-muted table-empty">
-                        Chưa có candidate nào hoàn tất backtest.
+                        {emptyLeaderboardReason(expStatus)}
                       </td>
                     </tr>
                   ) : (

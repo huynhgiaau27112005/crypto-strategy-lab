@@ -180,7 +180,6 @@ export class CandidateRepository {
   async listTopCandidateMembers(
     experimentId: string,
     userId: string,
-    minimumTrades: number,
     limit: number,
   ): Promise<TopCandidateMemberRow[]> {
     const result = await this.database.query<TopCandidateMemberRow>(
@@ -191,9 +190,9 @@ export class CandidateRepository {
          JOIN candidates c ON c.iteration_id = ei.id
          JOIN backtest_runs br ON br.candidate_id = c.id AND br.status = 'COMPLETED'
          JOIN evaluations ev ON ev.backtest_run_id = br.id
-         WHERE e.id = $1 AND e.user_id = $2 AND ev.number_of_trades >= $3
+         WHERE e.id = $1 AND e.user_id = $2
          ORDER BY ev.overall_score DESC NULLS LAST
-         LIMIT $4
+         LIMIT $3
        )
        SELECT tc.candidate_id, tc.overall_score,
               s.id AS strategy_id, s.name, s.type AS strategy_type, s.version,
@@ -202,7 +201,7 @@ export class CandidateRepository {
        JOIN candidate_strategies cs ON cs.candidate_id = tc.candidate_id
        JOIN strategies s ON s.id = cs.strategy_id
        ORDER BY tc.overall_score DESC NULLS LAST, s.name ASC`,
-      [experimentId, userId, minimumTrades, limit],
+      [experimentId, userId, limit],
     );
     return result.rows;
   }

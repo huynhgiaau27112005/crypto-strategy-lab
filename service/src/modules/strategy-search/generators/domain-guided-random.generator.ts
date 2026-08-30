@@ -27,7 +27,7 @@ function defaultRunCatalog(): RunCatalog {
 }
 
 @Injectable()
-export class DomainGuidedRandomGenerator implements SearchAlgorithm {
+export class DomainGuidedRandomGenerator implements SearchAlgorithm<RunCatalog> {
   generate(
     random: () => number,
     config: SearchConfig,

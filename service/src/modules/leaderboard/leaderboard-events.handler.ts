@@ -59,7 +59,6 @@ export class LeaderboardEventsHandler {
       await this.leaderboard.rebuildForExperiment(
         payload.experimentId,
         payload.topK,
-        payload.minimumTrades,
       );
     } catch (error) {
       this.logger.warn(
@@ -92,7 +91,6 @@ export class LeaderboardEventsHandler {
     await this.leaderboard.rebuildForExperiment(
       payload.experimentId,
       payload.topK,
-      payload.minimumTrades,
     );
   }
 }

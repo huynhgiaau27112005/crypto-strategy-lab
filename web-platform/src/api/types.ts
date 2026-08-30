@@ -263,7 +263,7 @@ export type ExperimentStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 
  * Body of `POST /strategy-search/experiments` — only the fields the
  * approved Backtest config form actually collects (Coin is fixed
  * BTCUSDT and not part of the request). `maxCandidates`,
- * `maxDurationSeconds`, `maxNoImprovement`, `minimumTrades` have no field
+ * `maxDurationSeconds` and `maxNoImprovement` have no field
  * in the form, so they are always omitted and the backend's own defaults
  * apply (artifacts/api-contract.md §2).
  */
@@ -345,7 +345,6 @@ export interface ExperimentStatusDto {
   /** Persisted search settings, plus `stopReason` once the run ends. */
   search_config: {
     topK?: number
-    minimumTrades?: number
     maxNoImprovement?: number
     maxDurationSeconds?: number
     /**
@@ -502,12 +501,35 @@ export interface SentimentSummaryDto {
   neutral: number
   negative: number
   analyzed: number
+  /** Articles published in the window, scored or not — the denominator. */
+  total: number
   averageConfidence: number
+  /** The CONFIGURED provider. What actually scored a batch is reported on
+   *  the crawl summary (`NewsCrawlSummaryDto.model`), which the UI prefers. */
   model: string
+  /** The window this summary covers, echoed back by the API. */
+  hours: number
 }
 
 /** Status of the out-of-process crawl worker — artifacts/api-contract.md §4. */
-export type NewsCrawlStatus = 'RUNNING' | 'COMPLETED' | 'FAILED'
+export type NewsCrawlStatus = 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+
+/** What one finished crawl actually wrote into `news`. */
+export interface NewsCrawlSummaryDto {
+  /** Articles that did not exist before this run. */
+  new: number
+  /** Articles that already existed and were only refreshed. */
+  updated: number
+  /** How many of them the sentiment model scored. */
+  scored: number
+  /**
+   * The provider that ACTUALLY scored this batch. FinBERT degrades to the
+   * lexicon provider when its weights are absent, so this can differ from
+   * the configured model name — and this one is the truth. Null for a
+   * worker build that reported none.
+   */
+  model: string | null
+}
 
 /**
  * `POST /news/crawl` (202) and `GET /news/crawl/status` (200) response
@@ -521,6 +543,14 @@ export interface NewsCrawlJobDto {
   finishedAt: string | null
   exitCode: number | null
   error: string | null
+  /** A stop was requested but the worker has not exited yet. */
+  stopping: boolean
+  /**
+   * Null while a run is in flight, and also when the worker produced no
+   * summary at all. Render "unknown", never "0 tin mới" — they are
+   * different answers.
+   */
+  summary: NewsCrawlSummaryDto | null
 }
 
 // ---------------------------------------------------------------------
