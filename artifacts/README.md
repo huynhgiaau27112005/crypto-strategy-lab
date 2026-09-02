@@ -15,6 +15,7 @@ Mục đích: nhóm dùng tài liệu này để hiểu hệ thống và chuẩn
 | `event-catalog.md` | Hợp đồng của mọi event: owner, thời điểm emit, consumer, schema version, ordering, xử lý trùng, chính sách lỗi. Phân biệt rõ 2 tầng event (BullMQ xuyên tiến trình vs `@nestjs/event-emitter` trong tiến trình). |
 | `cqrs.md` | Tactical CQRS: đường ghi (`backtest_runs`/`evaluations` → materialize `leaderboard_entries`) vs đường đọc (`GET .../top` + cache theo version). Nêu rõ **không** tách database. |
 | `service-mesh-evolution.md` | ADR: vì sao chưa deploy service mesh, điều kiện kích hoạt, lộ trình 3 bước. |
+| `extension-points.md` | Các trục mở rộng đã có abstraction thật (interface + DI token + đúng 1 chỗ binding): đổi sàn market-data, đổi search algorithm, đổi cặp giao dịch. Kèm danh sách trục cố tình **không** abstract và lý do. |
 | `decisions.md` | Nhật ký các quyết định phải hỏi người dùng trong lúc code (theo skill `resolve-before-coding`) và câu trả lời nhận được — để buổi present khỏi phải nhớ lại tại sao chọn phương án này. |
 
 ## Sơ đồ kiến trúc (PlantUML)

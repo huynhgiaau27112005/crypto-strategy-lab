@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -29,6 +30,7 @@ import { StrategyWeightMap } from '../composite-strategy/composite-strategy.serv
 import {
   aiStrategyIdFromType,
   DEFAULT_SEARCH_CONFIG,
+  SEARCH_ALGORITHM,
   isAiStrategyType,
   SearchConfig,
   SearchStrategyType,
@@ -46,10 +48,10 @@ import {
   STRATEGY_CATALOG,
   versionCatalogEntry,
 } from './catalog/strategy-catalog';
-import {
-  DomainGuidedRandomGenerator,
-  RunCatalog,
-} from './generators/domain-guided-random.generator';
+import { RunCatalog } from './generators/domain-guided-random.generator';
+// Type-only: named in a decorated constructor signature (isolatedModules +
+// emitDecoratorMetadata), and an interface has no runtime value to emit.
+import type { SearchAlgorithm } from './domain/search.types';
 import {
   CandidateDetail,
   CandidateRepository,
@@ -89,6 +91,7 @@ import { StrategySignal } from '../strategy-engine/strategy.types';
 import { StrategyPluginService } from '../strategy-plugin/strategy-plugin.service';
 import { NewsSentimentPrecomputeService } from '../news/news-sentiment-precompute.service';
 import { CandidateDefinition } from './domain/search.types';
+import { MARKET_SCOPE } from '../../common/market-scope';
 
 @Injectable()
 export class StrategySearchService implements OnApplicationBootstrap {
@@ -107,7 +110,11 @@ export class StrategySearchService implements OnApplicationBootstrap {
     private readonly iterations: ExperimentIterationRepository,
     private readonly candidates: CandidateRepository,
     private readonly strategies: StrategyRepository,
-    private readonly generator: DomainGuidedRandomGenerator,
+    // Injected by token, not as the concrete generator: the search loop
+    // below only ever calls generate(), so the algorithm is swappable
+    // without touching this file. See SEARCH_ALGORITHM.
+    @Inject(SEARCH_ALGORITHM)
+    private readonly generator: SearchAlgorithm<RunCatalog>,
     private readonly fingerprintService: CandidateFingerprintService,
     private readonly backtesting: BacktestingService,
     private readonly backtestRuns: BacktestRunRepository,
@@ -125,10 +132,10 @@ export class StrategySearchService implements OnApplicationBootstrap {
     private readonly events: EventEmitter2,
   ) {}
 
-  // Market scope is fixed for this project (Binance BTCUSDT), the same
-  // constant MarketDataGateway pins; kept here so the auto-backfill below
-  // does not have to invent a symbol.
-  private static readonly SYMBOL = 'BTCUSDT';
+  // One market for the whole deployment, shared with MarketDataGateway and
+  // RealtimeSignalService — see common/market-scope.ts. Kept as a static
+  // here so the auto-backfill below does not have to invent a symbol.
+  private static readonly SYMBOL = MARKET_SCOPE.symbol;
 
   // Runs in BOTH the API process and the worker process (StrategySearchModule
   // is imported by both AppModule and WorkerModule) — deliberately: a
@@ -377,7 +384,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
     const memberRows = await this.candidates.listTopCandidateMembers(
       experimentId,
       userId,
-      config.minimumTrades,
       config.topK,
     );
 
@@ -598,7 +604,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
         experimentId,
         candidateIds: created,
         topK: config.topK,
-        minimumTrades: config.minimumTrades,
         correlationId: getCorrelationId(),
       };
       await this.events.emitAsync(DomainEventNames.CandidatesRegenerated, payload);
@@ -711,7 +716,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
       experimentId,
       userId,
       LEADERBOARD_TOP_CACHE_MAX_ENTRIES,
-      config.minimumTrades,
     );
     await this.cache.set(dataKey, top, LEADERBOARD_TOP_CACHE_TTL_SECONDS);
     return top.slice(0, clampedLimit);
@@ -773,8 +777,8 @@ export class StrategySearchService implements OnApplicationBootstrap {
   // maxCandidates comes from experiment_configs.iteration_limit (unchanged
   // — extend() persists there); enabledDomains is derived from the
   // persisted experiment_config_strategies weight rows (see
-  // domainsFromWeightRows); maxDurationSeconds/maxNoImprovement/topK/
-  // minimumTrades come from experiments.search_config (JSONB, populated by
+  // domainsFromWeightRows); maxDurationSeconds/maxNoImprovement/topK
+  // come from experiments.search_config (JSONB, populated by
   // start() via persistableSearchConfig — see ExperimentEntity.search_config).
   // A pre-fix row (or any malformed JSON) falls back to
   // DEFAULT_SEARCH_CONFIG field-by-field via sanitizeSearchConfig, so this
@@ -813,7 +817,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
       maxDurationSeconds: config.maxDurationSeconds,
       maxNoImprovement: config.maxNoImprovement,
       topK: config.topK,
-      minimumTrades: config.minimumTrades,
       costs: config.costs,
     };
   }
@@ -827,11 +830,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
     raw: unknown,
   ): Pick<
     SearchConfig,
-    | 'maxDurationSeconds'
-    | 'maxNoImprovement'
-    | 'topK'
-    | 'minimumTrades'
-    | 'costs'
+    'maxDurationSeconds' | 'maxNoImprovement' | 'topK' | 'costs'
   > {
     const obj =
       raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
@@ -861,12 +860,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
         DEFAULT_SEARCH_CONFIG.maxNoImprovement,
       ),
       topK: boundedOrDefault(obj.topK, 1, MAX_TOP_K, DEFAULT_SEARCH_CONFIG.topK),
-      minimumTrades: boundedOrDefault(
-        obj.minimumTrades,
-        0,
-        10_000,
-        DEFAULT_SEARCH_CONFIG.minimumTrades,
-      ),
       costs: this.sanitizeCosts(obj.costs),
     };
   }
@@ -1150,10 +1143,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
           await this.backtestRuns.complete(candidateEntity.id, result);
           await this.iterations.complete(iteration.id);
 
-          if (
-            result.evaluation.numberOfTrades >= config.minimumTrades &&
-            result.evaluation.overallScore > bestScore
-          ) {
+          if (result.evaluation.overallScore > bestScore) {
             bestScore = result.evaluation.overallScore;
             noImprovement = 0;
           } else {
@@ -1201,7 +1191,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
               candidateId: candidateEntity.id,
               iterationId: iteration.id,
               topK: config.topK,
-              minimumTrades: config.minimumTrades,
               correlationId: getCorrelationId(),
             };
             await this.events.emitAsync(DomainEventNames.BacktestCompleted, payload);
@@ -1212,7 +1201,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
               iterationId: iteration.id,
               reason: iterationFailure ?? 'Unknown iteration failure',
               topK: config.topK,
-              minimumTrades: config.minimumTrades,
               correlationId: getCorrelationId(),
             };
             await this.events.emitAsync(DomainEventNames.BacktestFailed, payload);
@@ -1538,13 +1526,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
       // readable shortlist rather than an unbounded dump the UI has to
       // render (the field is a free-text input in the Backtest tab).
       topK: this.integerInRange(request.topK, 1, MAX_TOP_K, 10, 'topK'),
-      minimumTrades: this.integerInRange(
-        request.minimumTrades,
-        0,
-        10_000,
-        20,
-        'minimumTrades',
-      ),
       costs: this.validateCosts(request),
     };
     const hasDirectional = config.enabledDomains.some(

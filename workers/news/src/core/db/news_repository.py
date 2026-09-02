@@ -13,6 +13,14 @@ re-crawl of the same article never creates a duplicate row. On conflict,
 `sentiment`/`sentiment_score` are only overwritten when the new value is
 non-NULL (`COALESCE(EXCLUDED.x, news.x)`) so a re-crawl that ran with
 sentiment disabled/unavailable can't blank out a score obtained earlier.
+
+The upsert reports inserted vs updated separately (`UpsertCounts`). RSS
+feeds only ever carry the newest ~20-30 articles, so a crawl run a minute
+after the previous one legitimately writes ZERO new rows and merely
+refreshes the ones already stored. Reporting one combined "upserted N"
+number made that indistinguishable from a broken crawler, which is exactly
+how it read in the UI. `xmax = 0` is Postgres's own marker for "this
+RETURNING row came from an INSERT, not from the DO UPDATE branch".
 """
 import logging
 import os
@@ -51,6 +59,18 @@ def _map_label(label: Optional[str]) -> Optional[str]:
 
 
 @dataclass(frozen=True)
+class UpsertCounts:
+    """How one `upsert_articles` call split between new and existing rows."""
+
+    inserted: int
+    updated: int
+
+    @property
+    def total(self) -> int:
+        return self.inserted + self.updated
+
+
+@dataclass(frozen=True)
 class DbConfig:
     host: str
     port: int
@@ -85,18 +105,16 @@ class NewsRepository:
             password=self.config.password,
         )
 
-    def upsert_articles(self, rows: list[dict]) -> int:
+    def upsert_articles(self, rows: list[dict]) -> "UpsertCounts":
         """
         `rows` items: {title, content, source, published_at (ISO str or None),
         url, sentiment (raw provider label or None), sentiment_score (float or None)}.
 
-        Returns the number of rows sent (attempted), not a "new vs updated"
-        split -- ON CONFLICT DO UPDATE always reports as an affected row
-        either way in executemany, and the task only requires no duplicates,
-        not a precise insert/update count.
+        Returns how many rows were genuinely NEW versus merely refreshed --
+        see this module's docstring for why the distinction matters.
         """
         if not rows:
-            return 0
+            return UpsertCounts(inserted=0, updated=0)
 
         crawled_at = datetime.now(timezone.utc)
         records = []
@@ -127,14 +145,20 @@ class NewsRepository:
                 published_at = COALESCE(EXCLUDED.published_at, news.published_at),
                 sentiment = COALESCE(EXCLUDED.sentiment, news.sentiment),
                 sentiment_score = COALESCE(EXCLUDED.sentiment_score, news.sentiment_score)
+            RETURNING (xmax = 0) AS inserted
         """
 
         conn = self.connect()
         try:
             with conn:
                 with conn.cursor() as cur:
-                    psycopg2.extras.execute_values(cur, sql, records)
-            return len(records)
+                    # fetch=True is required for RETURNING: execute_values
+                    # otherwise discards the result set of each page.
+                    returned = psycopg2.extras.execute_values(
+                        cur, sql, records, fetch=True
+                    )
+            inserted = sum(1 for row in returned if row[0])
+            return UpsertCounts(inserted=inserted, updated=len(returned) - inserted)
         finally:
             conn.close()
 

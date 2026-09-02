@@ -205,7 +205,7 @@ BT_S --> COMP_S
 SR_S --> BT_S
 SR_S --> EV_BUS : **await** emitAsync\n"backtest.completed" /\n"backtest.failed" /\n"candidates.regenerated"
 EV_BUS --> LB_H : @OnEvent
-LB_H --> LB_S : rebuildForExperiment\n(topK, minimumTrades\nlấy từ payload)
+LB_H --> LB_S : rebuildForExperiment\n(topK lấy từ payload)
 LB_S --> EV_BUS : emit "leaderboard.updated"\n(không await)
 SR_S --> PLUG_REG
 SR_FP --> PLUG_REG : displayName

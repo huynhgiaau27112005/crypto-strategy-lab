@@ -1,4 +1,4 @@
-import { BadRequestException, Logger, OnModuleDestroy } from '@nestjs/common';
+import { BadRequestException, Inject, Logger, OnModuleDestroy } from '@nestjs/common';
 import {
     ConnectedSocket,
     MessageBody,
@@ -10,16 +10,19 @@ import {
 import { Server, Socket } from 'socket.io';
 
 import {
-    BinanceClient,
     KlineStreamHandle,
     KlineUpdate,
+    MARKET_DATA_PROVIDER,
     TradeUpdate,
-} from './clients/binance.client';
+} from './providers/market-data-provider';
+// See MarketDataService for why this one is a type-only import.
+import type { MarketDataProvider } from './providers/market-data-provider';
 import { CandleRepository } from './repositories/candle.repository';
 import { assertAllowedInterval } from './config';
+import { MARKET_SCOPE } from '../../common/market-scope';
 
-// Market scope is fixed for this project: Binance, BTCUSDT only.
-const SYMBOL = 'BTCUSDT';
+// One market for the whole deployment — see common/market-scope.ts.
+const SYMBOL = MARKET_SCOPE.symbol;
 
 // Single room for the symbol-wide tick feed (there is only one symbol in
 // this project's scope, so no per-symbol room naming is needed).
@@ -64,10 +67,11 @@ interface StreamState {
 }
 
 /**
- * Pushes live BTCUSDT candle updates to subscribed clients instead of
+ * Pushes live candle updates for the configured market (see
+ * common/market-scope.ts) to subscribed clients instead of
  * requiring the frontend to poll a price endpoint (required flow #2).
  *
- * One upstream Binance stream is kept per interval, ref-counted by room
+ * One upstream provider stream is kept per interval, ref-counted by room
  * membership: the first `subscribe` for an interval opens the upstream
  * stream, the last matching disconnect/`unsubscribe` tears it down.
  */
@@ -98,7 +102,11 @@ export class MarketDataGateway
     private tradeStream: KlineStreamHandle | null = null;
 
     constructor(
-        private readonly binanceClient: BinanceClient,
+        // The exchange is chosen once, in MarketDataCoreModule. This
+        // gateway pushes whatever the bound provider streams and never
+        // names one.
+        @Inject(MARKET_DATA_PROVIDER)
+        private readonly marketData: MarketDataProvider,
         private readonly candleRepository: CandleRepository,
     ) { }
 
@@ -202,7 +210,7 @@ export class MarketDataGateway
     private ensureTradeStream(): void {
         if (this.tradeStream) return;
         try {
-            this.tradeStream = this.binanceClient.streamTrades(SYMBOL, {
+            this.tradeStream = this.marketData.streamTrades(SYMBOL, {
                 onTrade: (trade) => this.handleUpstreamTrade(trade),
             });
         } catch (error) {
@@ -250,7 +258,7 @@ export class MarketDataGateway
         };
 
         try {
-            const handle = this.binanceClient.streamCandles(SYMBOL, interval, {
+            const handle = this.marketData.streamCandles(SYMBOL, interval, {
                 onUpdate: (update) => this.handleUpstreamUpdate(interval, update),
                 onConnectionChange: (connected) => {
                     state.connected = connected;

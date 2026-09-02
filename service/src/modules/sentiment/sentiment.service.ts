@@ -8,8 +8,17 @@ export interface SentimentSummary {
   neutral: number;
   negative: number;
   analyzed: number;
+  /**
+   * Articles published in the window, scored or not. `analyzed < total`
+   * means the sentiment worker has not caught up (or could not score
+   * them); `total === 0` means the window itself is empty. Those are very
+   * different situations and the panel words them differently.
+   */
+  total: number;
   averageConfidence: number;
   model: string;
+  /** The window this summary covers, echoed back so the UI can label it. */
+  hours: number;
 }
 
 @Injectable()
@@ -17,7 +26,10 @@ export class SentimentService {
   constructor(private readonly newsRepository: NewsRepository) {}
 
   async summary(hours: number): Promise<SentimentSummary> {
-    const groups = await this.newsRepository.summarizeSentiment(hours);
+    const [groups, total] = await Promise.all([
+      this.newsRepository.summarizeSentiment(hours),
+      this.newsRepository.countInWindow(hours),
+    ]);
 
     const counts: Record<SentimentLabel, number> = {
       POSITIVE: 0,
@@ -48,8 +60,10 @@ export class SentimentService {
       neutral: shareOf(counts.NEUTRAL),
       negative: shareOf(counts.NEGATIVE),
       analyzed,
+      total,
       averageConfidence: scoredCount === 0 ? 0 : weightedScoreSum / scoredCount,
       model: getConfiguredSentimentModel(),
+      hours,
     };
   }
 }

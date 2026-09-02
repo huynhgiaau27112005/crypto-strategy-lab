@@ -5,10 +5,21 @@ import SignalBadge, { type SignalKind } from '../components/SignalBadge'
 import { useNews } from '../hooks/useNews'
 import { useNewsCrawl } from '../state/NewsCrawlContext'
 import { useSentimentSummary } from '../hooks/useSentimentSummary'
-import type { SentimentLabel } from '../api/types'
+import type { SentimentLabel, SentimentSummaryDto } from '../api/types'
+import { MARKET_BASE_ASSET } from '../lib/marketScope'
 
 const NEWS_PAGE_SIZE = 8
-const SUMMARY_HOURS = 24
+/**
+ * Window for the sentiment summary panel.
+ *
+ * Was 24h, which made the panel look permanently broken: RSS feeds only
+ * carry the newest ~20-30 articles and most of them are older than a day,
+ * so the panel covered 5 of the 39 stored articles while the list beside
+ * it showed all 39. Seven days keeps the panel in step with what the user
+ * can actually see.
+ */
+const SUMMARY_HOURS = 24 * 7
+const SUMMARY_WINDOW_LABEL = '7 ngày'
 
 const SENTIMENT_FILTERS: { value: SentimentLabel | null; label: string }[] = [
   { value: null, label: 'Tất cả' },
@@ -23,7 +34,7 @@ function sentimentKind(sentiment: SentimentLabel | null): SignalKind {
   return 'neutral'
 }
 
-import { fmtTimeVN } from '../lib/datetime'
+import { fmtDateTimeVN } from '../lib/datetime'
 
 function fmtConfidence(score: number | null): string {
   return score != null ? score.toFixed(2) : '—'
@@ -31,6 +42,26 @@ function fmtConfidence(score: number | null): string {
 
 function fmtPct(fraction: number): string {
   return `${Math.round(fraction * 100)}%`
+}
+
+/**
+ * "Chưa có tin tức nào được phân tích" was shown for three completely
+ * different situations, and for months it was really the third one: the
+ * sentiment provider had never run at all (FinBERT's weights were never
+ * installed, so the worker degraded to a no-op and every row was stored
+ * with sentiment = NULL). A single message meant nothing on screen ever
+ * pointed at that. These split the cases apart.
+ */
+function emptySummaryTitle(summary: SentimentSummaryDto | null): string {
+  if (!summary || summary.total === 0) return `Chưa có tin nào trong ${SUMMARY_WINDOW_LABEL} gần nhất`
+  return 'Có tin nhưng chưa bài nào được chấm sentiment'
+}
+
+function emptySummarySub(summary: SentimentSummaryDto | null): string {
+  if (!summary || summary.total === 0) {
+    return `Crawler chưa thu thập được bài nào có ngày đăng trong ${SUMMARY_WINDOW_LABEL} gần nhất. Bật crawl ở trên để thu thập thêm.`
+  }
+  return `${summary.total} tin trong ${SUMMARY_WINDOW_LABEL} gần nhất nhưng 0 tin có nhãn sentiment — provider sentiment (${summary.model}) không chạy được. Kiểm tra log worker; chạy lại crawl sẽ chấm lại toàn bộ lô.`
 }
 
 export default function NewsPage() {
@@ -49,6 +80,7 @@ export default function NewsPage() {
     state: crawlState,
     error: crawlError,
     autoCrawlEnabled,
+    crawlActive,
     triggerCrawl,
     stopCrawl,
     stopping: crawlStopping,
@@ -59,7 +91,13 @@ export default function NewsPage() {
   }
 
   const pages = Math.max(1, Math.ceil(total / NEWS_PAGE_SIZE))
-  const crawlRunning = crawlState === 'polling'
+  // The crawl LOOP, not one batch: between batches the poll state is
+  // 'terminal' for a few seconds, and keying the Stop button off
+  // `crawlState === 'polling'` made it vanish exactly then. See
+  // NewsCrawlContext's `crawlActive`.
+  const crawlRunning = crawlActive
+  /** True only while a batch is genuinely executing (drives the spinner). */
+  const batchRunning = crawlState === 'polling'
 
   const selectSentiment = (value: SentimentLabel | null) => {
     setSentiment(value)
@@ -70,7 +108,10 @@ export default function NewsPage() {
   // list and summary panel so newly-crawled/scored articles show up
   // without a manual page reload.
   useEffect(() => {
-    if (crawlState === 'terminal' && crawlJob?.status === 'COMPLETED') {
+    if (
+      crawlState === 'terminal' &&
+      (crawlJob?.status === 'COMPLETED' || crawlJob?.status === 'CANCELLED')
+    ) {
       setRefreshToken((t) => t + 1)
     }
   }, [crawlState, crawlJob])
@@ -80,11 +121,42 @@ export default function NewsPage() {
     void triggerCrawl()
   }
 
+  /**
+   * What the last finished batch actually wrote.
+   *
+   * RSS feeds only carry the newest ~20-30 articles, so a crawl run a
+   * minute after the previous one legitimately stores zero new rows and
+   * merely refreshes what is already there. Without this line the UI was
+   * indistinguishable from a broken crawler — the list simply never
+   * changed. `summary === null` means the worker reported nothing, which
+   * is NOT the same as "0 new" and is worded differently.
+   */
+  /**
+   * The model that ACTUALLY scored the most recent batch, falling back to
+   * the configured name. These differ whenever FinBERT's weights are
+   * missing and the worker degrades to the lexicon provider — and showing
+   * the configured name there would be a straight misreport of how the
+   * labels on screen were produced.
+   */
+  const scoringModel = crawlJob?.summary?.model ?? summary?.model ?? null
+
+  const crawlSummaryText = (): string | null => {
+    if (!crawlJob || crawlJob.status === 'RUNNING') return null
+    const summary = crawlJob.summary
+    if (!summary) return 'Lô vừa rồi: worker không báo số liệu.'
+    if (summary.new === 0) {
+      return `Lô vừa rồi: 0 tin mới (đã làm mới ${summary.updated} tin cũ — nguồn RSS chưa đăng bài nào mới).`
+    }
+    return `Lô vừa rồi: +${summary.new} tin mới, ${summary.updated} tin đã có (${summary.scored} tin được chấm sentiment).`
+  }
+
   const crawlStatusText = (): string => {
+    if (crawlStopping) return 'Đang dừng worker…'
     if (crawlState === 'polling') return 'Đang crawl tự động — bấm Dừng để tắt.'
     if (crawlState === 'timeout') return 'Hết thời gian chờ trạng thái crawl.'
     if (crawlState === 'error') return crawlError ?? 'Lỗi khi crawl.'
     if (crawlState === 'terminal' && crawlJob) {
+      if (crawlJob.status === 'CANCELLED') return 'Bạn đã dừng crawl.'
       if (crawlJob.status === 'COMPLETED') {
         return autoCrawlEnabled
           ? 'Crawl xong — sẽ tự chạy lại sau vài giây.'
@@ -123,7 +195,7 @@ export default function NewsPage() {
                 className="btn btn-danger btn-block blueprint"
                 style={{ height: 36 }}
                 disabled={crawlStopping}
-                title="Dừng crawl — worker sẽ kết thúc lô hiện tại rồi dừng cập nhật."
+                title="Dừng crawl — tiến trình worker được kết thúc ngay, không chạy lại nữa."
                 onClick={handleCrawlStop}
               >
                 <BlueprintCorners />
@@ -141,13 +213,18 @@ export default function NewsPage() {
                 Bật crawl tự động
               </button>
             )}
-            {crawlRunning && (
+            {batchRunning && !crawlStopping && (
               <div className="news-crawl-progress" aria-live="polite">
                 <span className="news-crawl-spinner" aria-hidden="true" />
                 <span>Đang crawl &amp; phân tích sentiment…</span>
               </div>
             )}
             <p className="news-crawl-note">{crawlStatusText()}</p>
+            {crawlSummaryText() && (
+              <p className="news-crawl-note" aria-live="polite">
+                {crawlSummaryText()}
+              </p>
+            )}
           </div>
         </div>
 
@@ -157,7 +234,7 @@ export default function NewsPage() {
             <h4 style={{ fontSize: 16, margin: 0 }}>Tin tức đã thu thập</h4>
             <div style={{ flex: 1 }} />
             <span className="text-muted mono" style={{ fontSize: 12 }}>
-              {loading ? 'Đang tải…' : `${total} tin${summary?.model ? ` · model ${summary.model}` : ''}`}
+              {loading ? 'Đang tải…' : `${total} tin${scoringModel ? ` · model ${scoringModel}` : ''}`}
             </span>
           </div>
 
@@ -195,10 +272,10 @@ export default function NewsPage() {
                       <div className="news-item-meta">
                         <span className="news-item-tag">Coin: {n.coin}</span>
                         <span className="news-item-tag news-item-tag-accent">
-                          Model: {summary?.model ?? '—'}
+                          Model: {scoringModel ?? '—'}
                         </span>
                         <span className="text-muted mono" style={{ fontSize: 11 }}>
-                          {n.source} · {fmtTimeVN(n.publishedAt)} · confidence {fmtConfidence(n.sentimentScore)}
+                          {n.source} · {fmtDateTimeVN(n.publishedAt)} · confidence {fmtConfidence(n.sentimentScore)}
                         </span>
                       </div>
                     </div>
@@ -237,17 +314,16 @@ export default function NewsPage() {
       <div className="news-side">
         <div className="news-summary-panel blueprint">
           <BlueprintCorners />
-          <h4 style={{ fontSize: 16, margin: '0 0 10px' }}>Sentiment BTC ({SUMMARY_HOURS}h)</h4>
+          <h4 style={{ fontSize: 16, margin: '0 0 10px' }}>
+            Sentiment {MARKET_BASE_ASSET} ({SUMMARY_WINDOW_LABEL})
+          </h4>
 
           {summaryError ? (
             <p className="text-muted">Lỗi: {summaryError}</p>
           ) : !summaryLoading && (!summary || summary.analyzed === 0) ? (
             <div className="news-empty">
-              <p className="news-empty-title">Chưa có tin tức nào được phân tích</p>
-              <p className="text-muted news-empty-sub">
-                Sentiment tổng hợp sẽ hiện ở đây sau khi crawler thu thập và model NLP phân loại được ít nhất một
-                bài trong {SUMMARY_HOURS}h gần nhất.
-              </p>
+              <p className="news-empty-title">{emptySummaryTitle(summary)}</p>
+              <p className="text-muted news-empty-sub">{emptySummarySub(summary)}</p>
             </div>
           ) : summary ? (
             <>
@@ -288,11 +364,16 @@ export default function NewsPage() {
               <div className="news-summary-stats">
                 <div className="news-summary-stat-row">
                   <span className="text-muted">Số tin đã phân tích</span>
-                  <span className="mono">{summary.analyzed}</span>
+                  {/* Shown as a fraction so a partially-scored window reads
+                      as "the worker has not caught up" rather than as a
+                      smaller corpus than the list beside it. */}
+                  <span className="mono">
+                    {summary.analyzed}/{summary.total}
+                  </span>
                 </div>
                 <div className="news-summary-stat-row">
                   <span className="text-muted">Model đánh giá</span>
-                  <span className="mono">{summary.model}</span>
+                  <span className="mono">{scoringModel ?? summary.model}</span>
                 </div>
                 <div className="news-summary-stat-row">
                   <span className="text-muted">Confidence trung bình</span>

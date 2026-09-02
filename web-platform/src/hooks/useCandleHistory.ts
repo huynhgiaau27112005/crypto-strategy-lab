@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { apiFetch } from '../api/client'
 import type { Candle } from './useMarketSocket'
 import type { CandleDto, MarketInterval } from '../api/types'
+import { MARKET_SYMBOL } from '../lib/marketScope'
 
-const SYMBOL = 'BTCUSDT'
+const SYMBOL = MARKET_SYMBOL
 const HISTORY_LIMIT = 500
 
 export interface UseCandleHistoryResult {

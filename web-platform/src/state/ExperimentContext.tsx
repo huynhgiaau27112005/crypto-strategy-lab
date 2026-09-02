@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
 import type { MarketInterval, RankedCandidateSummary } from '../api/types'
+import { vietnamDaysAgo, vietnamToday } from '../lib/datetime'
 
 /**
  * The applied config of the most recent `POST /strategy-search/experiments`
@@ -43,10 +44,22 @@ export interface BacktestFormState {
   topK: string
 }
 
+/**
+ * The default backtest window: the last two weeks, ending today.
+ *
+ * These used to be the literal strings '2026-08-07' and '2026-08-24' — the
+ * fortnight the form happened to be written in. Every run after that date
+ * defaulted to a window in the past (and eventually one with no candles at
+ * all), which is a config that produces an empty Leaderboard for reasons
+ * that have nothing to do with the user's choices. Derived from the
+ * Vietnam calendar day, not UTC — see vietnamToday().
+ */
+const DEFAULT_BACKTEST_DAYS = 14
+
 export const DEFAULT_BACKTEST_FORM: BacktestFormState = {
   timeframe: '5m',
-  fromDate: '2026-08-07',
-  toDate: '2026-08-24',
+  fromDate: vietnamDaysAgo(DEFAULT_BACKTEST_DAYS),
+  toDate: vietnamToday(),
   capital: '1000',
   transactionCostPct: '0.08',
   slippageBps: '5',

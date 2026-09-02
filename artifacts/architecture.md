@@ -139,7 +139,7 @@ StrategySearchService.start(userId, request)
                      5. emit `backtest.completed` (await emitAsync)
                         → LeaderboardEventsHandler nhận, gọi
                           LeaderboardService.rebuildForExperiment():
-                          tính lại Top-K (lọc theo minimumTrades), lưu
+                          tính lại Top-K (mọi candidate đã backtest xong), lưu
                           leaderboard_entries, INCR leaderboard:version
                         (emit NGOÀI try-block chính — lỗi rebuild không
                          được phép biến 1 backtest THÀNH CÔNG thành FAILED;
@@ -196,7 +196,7 @@ Không cần sửa `StrategyEngineService`, `StrategyRegistry`, `CompositeStrate
 
 ## 4c. Event-Driven — cắt phụ thuộc Search → Leaderboard (2026-08-29)
 
-**Trước:** `StrategySearchService` inject thẳng `LeaderboardService` và gọi `rebuildForExperiment()` ở 2 chỗ. Module Search phải biết Leaderboard tồn tại, biết nó cần `topK`/`minimumTrades`, và biết phải bọc try/catch quanh nó.
+**Trước:** `StrategySearchService` inject thẳng `LeaderboardService` và gọi `rebuildForExperiment()` ở 2 chỗ. Module Search phải biết Leaderboard tồn tại, biết nó cần `topK`, và biết phải bọc try/catch quanh nó.
 
 **Sau:** Search chỉ **thông báo** việc đã xảy ra (`backtest.completed` / `backtest.failed` / `candidates.regenerated`). `LeaderboardEventsHandler` — sống trong module sở hữu read model — quyết định điều đó nghĩa là gì.
 

@@ -14,7 +14,7 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 import type { Candle } from '../hooks/useMarketSocket'
-import { chartTimeFormatter } from '../lib/datetime'
+import { chartTickMarkFormatter, chartTimeFormatter } from '../lib/datetime'
 
 /** One moving-average overlay: period + the design token to colour it with. */
 export interface MaOverlay {
@@ -171,7 +171,16 @@ export default function CandleChart({
         horzLines: { color: dividerColor },
       },
       rightPriceScale: { borderVisible: false },
-      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
+      timeScale: {
+        borderVisible: false,
+        timeVisible: true,
+        secondsVisible: false,
+        // Axis labels are a SEPARATE option from localization.timeFormatter
+        // below (which only covers the crosshair). Without this the axis
+        // rendered in UTC while the crosshair rendered in GMT+7 — the same
+        // candle appearing to sit at two different times.
+        tickMarkFormatter: chartTickMarkFormatter,
+      },
       localization: {
         timeFormatter: chartTimeFormatter,
       },

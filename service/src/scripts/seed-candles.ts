@@ -1,13 +1,19 @@
 import 'dotenv/config';
 
-import { BinanceClient, BinanceKline } from '../modules/market-data/clients/binance.client';
+import { BinanceClient } from '../modules/market-data/clients/binance.client';
+import type {
+    Kline,
+    MarketDataProvider,
+} from '../modules/market-data/providers/market-data-provider';
+import { MARKET_SCOPE } from '../common/market-scope';
 import { CandleRepository } from '../modules/market-data/repositories/candle.repository';
 import { DatabaseService } from '../database/database.service';
 import { ALLOWED_INTERVALS } from '../modules/market-data/config';
 import { MetricsService } from '../observability/metrics/metrics.service';
 
 /**
- * Repeatable historical backfill for BTCUSDT candles.
+ * Repeatable historical backfill for the configured market's candles
+ * (see common/market-scope.ts).
  *
  * The live database starts with only a handful of candles, which is not
  * enough lookback for any strategy to emit a signal (every domain needs at
@@ -21,7 +27,7 @@ import { MetricsService } from '../observability/metrics/metrics.service';
  * Usage: npm run seed:candles
  */
 
-const SYMBOL = 'BTCUSDT';
+const SYMBOL = MARKET_SCOPE.symbol;
 
 // Binance's kline endpoint caps a single request at 1000 rows.
 const REQUEST_LIMIT = 1000;
@@ -51,15 +57,15 @@ function sleep(ms: number): Promise<void> {
  * partial OHLCV snapshot that never gets corrected, corrupting the series
  * every backtest reads. `row.isClosed` is the same closed-candle criterion
  * MarketDataGateway already applies to WebSocket updates before persisting
- * them; this reuses BinanceClient's computed flag rather than a second,
+ * them; this reuses the provider's computed flag rather than a second,
  * independently-written "drop the last element" heuristic.
  */
-function onlyClosed(rows: BinanceKline[]): BinanceKline[] {
+function onlyClosed(rows: Kline[]): Kline[] {
     return rows.filter((row) => row.isClosed);
 }
 
 export async function backfillInterval(
-    binanceClient: BinanceClient,
+    marketData: MarketDataProvider,
     candleRepository: CandleRepository,
     interval: string,
     targetCount: number,
@@ -75,7 +81,7 @@ export async function backfillInterval(
         const remaining = targetCount - totalFetched;
         const limit = Math.min(REQUEST_LIMIT, remaining);
 
-        const rows = await binanceClient.getKlines(SYMBOL, interval, limit, endTime);
+        const rows = await marketData.getKlines(SYMBOL, interval, limit, endTime);
         if (rows.length === 0) {
             console.log(`[${interval}] Binance returned no more candles; stopping.`);
             break;
@@ -125,7 +131,11 @@ export async function backfillInterval(
 }
 
 async function main(): Promise<void> {
-    const binanceClient = new BinanceClient(new MetricsService());
+    // This standalone script has no Nest container to resolve
+    // MARKET_DATA_PROVIDER from, so it constructs the bound implementation
+    // directly — the one place outside MarketDataCoreModule that names an
+    // exchange, and it is typed as MarketDataProvider from here on.
+    const marketData: MarketDataProvider = new BinanceClient(new MetricsService());
     const database = new DatabaseService();
     const candleRepository = new CandleRepository(database);
 
@@ -135,7 +145,7 @@ async function main(): Promise<void> {
 
     for (const interval of ALLOWED_INTERVALS) {
         const target = TARGET_COUNTS[interval] ?? 1000;
-        await backfillInterval(binanceClient, candleRepository, interval, target);
+        await backfillInterval(marketData, candleRepository, interval, target);
     }
 
     console.log('\nFinal candle counts per interval (from the database):');

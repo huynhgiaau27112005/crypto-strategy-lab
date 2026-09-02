@@ -1,11 +1,30 @@
 // The `news` table has no `model` column — which model produced a row's
 // sentiment is not stored per-row, it is a fact about the pipeline's
-// current configuration. Per artifacts/decisions.md the sentiment model is
-// FinBERT; this is reported as a configuration fact in the summary
-// response, not derived from any row.
-const DEFAULT_SENTIMENT_MODEL = 'FinBERT';
+// current configuration.
+//
+// This used to return the literal 'FinBERT' unconditionally, which was
+// simply false: FinBERT's weights are a ~440MB opt-in that was never
+// installed, so the worker degraded to another provider and the UI
+// reported a model that had never run. The name is now derived from the
+// same `SENTIMENT_PROVIDER` value the worker resolves against.
+//
+// This is still the CONFIGURED provider, not proof of what scored a given
+// row — the worker reports the one that actually ran on each batch through
+// the crawl summary (`GET /news/crawl/status` -> `summary.model`), and the
+// UI prefers that when it has it.
+const PROVIDER_MODEL_NAMES: Record<string, string> = {
+  finbert: 'FinBERT',
+  lexicon: 'lexicon-v1',
+  none: 'none',
+  noop: 'none',
+  disabled: 'none',
+};
+
+const DEFAULT_PROVIDER = 'finbert';
 
 export function getConfiguredSentimentModel(): string {
-  const configured = process.env.SENTIMENT_MODEL_NAME?.trim();
-  return configured && configured.length > 0 ? configured : DEFAULT_SENTIMENT_MODEL;
+  const explicitName = process.env.SENTIMENT_MODEL_NAME?.trim();
+  if (explicitName) return explicitName;
+  const provider = process.env.SENTIMENT_PROVIDER?.trim().toLowerCase() || DEFAULT_PROVIDER;
+  return PROVIDER_MODEL_NAMES[provider] ?? provider;
 }

@@ -11,7 +11,7 @@
 | Auth | 4 endpoint | ✅ Hoạt động, đã smoke test thật |
 | Strategy Search | 5 endpoint + health | ✅ Hoạt động, đã smoke test full vòng |
 | Market Data | 2 endpoint + WebSocket `/market` | ⚠️ Hoạt động nhưng **chưa có auth** trên REST; WebSocket đã push realtime |
-| News | 3 endpoint + health (`GET /news`, `POST /news/crawl`, `GET /news/crawl/status`) | ✅ Hoạt động — crawl thật, chạy trong tiến trình **worker** riêng, API chỉ enqueue (task-16, xem `artifacts/queue.md`) |
+| News | 4 endpoint + health (`GET /news`, `POST /news/crawl`, `GET /news/crawl/status`, `POST /news/crawl/cancel`) | ✅ Hoạt động — crawl thật, chạy trong tiến trình **worker** riêng, API chỉ enqueue (task-16, xem `artifacts/queue.md`) |
 | Sentiment | 1 endpoint + health | ✅ Hoạt động |
 | Strategy Engine | `GET /strategy-engine/signal` + health | ✅ Hoạt động — realtime signal, có auth |
 | Queue | `GET /queue/health` | ✅ Hoạt động — không auth, xem mục 2b |
@@ -111,7 +111,6 @@ Bắt đầu một lần chạy tìm kiếm. Chạy **bất đồng bộ**: tr�
   "maxDurationSeconds": 3600,
   "maxNoImprovement": 50,
   "topK": 10,
-  "minimumTrades": 20,
   "enabledDomains": ["TREND", "MOMENTUM", "VOLATILITY"],
   "strategyWeights": [
     { "type": "MA", "weight": 0.3 },
@@ -129,7 +128,6 @@ Bắt đầu một lần chạy tìm kiếm. Chạy **bất đồng bộ**: tr�
 | `maxDurationSeconds` | ❌ | 3600 | số nguyên 1–86400 |
 | `maxNoImprovement` | ❌ | 50 | số nguyên 1–10000 |
 | `topK` | ❌ | 10 | số nguyên 1–100 |
-| `minimumTrades` | ❌ | 20 | số nguyên 0–10000 |
 | `enabledDomains` | ❌ | cả 4 | `TREND` / `MOMENTUM` / `VOLATILITY` / `STRUCTURE` |
 | `strategyWeights` | ❌ | chia đều trên 4 built-in | mỗi trọng số là số hữu hạn, `>= 0`; không được **tất cả bằng 0** |
 
@@ -220,7 +218,11 @@ khoảng 1–100.
 ]
 ```
 
-Chỉ trả candidate có `backtest_runs.status = 'COMPLETED'` **và** `number_of_trades >= minimumTrades` — lọc bỏ những chiến lược ăn may vài lệnh.
+Chỉ trả candidate có `backtest_runs.status = 'COMPLETED'`, xếp theo `overall_score` giảm dần.
+
+> **Đã bỏ `minimumTrades`.** Trước đây mọi truy vấn xếp hạng (endpoint này, `LeaderboardService.rebuildForExperiment`, và `listTopCandidateMembers`) đều lọc thêm `number_of_trades >= minimumTrades` với mặc định 20, trong khi form Backtest không hề gửi trường này. Với khung thời gian ngắn hoặc timeframe lớn (vd. 4h × 2 tuần ≈ 100 nến), không candidate nào đủ 20 lệnh → **Leaderboard rỗng hoàn toàn** dù 100 tổ hợp đã backtest xong, và UI không giải thích gì. Ngưỡng này cũng dùng để đếm `noImprovement`, nên còn cắt ngắn cả vòng search (`stopReason: NO_IMPROVEMENT`).
+>
+> `docs/about-projects/05-required-flows.md` §8 chỉ yêu cầu "candidate results can enter or displace entries in the Top-K leaderboard" và §10 liệt kê `Number of Trades` là **metric để hiển thị**, không phải bộ lọc — ngưỡng này là do nhóm tự thêm. Đã gỡ hẳn khái niệm (không phải đặt = 0): khỏi `SearchConfig`, `StartSearchRequest`, `experiments.search_config`, payload của `backtest.completed`/`backtest.failed`/`candidates.regenerated`, và cả 3 câu SQL. Số lệnh vẫn hiển thị ở cột Trades để người dùng tự đánh giá độ tin cậy.
 
 **Lỗi:** `404` / `401` như trên.
 
@@ -712,11 +714,13 @@ Yêu cầu `Authorization: Bearer <accessToken>` (`JwtAuthGuard`) — không gi�
   "startedAt": "2026-08-25T03:38:30.884Z",
   "finishedAt": null,
   "exitCode": null,
-  "error": null
+  "error": null,
+  "stopping": false,
+  "summary": null
 }
 ```
 
-- Nếu đã có 1 crawl đang `RUNNING`/chờ trong queue, gọi lại endpoint này **không** enqueue thêm job song song — trả về **cùng job** đang chạy (coalesce, quét job đang in-flight trước khi `add()`), tránh nhiều crawler cùng đọc/ghi cùng lúc trên cùng nguồn RSS.
+- Nếu đã có 1 crawl đang `RUNNING`/chờ trong queue, gọi lại endpoint này **không** enqueue thêm job song song — trả về **cùng job** đang chạy (coalesce, quét job đang in-flight trước khi `add()`), tránh nhiều crawler cùng đọc/ghi cùng lúc trên cùng nguồn RSS. **Ngoại lệ:** job đang trong trạng thái bị hủy (`cancelRequested`) thì **không** coalesce — trả về job sắp dừng để trả lời cho "bắt đầu crawl" là vô nghĩa; enqueue job mới, nó tự đợi job cũ thoát (concurrency = 1).
 - Worker Python bị **kill (SIGKILL)** nếu chạy quá `NEWS_WORKER_TIMEOUT_MS` (mặc định 10 phút) — job BullMQ chuyển sang `failed` với lý do timeout, không treo tiến trình vô thời hạn (đúng nguyên tắc chống "uncontrolled infinite loop"). Job không tự động retry (`attempts: 1`) — một crawl lỗi giữa chừng không nên âm thầm chạy lại và crawl trùng cùng cửa sổ thời gian; người dùng bấm lại `POST /news/crawl` khi cần.
 - **Trạng thái job lưu trong Redis** (BullMQ), không phải bộ nhớ tiến trình API — API restart giữa lúc crawl đang chạy **không** làm mất trạng thái, `GET /news/crawl/status` sau khi API khởi động lại vẫn đọc đúng job đang chạy trong worker.
 
@@ -726,9 +730,33 @@ Trả về job **gần nhất** (đang chạy/chờ, hoặc đã kết thúc g�
 
 Yêu cầu `Authorization: Bearer <accessToken>`.
 
-**Response `200`** — cùng shape với response của `POST /news/crawl` ở trên. `status` là `RUNNING` / `COMPLETED` / `FAILED`. `exitCode`/`error` chỉ có giá trị sau khi worker kết thúc; `error` chỉ khác `null` khi `status = FAILED` (worker exit code khác 0, timeout, hoặc lỗi spawn process — luôn kèm `stderr` thật của worker, không phải lỗi giả).
+**Response `200`** — cùng shape với response của `POST /news/crawl` ở trên. `status` là `RUNNING` / `COMPLETED` / `FAILED` / `CANCELLED`. `exitCode`/`error` chỉ có giá trị sau khi worker kết thúc; `error` chỉ khác `null` khi `status = FAILED` (worker exit code khác 0, timeout, hoặc lỗi spawn process — luôn kèm `stderr` thật của worker, không phải lỗi giả).
+
+Hai trường bổ sung:
+
+| Trường | Ý nghĩa |
+|---|---|
+| `stopping` | `true` khi đã yêu cầu dừng nhưng worker chưa thoát. UI hiển thị "Đang dừng worker…" thay vì nói dối là đã dừng hẳn. |
+| `summary` | `{ new, updated, scored }` — lô vừa xong ghi thực sự bao nhiêu tin **mới** so với bao nhiêu tin chỉ được làm mới. `null` khi job đang chạy hoặc khi worker không in ra dòng tổng kết (crash) — **khác** với `new: 0`. |
+
+> **Tại sao cần `summary`.** Nguồn RSS chỉ mang ~20-30 bài mới nhất, và worker upsert theo `url` (`ON CONFLICT DO UPDATE`). Một lần crawl chạy sau lần trước vài phút **hợp lệ** ghi 0 dòng mới — nhưng trước đây worker chỉ log "Upserted 42 article(s)" gộp cả cũ lẫn mới, và UI không hiển thị gì, nên trường hợp này **không phân biệt được với crawler hỏng**. Worker giờ in một dòng `NEWS_CRAWL_SUMMARY {...}` ra **stdout** (log đi stderr nên không lẫn), tách mới/cũ bằng `RETURNING (xmax = 0)` của Postgres; `NewsCrawlService` parse dòng đó và gắn vào kết quả job.
 
 **Response khi chưa từng crawl lần nào** (chưa có job nào trong queue): trả `null` (không phải `404`) — trạng thái bình thường trước lần crawl đầu tiên.
+
+**Lỗi:** `401` nếu thiếu/sai token.
+
+### `POST /news/crawl/cancel`
+
+Dừng crawl đang chạy ("Dừng Crawl" trên tab News & Sentiment). Yêu cầu `Authorization: Bearer <accessToken>`.
+
+**Response `202`**: `{ "cancelled": true, "state": "active" }` — hoặc `{ "cancelled": false, "state": null }` khi không có job nào đang in-flight.
+
+Cơ chế:
+
+- Job **đang chờ trong queue** → xóa hẳn khỏi queue.
+- Job **đang chạy** → ghi cờ `cancelRequested: true` vào job data. `NewsCrawlProcessor` đọc lại job từ Redis **mỗi giây**, thấy cờ thì `abort()` → `NewsCrawlService` gửi **SIGTERM** cho tiến trình Python, và **SIGKILL** sau 3 giây nếu nó chưa thoát. Job kết thúc với `status: CANCELLED` (không phải `FAILED` — người dùng chủ động dừng thì không phải lỗi).
+
+> **Lỗi đã sửa.** Trước đây `cancel()` chỉ **ghi cờ** — không có chỗ nào đọc nó. Tiến trình Python chạy tiếp cho tới khi xong (tối đa 10 phút), nên bấm "Dừng Crawl" trên thực tế không có tác dụng. Kèm theo đó, UI chỉ hiện nút Dừng khi `crawlState === 'polling'`, nên trong 3 giây nghỉ giữa 2 lô tự động nút đó biến mất — nhấn vào đúng lúc đó lại là nút **Bật**.
 
 **Lỗi:** `401` nếu thiếu/sai token.
 
@@ -771,7 +799,7 @@ Tất cả tham số đều **không bắt buộc**:
 
 ### `GET /sentiment/summary?hours=24`
 
-Tổng hợp sentiment trong `hours` giờ gần nhất (mặc định `24`, kẹp tối đa 1 năm, giá trị không hợp lệ bị từ chối `400`).
+Tổng hợp sentiment trong `hours` giờ gần nhất (mặc định `24`, kẹp tối đa 1 năm, giá trị không hợp lệ bị từ chối `400`). **UI gọi với `hours=168` (7 ngày)** — trước là 24h, nhưng nguồn RSS chỉ mang ~20-30 bài mới nhất và phần lớn cũ hơn 1 ngày, nên panel chỉ phủ 5/39 bài trong khi danh sách bên cạnh hiện cả 39 — trông hệt như panel hỏng.
 
 Câu SQL nhóm theo `sentiment` (`GROUP BY sentiment`), giới hạn `published_at >= now() - make_interval(hours => $1::int)`, và loại các bài **chưa được phân tích** (`sentiment IS NULL`) — bài chưa qua sentiment worker không được tính là bất kỳ nhãn nào.
 
@@ -783,9 +811,11 @@ Câu SQL nhóm theo `sentiment` (`GROUP BY sentiment`), giới hạn `published_
   "positive": 0.75,
   "neutral": 0.125,
   "negative": 0.125,
-  "analyzed": 8,
+  "analyzed": 30,
+  "total": 39,
   "averageConfidence": 0.8123,
-  "model": "FinBERT"
+  "model": "lexicon-v1",
+  "hours": 168
 }
 ```
 
@@ -793,10 +823,28 @@ Câu SQL nhóm theo `sentiment` (`GROUP BY sentiment`), giới hạn `published_
 |---|---|
 | `positive`/`neutral`/`negative` | Tỷ lệ (0–1) trong số bài **đã phân tích** (`analyzed`), tính bằng `count / analyzed` ở service |
 | `analyzed` | Tổng số bài có `sentiment IS NOT NULL` trong khung giờ — có thể `0` |
+| `total` | Tổng số bài trong khung giờ, **đã chấm hay chưa**. Mẫu số để UI hiện "30/39 tin đã phân tích" |
 | `averageConfidence` | Trung bình `sentiment_score`, tính theo trọng số (weighted mean) qua các nhóm nhãn; `0` khi `analyzed = 0` |
-| `model` | Fact cấu hình (`FinBERT`), không phải trường trên từng bài — xem bảng suy ra ở trên |
+| `model` | Provider **được cấu hình** (suy từ `SENTIMENT_PROVIDER`), không phải trường trên từng bài |
+| `hours` | Khung giờ đã dùng, trả lại để UI tự gắn nhãn |
 
-**DB rỗng:** `{ "positive": 0, "neutral": 0, "negative": 0, "analyzed": 0, "averageConfidence": 0, "model": "FinBERT" }`.
+> **`analyzed` vs `total` — vì sao cần cả hai.** Panel từng chỉ có `analyzed`, nên khi nó bằng 0 thì màn hình chỉ nói "Chưa có tin tức nào được phân tích" cho **ba** tình huống khác hẳn nhau: (a) không có tin nào trong khung giờ, (b) có tin nhưng worker chưa chấm kịp, (c) provider sentiment không chạy được. Thực tế suốt thời gian dài nó là (c) — xem ghi chú provider bên dưới.
+
+> **`model` ở đây là provider ĐƯỢC CẤU HÌNH, không phải bằng chứng đã chạy.** Bảng `news` không có cột model. Provider **thực sự** chấm từng lô được worker báo qua `GET /news/crawl/status` → `summary.model`, và UI ưu tiên giá trị đó. Trước đây trường này hard-code `'FinBERT'` — sai hẳn, vì FinBERT chưa bao giờ được cài.
+
+**DB rỗng:** `{ "positive": 0, "neutral": 0, "negative": 0, "analyzed": 0, "total": 0, "averageConfidence": 0, "model": "FinBERT", "hours": 168 }`.
+
+#### Provider sentiment — thứ tự xuống cấp
+
+`workers/news/src/core/sentiment/factory.py` chọn theo `SENTIMENT_PROVIDER`, mặc định `finbert`:
+
+| Provider | Điều kiện | Ghi chú |
+|---|---|---|
+| `FinBERT` | cần extra `[sentiment]` (torch + transformers) **và** file model trong `workers/news/models/finbert/` | Chính xác nhất, ~440MB weights |
+| `lexicon-v1` | không cần gì | Từ điển tài chính/crypto có xử lý phủ định + từ nhấn mạnh. Chính xác thấp hơn nhưng **luôn chạy được** |
+| `none` | chỉ khi `SENTIMENT_PROVIDER=none/noop/disabled` | Không chấm gì, mọi bài `sentiment = NULL` |
+
+> **Lỗi đã sửa.** Thứ tự cũ là FinBERT → **no-op**. Vì `models/finbert/` chưa bao giờ được tạo và torch nằm trong extra không được cài, nhánh no-op **luôn luôn** được chọn: toàn bộ 39 bài trong DB có `sentiment = NULL`, panel Sentiment rỗng vĩnh viễn, **và** strategy `NEWS_SENTIMENT` (domain INFORMATION) abstain trên mọi candidate của mọi backtest — không có gì trên màn hình nói ra điều đó. No-op giờ chỉ còn đạt được khi **chủ động yêu cầu**: cố tình tắt sentiment thì ổn, vô tình tắt mới là vấn đề.
 
 **Lỗi:** `400` nếu `hours` không hợp lệ; `401` nếu thiếu/sai token.
 
@@ -834,7 +882,7 @@ Dùng định dạng lỗi mặc định của NestJS:
 
 1. `market-data` chưa có auth guard.
 2. WebSocket `/market` đã push nến realtime (xem mục 3). Push **leaderboard/experiment progress** thì chưa làm; frontend vẫn phải poll `GET /experiments/:id`.
-3. **[Đã sửa — final-review finding #1]** Trước bản sửa cuối, `maxDurationSeconds`/`maxNoImprovement`/`topK`/`minimumTrades` chỉ nằm trong `configCache` (bộ nhớ trong tiến trình) do `start()` set, còn `run()` thực thi ở tiến trình **worker** riêng — worker không bao giờ gọi `start()` nên `configCache` của nó luôn rỗng, và **mọi search** (không chỉ trường hợp worker restart) đều âm thầm chạy với `DEFAULT_SEARCH_CONFIG` cho 4 tham số này. Hệ quả nghiêm trọng hơn: `getTop()` (chạy ở API, đọc `configCache` thật) và `leaderboard_entries` (worker ghi bằng default) trả về hai câu trả lời khác nhau cho cùng một experiment.
+3. **[Đã sửa — final-review finding #1]** Trước bản sửa cuối, `maxDurationSeconds`/`maxNoImprovement`/`topK` (và `minimumTrades`, trường đã bị gỡ sau này) chỉ nằm trong `configCache` (bộ nhớ trong tiến trình) do `start()` set, còn `run()` thực thi ở tiến trình **worker** riêng — worker không bao giờ gọi `start()` nên `configCache` của nó luôn rỗng, và **mọi search** (không chỉ trường hợp worker restart) đều âm thầm chạy với `DEFAULT_SEARCH_CONFIG` cho 4 tham số này. Hệ quả nghiêm trọng hơn: `getTop()` (chạy ở API, đọc `configCache` thật) và `leaderboard_entries` (worker ghi bằng default) trả về hai câu trả lời khác nhau cho cùng một experiment.
    Đã sửa bằng cách lưu 4 giá trị này vào cột mới `experiments.search_config` (JSONB, thêm bằng migration additive `004_experiment_search_config.sql` — `ALTER TABLE ... ADD COLUMN ... DEFAULT`, không đổi/xoá gì hiện có). Lưu ý: migration `002_domain_guided_search.sql` từng thêm một cột cùng tên, nhưng `003_candidate_auth_schema.sql` `DROP TABLE experiments CASCADE` rồi tạo lại **không có** cột đó — nên trên DB thật (đã chạy 003), cột của 002 không còn tồn tại; `004` mới là cột đang thực sự được dùng. Giá trị được ghi ngay lúc `start()` tạo experiment. `loadConfig()` giờ luôn đọc lại từ DB (`experiments.search_config` + `experiment_configs.iteration_limit` + `experiment_config_strategies`) thay vì tin tưởng `configCache`, nên API và worker — dù ở tiến trình nào, dù trước/sau restart — luôn thấy cùng một giá trị. `configCache` vẫn giữ lại như một optimization thuần tuý (tránh query lại trong cùng tiến trình), không còn là nơi duy nhất giữ sự thật. Xem `StrategySearchService.loadConfig`/`persistableSearchConfig`/`sanitizeSearchConfig`.
 4. Chưa có validation pipe khai báo (dùng `class-validator`); hiện việc kiểm tra dữ liệu vào làm thủ công trong service (endpoint mới `news`/`sentiment` dùng `zod`, giống `auth`, thay vì `class-validator`).
 5. `SentimentModule` phụ thuộc `NewsRepository` (export từ `NewsModule`) thay vì có repository sentiment riêng — hợp lý vì cả hai đọc cùng bảng `news`, nhưng nghĩa là ranh giới module "Sentiment" hiện chỉ là ranh giới đọc/tổng hợp, không có bảng riêng của nó.

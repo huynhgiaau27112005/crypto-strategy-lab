@@ -163,7 +163,6 @@ export interface SearchConfig {
   maxDurationSeconds: number;
   maxNoImprovement: number;
   topK: number;
-  minimumTrades: number;
   parameterSpaceVersion: 1;
 }
 
@@ -185,15 +184,44 @@ export interface StartSearchRequest {
   maxDurationSeconds?: number;
   maxNoImprovement?: number;
   topK?: number;
-  minimumTrades?: number;
   randomSeed?: number;
   enabledDomains?: StrategyDomain[];
   strategyWeights?: StrategyWeight[];
 }
 
-export interface SearchAlgorithm {
-  generate(random: () => number, config: SearchConfig): CandidateDefinition;
+/**
+ * How candidate strategy combinations are proposed.
+ *
+ * `docs/about-projects/05-required-flows.md` §7: "Search algorithms must
+ * remain replaceable without changing downstream backtesting." Random
+ * Search is the stated minimum; Domain-Guided Random is what this project
+ * ships. Swapping in a genetic/bayesian search means writing one class
+ * against this interface and rebinding SEARCH_ALGORITHM in
+ * StrategySearchModule — nothing in backtesting, evaluation, ranking, or
+ * the search loop itself changes.
+ *
+ * `runCatalog` is optional so an implementation that samples purely from
+ * the built-in catalog can ignore it; StrategySearchService passes the
+ * per-run catalog (built-ins plus this run's enabled AI strategies) when
+ * it has one.
+ */
+export interface SearchAlgorithm<TRunCatalog = unknown> {
+  generate(
+    random: () => number,
+    config: SearchConfig,
+    runCatalog?: TRunCatalog,
+  ): CandidateDefinition;
 }
+
+/**
+ * Nest DI token for the bound {@link SearchAlgorithm}.
+ *
+ * The interface existed before this token did, but StrategySearchService
+ * injected the concrete DomainGuidedRandomGenerator — so "replaceable"
+ * was true on paper and false in the wiring. Injecting the token is what
+ * makes the module binding the only place that names an algorithm.
+ */
+export const SEARCH_ALGORITHM = 'SEARCH_ALGORITHM';
 
 export const DEFAULT_SEARCH_CONFIG: SearchConfig = {
   costs: DEFAULT_BACKTEST_COSTS,
@@ -204,7 +232,6 @@ export const DEFAULT_SEARCH_CONFIG: SearchConfig = {
   maxDurationSeconds: 3600,
   maxNoImprovement: 50,
   topK: 10,
-  minimumTrades: 20,
   parameterSpaceVersion: 1,
 };
 

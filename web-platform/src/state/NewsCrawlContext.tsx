@@ -40,6 +40,17 @@ export interface NewsCrawlContextValue {
   error: string | null
   /** Crawl restarts automatically after each successful batch until the user stops it. */
   autoCrawlEnabled: boolean
+  /**
+   * Whether the crawl LOOP is active — which is what the Stop button has
+   * to key off, not `state === 'polling'`.
+   *
+   * Between two automatic batches the poll state is 'terminal' for
+   * AUTO_CRAWL_GAP_MS while a restart timer is pending. Keying the button
+   * on 'polling' made it flip back to "Bật crawl tự động" during that
+   * window, so a user trying to stop the crawler either found no Stop
+   * button or, worse, clicked what had silently become the Start button.
+   */
+  crawlActive: boolean
   /** POST /news/crawl, then starts the poll of /news/crawl/status. */
   triggerCrawl: () => Promise<void>
   /** POST /news/crawl/cancel — see NewsCrawlQueueService.cancel(). */
@@ -50,7 +61,7 @@ export interface NewsCrawlContextValue {
 const NewsCrawlContext = createContext<NewsCrawlContextValue | undefined>(undefined)
 
 function isRunning(status: NewsCrawlJobDto['status']): boolean {
-  return status !== 'COMPLETED' && status !== 'FAILED'
+  return status === 'RUNNING'
 }
 
 /**
@@ -72,14 +83,39 @@ function isRunning(status: NewsCrawlJobDto['status']): boolean {
 const AUTO_CRAWL_GAP_MS = 3000
 
 export function NewsCrawlProvider({ children }: { children: ReactNode }) {
-  const [stopping, setStopping] = useState(false)
+  /**
+   * True from the moment the user presses Dừng until the job actually
+   * reaches a terminal state — NOT just until the cancel request returns.
+   *
+   * The POST resolves in milliseconds while the worker takes a second or
+   * two to exit, so clearing this on the response put an enabled "Dừng
+   * Crawl" back under the user's cursor mid-stop; a reflex second click
+   * then hit a server with no in-flight job left and did nothing, which
+   * reads exactly like a broken button.
+   */
+  const [stopRequested, setStopRequested] = useState(false)
   const [autoCrawlEnabled, setAutoCrawlEnabled] = useState(true)
   const [job, setJob] = useState<NewsCrawlJobDto | null>(null)
   const [state, setState] = useState<NewsCrawlPollState>('idle')
   const [error, setError] = useState<string | null>(null)
 
   const unmountedRef = useRef(false)
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /**
+   * Two timers, deliberately kept apart.
+   *
+   * They used to share ONE ref, and that was the bug behind "the first
+   * stop works, later ones do nothing": `stopCrawl` clears the pending
+   * restart so a stop pressed between batches cannot be undone a second
+   * later — but with a shared ref that same `clearTimeout` also killed the
+   * POLL, which is in its 2-second wait almost all of the time. The poll
+   * loop died, `state` stayed 'polling' forever, so the button kept
+   * reading "Dừng Crawl" even though the job had already ended — and every
+   * later click found no in-flight job on the server and silently did
+   * nothing. Confirmed against Redis: each cancel really did terminate its
+   * worker in a few seconds while the UI still claimed a crawl was running.
+   */
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const controllerRef = useRef<AbortController | null>(null)
   const pollingRef = useRef(false)
   const autoCrawlRef = useRef(true)
@@ -100,12 +136,15 @@ export function NewsCrawlProvider({ children }: { children: ReactNode }) {
         if (!isRunning(status.status)) {
           pollingRef.current = false
           setState('terminal')
+          // The job has ended, whatever the reason — any stop in progress
+          // is now finished.
+          setStopRequested(false)
           if (
             autoCrawlRef.current &&
             status.status === 'COMPLETED' &&
             !unmountedRef.current
           ) {
-            timerRef.current = setTimeout(() => {
+            restartTimerRef.current = setTimeout(() => {
               if (autoCrawlRef.current && !unmountedRef.current) {
                 void triggerCrawlRef.current()
               }
@@ -113,20 +152,31 @@ export function NewsCrawlProvider({ children }: { children: ReactNode }) {
           }
           return
         }
-        timerRef.current = setTimeout(() => poll(0), POLL_INTERVAL_MS)
+        pollTimerRef.current = setTimeout(() => poll(0), POLL_INTERVAL_MS)
       })
       .catch((err: unknown) => {
         if (unmountedRef.current || controller.signal.aborted) return
         const nextFailures = failures + 1
         if (nextFailures >= MAX_CONSECUTIVE_FAILURES) {
           pollingRef.current = false
+          // Turn the loop off as well as reporting the error. `crawlActive`
+          // drives the Stop/Start button, so leaving auto-crawl on here
+          // would show "Dừng Crawl" over a loop that has already given up
+          // — and give the user no way to retry.
+          autoCrawlRef.current = false
+          setAutoCrawlEnabled(false)
+          // The poll is what clears a pending stop, so it has to clear it
+          // on the way out too — otherwise a stop pressed just before the
+          // API became unreachable leaves the button disabled on "Đang
+          // dừng…" with nothing left to ever release it.
+          setStopRequested(false)
           setError(err instanceof Error ? err.message : 'Không lấy được trạng thái crawl.')
           setState('error')
           return
         }
         // A single failed status request is not proof the crawl stopped —
         // retry before telling the user anything.
-        timerRef.current = setTimeout(() => poll(nextFailures), POLL_INTERVAL_MS)
+        pollTimerRef.current = setTimeout(() => poll(nextFailures), POLL_INTERVAL_MS)
       })
   }, [])
 
@@ -148,9 +198,22 @@ export function NewsCrawlProvider({ children }: { children: ReactNode }) {
         if (isRunning(status.status)) {
           setState('polling')
           if (!pollingRef.current) poll(0)
-        } else if (autoCrawlRef.current) {
-          void triggerCrawlRef.current()
+          return
         }
+        setState('terminal')
+        // A CANCELLED last run means a human pressed Dừng. Auto-starting
+        // over that is how a deliberate stop kept undoing itself: this
+        // provider mounts with the `/app` route, so every reload (and every
+        // StrictMode double-mount in dev) started a brand-new crawl
+        // seconds after the user had stopped one. The server's own job
+        // history is the right place to read that intent from — it also
+        // holds across tabs and browsers, which client state would not.
+        if (status.status === 'CANCELLED') {
+          autoCrawlRef.current = false
+          setAutoCrawlEnabled(false)
+          return
+        }
+        if (autoCrawlRef.current) void triggerCrawlRef.current()
       })
       .catch(() => {
         // No crawl has ever run, or the API is not reachable yet — either
@@ -162,14 +225,17 @@ export function NewsCrawlProvider({ children }: { children: ReactNode }) {
       unmountedRef.current = true
       controller.abort()
       controllerRef.current?.abort()
-      if (timerRef.current) clearTimeout(timerRef.current)
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current)
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current)
     }
   }, [poll])
 
   const triggerCrawl = useCallback(async (): Promise<void> => {
-    if (timerRef.current) clearTimeout(timerRef.current)
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current)
+    if (restartTimerRef.current) clearTimeout(restartTimerRef.current)
     autoCrawlRef.current = true
     setAutoCrawlEnabled(true)
+    setStopRequested(false)
     setError(null)
     setState('polling')
 
@@ -181,7 +247,7 @@ export function NewsCrawlProvider({ children }: { children: ReactNode }) {
       if (!isRunning(started.status)) {
         setState('terminal')
         if (autoCrawlRef.current && started.status === 'COMPLETED') {
-          timerRef.current = setTimeout(() => {
+          restartTimerRef.current = setTimeout(() => {
             if (autoCrawlRef.current && !unmountedRef.current) {
               void triggerCrawlRef.current()
             }
@@ -192,6 +258,10 @@ export function NewsCrawlProvider({ children }: { children: ReactNode }) {
       poll(0)
     } catch (err) {
       if (unmountedRef.current) return
+      // Same reason as the poll's failure path: a loop that could not even
+      // start must not keep presenting itself as running.
+      autoCrawlRef.current = false
+      setAutoCrawlEnabled(false)
       setError(err instanceof Error ? err.message : 'Không kích hoạt được crawl.')
       setState('error')
     }
@@ -200,27 +270,53 @@ export function NewsCrawlProvider({ children }: { children: ReactNode }) {
   triggerCrawlRef.current = triggerCrawl
 
   const stopCrawl = useCallback(async (): Promise<void> => {
-    setStopping(true)
+    setStopRequested(true)
     autoCrawlRef.current = false
     setAutoCrawlEnabled(false)
-    if (timerRef.current) clearTimeout(timerRef.current)
+    // Cancels a PENDING auto-restart only. Without this, a stop pressed
+    // during the gap between batches raced the restart timer and the crawl
+    // came back to life a second later.
+    //
+    // The POLL is deliberately left running: it is what observes the job
+    // reaching CANCELLED and flips the button back to "Bật crawl tự
+    // động". Clearing it here (which the shared-ref version did) stranded
+    // the UI in 'polling' forever — see pollTimerRef's comment.
+    if (restartTimerRef.current) clearTimeout(restartTimerRef.current)
+    // If the stop lands in the gap BETWEEN batches, no poll is in flight
+    // (the previous batch already reached a terminal state). Kick one so
+    // there is still something watching for the cancel to take effect.
+    if (!pollingRef.current) poll(0)
     try {
       await apiFetch('/news/crawl/cancel', { method: 'POST' })
-      // Deliberately does NOT flip `state` to terminal here: an already-
-      // running worker finishes its current batch first, so the poller
+      // Deliberately does NOT flip `state` to terminal here: the worker
+      // process is SIGTERMed but takes a moment to exit, so the poller
       // stays the single source of truth for when the crawl has actually
-      // stopped. Claiming it stopped instantly would be a lie the UI
+      // stopped (GET /news/crawl/status reports `stopping: true` in the
+      // meantime). Claiming it stopped instantly would be a lie the UI
       // would then have to walk back.
+      // The poll clears `stopRequested` once the job reports a terminal
+      // status; it is not cleared here, because the crawl is not stopped
+      // when the request returns — only when the worker exits.
     } catch (err) {
+      // The cancel never landed, so nothing is stopping. Release the
+      // button rather than leaving it disabled on a stop that failed.
+      setStopRequested(false)
       setError(err instanceof Error ? err.message : 'Không dừng được crawl.')
-    } finally {
-      setStopping(false)
     }
-  }, [])
+  }, [poll])
 
   const value = useMemo<NewsCrawlContextValue>(
-    () => ({ job, state, error, autoCrawlEnabled, triggerCrawl, stopCrawl, stopping }),
-    [job, state, error, autoCrawlEnabled, triggerCrawl, stopCrawl, stopping],
+    () => ({
+      job,
+      state,
+      error,
+      autoCrawlEnabled,
+      crawlActive: autoCrawlEnabled || state === 'polling' || stopRequested,
+      triggerCrawl,
+      stopCrawl,
+      stopping: stopRequested || Boolean(job?.stopping),
+    }),
+    [job, state, error, autoCrawlEnabled, triggerCrawl, stopCrawl, stopRequested],
   )
 
   return <NewsCrawlContext.Provider value={value}>{children}</NewsCrawlContext.Provider>

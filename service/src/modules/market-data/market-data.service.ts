@@ -1,5 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { BinanceClient, BinanceKline } from './clients/binance.client';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Kline, MARKET_DATA_PROVIDER } from './providers/market-data-provider';
+// `import type` is required by isolatedModules + emitDecoratorMetadata:
+// an interface named in a decorated constructor signature has no runtime
+// value to emit.
+import type { MarketDataProvider } from './providers/market-data-provider';
 import { CandleRepository } from './repositories/candle.repository';
 import {
     assertAllowedInterval,
@@ -52,7 +56,11 @@ export class MarketDataService {
     private readonly logger = new Logger(MarketDataService.name);
 
     constructor(
-        private readonly binanceClient: BinanceClient,
+        // Injected by token: this service backfills and serves candles from
+        // whichever provider MarketDataCoreModule bound, and never names an
+        // exchange.
+        @Inject(MARKET_DATA_PROVIDER)
+        private readonly marketData: MarketDataProvider,
         private readonly candleRepository: CandleRepository,
         private readonly cache: CacheService,
     ) { }
@@ -92,7 +100,7 @@ export class MarketDataService {
         const cached = await this.cache.get<MarketCandle[]>(cacheKey);
         if (cached) return cached;
 
-        const rows = await this.binanceClient.getKlines(
+        const rows = await this.marketData.getKlines(
             symbol,
             interval,
             boundedLimit,
@@ -112,7 +120,7 @@ export class MarketDataService {
     ): Promise<CandleImportResult> {
         assertAllowedInterval(interval);
         const boundedLimit = assertValidLimit(limit);
-        const rows = await this.binanceClient.getKlines(
+        const rows = await this.marketData.getKlines(
             symbol,
             interval,
             boundedLimit,
@@ -120,7 +128,7 @@ export class MarketDataService {
         // Same rule as MarketDataGateway (WebSocket) and seed-candles.ts
         // (backfill script): never persist the still-forming candle. All
         // three write paths into `candles` share this one derived flag
-        // (BinanceKline#isClosed, computed once in binance.client.ts)
+        // (Kline#isClosed, computed once in binance.client.ts)
         // instead of each re-deriving "is this candle done" independently.
         const candles = this.onlyClosed(rows).map((row) => this.toCandle(interval, row));
 
@@ -171,7 +179,7 @@ export class MarketDataService {
         const step = intervalMs(interval) ?? 60_000;
         for (let page = 0; page < MAX_BACKFILL_PAGES; page += 1) {
             if (cursor >= endTime.getTime()) break;
-            const rows = await this.binanceClient.getKlines(
+            const rows = await this.marketData.getKlines(
                 symbol,
                 interval,
                 MAX_CANDLE_LIMIT,
@@ -213,13 +221,13 @@ export class MarketDataService {
         return { interval, before, after, fetched };
     }
 
-    private onlyClosed(rows: BinanceKline[]): BinanceKline[] {
+    private onlyClosed(rows: Kline[]): Kline[] {
         return rows.filter((row) => row.isClosed);
     }
 
     private toCandle(
         interval: string,
-        row: Awaited<ReturnType<BinanceClient['getKlines']>>[number],
+        row: Kline,
     ): MarketCandle {
         return {
             timeframe: interval,

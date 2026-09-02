@@ -4,25 +4,15 @@ import {
     Logger,
 } from '@nestjs/common';
 import { MetricsService } from '../../../observability/metrics/metrics.service';
-
-export interface BinanceKline {
-    openTime: number;
-    open: string;
-    high: string;
-    low: string;
-    close: string;
-    volume: string;
-    closeTime: number;
-    /**
-     * True once this candle's close time has passed. This is the REST-side
-     * equivalent of the `isClosed` flag on {@link KlineUpdate}: the
-     * WebSocket stream gets it directly from Binance's `k.x` field, while
-     * the REST klines endpoint doesn't expose that flag, so it's derived
-     * from `closeTime` here — once, in this file — instead of every caller
-     * re-deriving (or forgetting to derive) it independently.
-     */
-    isClosed: boolean;
-}
+import {
+    Kline,
+    KlineStreamCallbacks,
+    KlineStreamHandle,
+    KlineUpdate,
+    MarketDataProvider,
+    TradeStreamCallbacks,
+    TradeUpdate,
+} from '../providers/market-data-provider';
 
 /**
  * Pure "is this candle closed yet" check shared by every REST kline row.
@@ -36,64 +26,27 @@ export function isKlineClosed(
 }
 
 /**
- * Normalized shape of a single kline (candle) update pushed by Binance's
- * WebSocket stream. Already stripped of Binance's raw field names (`t`,
- * `o`, `h`, `l`, `c`, `v`, `x`, ...) — callers outside this file never see
- * the Binance wire format.
+ * Kept as an alias of the provider-neutral {@link Kline} so existing
+ * imports keep compiling. New code should use `Kline`: nothing outside
+ * this file deals in a Binance-specific candle shape any more.
  */
-export interface KlineUpdate {
-    timestamp: number;
-    open: string;
-    high: string;
-    low: string;
-    close: string;
-    volume: string;
-    /** True only when this update represents the candle's final, closed state. */
-    isClosed: boolean;
-}
-
-/**
- * One executed aggregate trade (`<symbol>@aggTrade`), normalized the same
- * way {@link KlineUpdate} is. This is the real per-tick feed: a candle
- * stream only ever reports the state of the bar being built, so a
- * "Recent ticks" table fed from klines can never show more than one row
- * per interval — which is exactly the staleness this stream removes.
- */
-export interface TradeUpdate {
-    tradeId: number;
-    timestamp: number;
-    price: string;
-    quantity: string;
-    /**
-     * True when the BUYER was the market maker, i.e. the aggressor was a
-     * seller. Reported as Binance reports it; naming it here keeps the
-     * wire field (`m`) out of every caller.
-     */
-    buyerIsMaker: boolean;
-}
-
-export interface TradeStreamCallbacks {
-    onTrade: (trade: TradeUpdate) => void;
-    onConnectionChange?: (connected: boolean) => void;
-}
-
-export interface KlineStreamCallbacks {
-    onUpdate: (update: KlineUpdate) => void;
-    /** Fired whenever the upstream WebSocket transitions between open and closed. */
-    onConnectionChange?: (connected: boolean) => void;
-}
-
-export interface KlineStreamHandle {
-    /** Stops the stream permanently — no further reconnect attempts happen after this. */
-    stop: () => void;
-    getLastMessageAt: () => Date | null;
-}
+export type BinanceKline = Kline;
 
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
+/**
+ * Binance implementation of {@link MarketDataProvider}.
+ *
+ * Every Binance-specific detail lives in this file and nowhere else: the
+ * REST base URL, the WebSocket stream URL shape, the raw `k.t/o/h/l/c/v/x`
+ * field names, and the `[openTime, open, high, ...]` positional kline row.
+ * Consumers inject the MARKET_DATA_PROVIDER token, never this class.
+ */
 @Injectable()
-export class BinanceClient {
+export class BinanceClient implements MarketDataProvider {
+    readonly name = 'binance';
+
     private readonly logger = new Logger(BinanceClient.name);
 
     private readonly baseUrl =
@@ -374,3 +327,15 @@ export class BinanceClient {
         }
     }
 }
+
+// Re-exported so the handful of existing imports that reach for these
+// through this file keep working. The contract itself lives in
+// ../providers/market-data-provider.ts — import it from there in new code.
+export type {
+    Kline,
+    KlineStreamCallbacks,
+    KlineStreamHandle,
+    KlineUpdate,
+    TradeStreamCallbacks,
+    TradeUpdate,
+};

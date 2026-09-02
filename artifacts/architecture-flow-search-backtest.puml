@@ -97,7 +97,7 @@ loop mỗi iteration, tới khi đủ số lượng / hết thời gian / bị h
 
   S -> DB : UPDATE experiment_iterations → COMPLETED
 
-  S -> EV : **await** emitAsync("backtest.completed")\n{ experimentId, candidateId, iterationId,\n  topK, minimumTrades, correlationId }
+  S -> EV : **await** emitAsync("backtest.completed")\n{ experimentId, candidateId, iterationId,\n  topK, correlationId }
   activate EV
   note right of S
     Search **không** giữ tham chiếu tới
@@ -106,7 +106,7 @@ loop mỗi iteration, tới khi đủ số lượng / hết thời gian / bị h
   end note
   EV -> LBH : onIterationBoundary(payload)
   activate LBH
-  LBH -> LB : rebuildForExperiment(id, topK, minimumTrades)
+  LBH -> LB : rebuildForExperiment(id, topK)
   activate LB
   LB -> DB : xếp hạng lại **toàn bộ** candidate\n→ leaderboards + leaderboard_entries
   LB -> LB : INCR leaderboard:version:<id>\n(vô hiệu hoá cache xuyên tiến trình)

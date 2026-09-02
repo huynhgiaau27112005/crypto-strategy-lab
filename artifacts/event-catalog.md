@@ -27,7 +27,7 @@ Hệ thống có **hai** cơ chế event khác hẳn nhau về ranh giới và b
 | **Owner** | `StrategySearchService.run()` (chạy trong Worker) |
 | **Khi emit** | Sau khi `backtestRuns.complete()` + `iterations.complete()` thành công, **ngoài** try/catch của backtest |
 | **Consumers** | `LeaderboardEventsHandler.onIterationBoundary()` |
-| **Payload** | `experimentId`, `candidateId`, `iterationId`, `topK`, `minimumTrades`, `correlationId?` |
+| **Payload** | `experimentId`, `candidateId`, `iterationId`, `topK`, `correlationId?` |
 | **Schema version** | v1 (`BacktestCompletedPayload`) |
 | **Ordering** | Tuần tự nghiêm ngặt theo iteration — emit bằng `await emitAsync`, không phải `emit`. Xem mục 4. |
 | **Duplicate** | Có thể lặp khi BullMQ retry cả job search. Vô hại: rebuild là **idempotent** (DELETE + INSERT lại toàn bộ `leaderboard_entries` trong 1 transaction) |
@@ -41,7 +41,7 @@ Hệ thống có **hai** cơ chế event khác hẳn nhau về ranh giới và b
 | **Owner** | `StrategySearchService.run()` (nhánh catch) |
 | **Khi emit** | Sau `iterations.fail()` / `backtestRuns.fail()` |
 | **Consumers** | `LeaderboardEventsHandler.onIterationBoundary()` — **cùng handler với event thành công** |
-| **Payload** | `experimentId`, `candidateId?`, `iterationId`, `reason`, `topK`, `minimumTrades`, `correlationId?` |
+| **Payload** | `experimentId`, `candidateId?`, `iterationId`, `reason`, `topK`, `correlationId?` |
 | **Schema version** | v1 (`BacktestFailedPayload`) |
 | **Ordering** | Như trên |
 | **Duplicate** | Như trên |
@@ -63,7 +63,7 @@ Vì vậy `backtest.failed` mang ngữ nghĩa **"một iteration đã kết thú
 | **Owner** | `StrategySearchService.regenerateForStrategyVersion()` (chạy trong tiến trình **API**, không phải worker) |
 | **Khi emit** | **Một lần duy nhất**, sau vòng lặp cascade, chỉ khi `created.length > 0` |
 | **Consumers** | `LeaderboardEventsHandler.onCandidatesRegenerated()` |
-| **Payload** | `experimentId`, `candidateIds[]`, `topK`, `minimumTrades`, `correlationId?` |
+| **Payload** | `experimentId`, `candidateIds[]`, `topK`, `correlationId?` |
 | **Schema version** | v1 (`CandidatesRegeneratedPayload`) |
 | **Ordering** | Không liên quan — mỗi request 1 event |
 | **Duplicate** | Không có retry (đường HTTP đồng bộ) |
@@ -110,7 +110,7 @@ Ba mục dưới đây **không** đi qua `@nestjs/event-emitter`. Ghi ở đây
    `emit()` không await listener bất đồng bộ. Nếu dùng `emit`, vòng lặp search chạy tiếp trong khi rebuild còn dang dở → `experiments.finish('COMPLETED')` có thể xảy ra **trước** lần rebuild cuối, làm Leaderboard thiếu candidate cuối cùng. Lời gọi trực tiếp trước đây được `await`, nên emit cũng phải `await`.
    *Ngoại lệ duy nhất:* `leaderboard.updated` (mục 2.4) — cố ý fire-and-forget, có `.catch()`.
 
-2. **Payload tự mang đủ ngữ cảnh.** `topK`/`minimumTrades` đi kèm payload thay vì để handler query lại `ExperimentRepository` — nếu không sẽ thêm 1 round-trip DB mỗi iteration mà lời gọi trực tiếp cũ không hề có.
+2. **Payload tự mang đủ ngữ cảnh.** `topK` đi kèm payload thay vì để handler query lại `ExperimentRepository` — nếu không sẽ thêm 1 round-trip DB mỗi iteration mà lời gọi trực tiếp cũ không hề có.
 
 3. **`correlationId` lấy từ `getCorrelationId()` tại điểm emit**, để log của listener nối được với HTTP request đã khởi động search (dù cách đó 1 process boundary + 1 hop Redis).
 

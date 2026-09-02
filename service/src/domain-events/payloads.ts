@@ -7,11 +7,11 @@
  * 1. `correlationId` is optional and read from getCorrelationId() at the
  *    emit site, so a listener's log lines join up with the HTTP request
  *    that (several process boundaries away) started the search.
- * 2. Payloads carry `topK`/`minimumTrades` rather than making the listener
- *    look them up. Those values live in the experiment's SearchConfig,
- *    which the emitting code already holds in memory; re-reading them in
- *    the handler would add a database round-trip per iteration that the
- *    direct call this refactor replaced never made.
+ * 2. Payloads carry `topK` rather than making the listener look it up.
+ *    That value lives in the experiment's SearchConfig, which the emitting
+ *    code already holds in memory; re-reading it in the handler would add
+ *    a database round-trip per iteration that the direct call this
+ *    refactor replaced never made.
  */
 
 /** Fields shared by every leaderboard-triggering event. */
@@ -19,8 +19,6 @@ interface LeaderboardRebuildContext {
   experimentId: string;
   /** From the experiment's SearchConfig — the persisted leaderboard size. */
   topK: number;
-  /** From the experiment's SearchConfig — evaluation filter for ranking. */
-  minimumTrades: number;
   correlationId?: string;
 }
 

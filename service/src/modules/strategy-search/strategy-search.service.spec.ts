@@ -2,6 +2,9 @@ import { BadRequestException } from '@nestjs/common';
 import { CandleEntity, ExperimentEntity } from '../../database/types';
 import { CandidateDefinition, StartSearchRequest } from './domain/search.types';
 import { StrategySearchService } from './strategy-search.service';
+import { StrategySearchModule } from './strategy-search.module';
+import { SEARCH_ALGORITHM } from './domain/search.types';
+import { DomainGuidedRandomGenerator } from './generators/domain-guided-random.generator';
 import { MetricsService } from '../../observability/metrics/metrics.service';
 import { DomainEventNames } from '../../domain-events';
 
@@ -237,7 +240,6 @@ describe('StrategySearchService', () => {
       // The handler rebuilds from these; if they stopped riding along it
       // would have to re-read the experiment on every single iteration.
       expect(typeof payload.topK).toBe('number');
-      expect(typeof payload.minimumTrades).toBe('number');
     });
 
     // Behavior-preservation guard for the whole refactor. run() rebuilt the
@@ -746,14 +748,14 @@ describe('StrategySearchService', () => {
     });
 
     // Regression for the Critical finding: maxDurationSeconds/
-    // maxNoImprovement/topK/minimumTrades used to live only in the
+    // maxNoImprovement/topK used to live only in the
     // in-process configCache populated by start() (API process), so the
     // worker process (which never calls start()) always reconstructed
     // DEFAULT_SEARCH_CONFIG instead of what the caller submitted. They
     // must now be persisted on experiments.search_config so any process
     // reading loadConfig() from a bare DB row (no cache) recovers the
     // real values.
-    it('persists non-default topK/minimumTrades/maxDurationSeconds/maxNoImprovement on the experiment row so a cache-less process can recover them', async () => {
+    it('persists non-default topK/maxDurationSeconds/maxNoImprovement on the experiment row so a cache-less process can recover them', async () => {
       const { service, mocks } = buildService();
       mocks.experiments.create.mockResolvedValue({
         id: 'exp-1',
@@ -777,7 +779,6 @@ describe('StrategySearchService', () => {
         maxDurationSeconds: 60,
         maxNoImprovement: 5,
         topK: 3,
-        minimumTrades: 0,
       };
 
       await service.start('user-1', request);
@@ -790,7 +791,6 @@ describe('StrategySearchService', () => {
           maxDurationSeconds: 60,
           maxNoImprovement: 5,
           topK: 3,
-          minimumTrades: 0,
           // The cost model travels with the rest of the config so a
           // re-run in any process reproduces the same trades.
           costs: {
@@ -805,7 +805,7 @@ describe('StrategySearchService', () => {
 
       // Simulate a *different process* — a fresh service instance with an
       // empty configCache (i.e. the worker, or the API after a restart) —
-      // whose getTop() -> loadConfig() must recover topK/minimumTrades from
+      // whose getTop() -> loadConfig() must recover topK from
       // the DB row alone, not from DEFAULT_SEARCH_CONFIG or the first
       // service's in-memory cache.
       const worker = buildService();
@@ -821,16 +821,16 @@ describe('StrategySearchService', () => {
         started_at: new Date(),
         completed_at: null,
         created_at: new Date(),
-        search_config: { maxDurationSeconds: 60, maxNoImprovement: 5, topK: 3, minimumTrades: 0 },
+        search_config: { maxDurationSeconds: 60, maxNoImprovement: 5, topK: 3 },
       } satisfies ExperimentEntity);
       worker.mocks.experiments.top.mockResolvedValue([]);
       worker.mocks.cache.get.mockResolvedValue(null);
 
       await worker.service.getTop('exp-1', 'user-1', 10);
 
-      // minimumTrades: 0 (not the default 20) proves the reconstruction
-      // read the real persisted value, not DEFAULT_SEARCH_CONFIG.
-      expect(worker.mocks.experiments.top).toHaveBeenCalledWith('exp-1', 'user-1', 100, 0);
+      // topK: 3 (not the default 10) proves the reconstruction read the
+      // real persisted value, not DEFAULT_SEARCH_CONFIG.
+      expect(worker.mocks.experiments.top).toHaveBeenCalledWith('exp-1', 'user-1', 100);
     });
 
     it('rejects a negative strategyWeight', async () => {
@@ -996,7 +996,7 @@ describe('StrategySearchService', () => {
 
       const result = await service.getTop('exp-1', 'user-1', 10);
 
-      expect(mocks.experiments.top).toHaveBeenCalledWith('exp-1', 'user-1', 100, expect.any(Number));
+      expect(mocks.experiments.top).toHaveBeenCalledWith('exp-1', 'user-1', 100);
       expect(mocks.cache.set).toHaveBeenCalledWith(
         expect.stringContaining('strategy-search:top:exp-1:user-1:v0'),
         [{ rank: 1, candidate_id: 'c1' }],
@@ -1051,7 +1051,7 @@ describe('StrategySearchService', () => {
         started_at: new Date(),
         completed_at: new Date(),
         created_at: new Date(),
-        search_config: { maxDurationSeconds: 60, maxNoImprovement: 5, topK: 4, minimumTrades: 0 },
+        search_config: { maxDurationSeconds: 60, maxNoImprovement: 5, topK: 4 },
       } satisfies ExperimentEntity;
       mocks.experiments.findOwned.mockResolvedValue(experiment);
       mocks.experiments.findByIdOrThrow.mockResolvedValue(experiment);
@@ -1068,5 +1068,34 @@ describe('StrategySearchService', () => {
       expect(result).toEqual(fullList.slice(0, 4));
       expect(result).toHaveLength(4);
     });
+  });
+});
+
+// Wiring, not behaviour: the specs above build StrategySearchService with
+// `new`, so they would keep passing even if the module still injected the
+// concrete generator. Required flow #7 ("Search algorithms must remain
+// replaceable without changing downstream backtesting") only holds if the
+// binding is a token.
+describe('StrategySearchModule search-algorithm binding', () => {
+  it('binds SEARCH_ALGORITHM to the shipped generator via useExisting', () => {
+    const providers = Reflect.getMetadata(
+      'providers',
+      StrategySearchModule,
+    ) as Array<{ provide?: unknown; useExisting?: unknown }>;
+    const binding = providers.find((p) => p?.provide === SEARCH_ALGORITHM);
+
+    expect(binding).toBeDefined();
+    // useExisting, not useClass: one generator instance, so a stateful
+    // algorithm cannot end up with two divergent copies.
+    expect(binding?.useExisting).toBe(DomainGuidedRandomGenerator);
+  });
+
+  it('injects the token into StrategySearchService, not the concrete class', () => {
+    const injected = Reflect.getMetadata(
+      'self:paramtypes',
+      StrategySearchService,
+    ) as Array<{ index: number; param: unknown }> | undefined;
+
+    expect(injected?.some((entry) => entry.param === SEARCH_ALGORITHM)).toBe(true);
   });
 });
