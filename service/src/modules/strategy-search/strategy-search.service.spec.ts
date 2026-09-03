@@ -111,6 +111,7 @@ describe('StrategySearchService', () => {
     };
     const fingerprintService = {
       canonicalize: jest.fn((candidate: CandidateDefinition) => candidate),
+      fingerprint: jest.fn(() => 'fp-fixed'),
     };
     const backtesting = {
       run: jest.fn(),
@@ -307,6 +308,75 @@ describe('StrategySearchService', () => {
       await (service as any).run('exp-1');
 
       expect(listenerFinished).toBe(true);
+    });
+  });
+
+  // Migration 005 restored the duplicate-candidate guard the flat-model
+  // code had and the Candidate-schema rewire dropped (artifacts/
+  // architecture.md §5b). The unique index on
+  // (experiment_id, candidate_fingerprint) does the rejecting; these tests
+  // pin what run() does with the rejection, which the index cannot express.
+  describe('run() duplicate-candidate guard', () => {
+    function pendingExperiment(): ExperimentEntity {
+      return {
+        id: 'exp-1',
+        user_id: 'user-1',
+        name: null,
+        status: 'PENDING',
+        started_at: null,
+        completed_at: null,
+        created_at: new Date(),
+      } as ExperimentEntity;
+    }
+
+    it('passes the candidate fingerprint to createNext so the unique index can reject a repeat', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findByIdOrThrow.mockResolvedValue(pendingExperiment());
+      mocks.backtesting.run.mockReturnValue({
+        evaluation: { overallScore: 9, numberOfTrades: 5 },
+      });
+
+      await (service as any).run('exp-1');
+
+      expect(mocks.iterations.createNext).toHaveBeenCalledWith(
+        expect.anything(),
+        'exp-1',
+        'fp-fixed',
+      );
+    });
+
+    // The whole point of rejecting BEFORE the backtest: a redraw must cost
+    // one no-op INSERT, not a full candidate row plus a backtest over the
+    // entire candle series.
+    it('skips the candidate entirely when createNext reports a duplicate', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findByIdOrThrow.mockResolvedValue(pendingExperiment());
+      mocks.iterations.createNext.mockResolvedValue(null);
+
+      await (service as any).run('exp-1');
+
+      expect(mocks.candidates.createForIteration).not.toHaveBeenCalled();
+      expect(mocks.backtesting.run).not.toHaveBeenCalled();
+      // No iteration boundary was reached, so there is nothing to announce
+      // and no leaderboard rebuild to trigger.
+      expect(mocks.events.emitAsync).not.toHaveBeenCalled();
+    });
+
+    // A duplicate must not advance `generated` — the counter the UI renders
+    // as "N/100 candidate" and the loop's own MAX_CANDIDATES condition.
+    // Getting this wrong would make the progress bar count redraws.
+    it('stops with SEARCH_SPACE_EXHAUSTED when the generator only redraws duplicates', async () => {
+      const { service, mocks } = buildService();
+      mocks.experiments.findByIdOrThrow.mockResolvedValue(pendingExperiment());
+      mocks.iterations.createNext.mockResolvedValue(null);
+
+      await (service as any).run('exp-1');
+
+      expect(mocks.experiments.finish).toHaveBeenCalledWith(
+        'exp-1',
+        'COMPLETED',
+        'SEARCH_SPACE_EXHAUSTED',
+      );
     });
   });
 

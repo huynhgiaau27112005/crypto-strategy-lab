@@ -7,12 +7,30 @@ import { ExperimentIterationEntity } from '../../../database/types';
 export class ExperimentIterationRepository {
   constructor(private readonly database: DatabaseService) {}
 
+  /**
+   * Opens the next iteration of an experiment, rejecting a candidate this
+   * experiment has already tried.
+   *
+   * Returns `null` — rather than throwing — when `fingerprint` collides
+   * with an existing iteration of the same experiment (migration 005's
+   * `uk_iterations_experiment_fingerprint`). That is the duplicate-candidate
+   * guard: the caller treats a null as "generated a combination we already
+   * evaluated, draw another one" and must NOT count it toward `generated`.
+   * `ON CONFLICT DO NOTHING` (not a pre-flight SELECT) so the check is one
+   * round trip and has no window for a concurrent insert to slip through.
+   *
+   * A null `fingerprint` disables the guard for that insert, since Postgres
+   * treats NULLs as distinct in a unique index — no caller in the search
+   * loop does this, but it keeps rows written before migration 005 valid.
+   */
   async createNext(
     client: PoolClient,
     experimentId: string,
-  ): Promise<ExperimentIterationEntity> {
+    fingerprint: string | null,
+  ): Promise<ExperimentIterationEntity | null> {
     const result = await client.query<ExperimentIterationEntity>(
-      `INSERT INTO experiment_iterations (experiment_id, iteration_number, status, started_at)
+      `INSERT INTO experiment_iterations
+         (experiment_id, iteration_number, status, started_at, candidate_fingerprint)
        VALUES (
          $1,
          COALESCE(
@@ -20,12 +38,14 @@ export class ExperimentIterationRepository {
            0
          ) + 1,
          'RUNNING',
-         NOW()
+         NOW(),
+         $2
        )
+       ON CONFLICT (experiment_id, candidate_fingerprint) DO NOTHING
        RETURNING *`,
-      [experimentId],
+      [experimentId, fingerprint],
     );
-    return result.rows[0];
+    return result.rows[0] ?? null;
   }
 
   async complete(id: string): Promise<void> {

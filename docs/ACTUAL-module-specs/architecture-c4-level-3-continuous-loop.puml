@@ -1,0 +1,210 @@
+@startuml
+title C4 Level 3 — Continuous Strategy Loop
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam linetype ortho
+skinparam nodesep 28
+skinparam ranksep 50
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 11
+skinparam ArrowColor #444444
+skinparam rectangle {
+  BackgroundColor #FAFAFA
+  BorderColor #999999
+}
+skinparam package {
+  BackgroundColor #FFFFFF
+  BorderColor #666666
+}
+
+actor "Trader / Browser" as USER
+
+package "Frontend — React (web-platform/)" as FE {
+  rectangle "BacktestPage\nConfirmRerunDialog" as FE_BT
+  rectangle "LeaderboardPage" as FE_LB
+  rectangle "useExperiment\npoll GET /experiments/:id mỗi 2s\ntrần 150 lần (~5 phút) → state timeout\ndừng ngay khi status terminal" as FE_POLL
+  rectangle "useTopCandidates\nuseCandidateDetail" as FE_TOP
+  rectangle "api/client.ts — apiFetch" as FE_API
+  FE_BT --> FE_POLL
+  FE_BT --> FE_TOP
+  FE_LB --> FE_TOP
+  FE_POLL --> FE_API
+  FE_TOP --> FE_API
+}
+USER --> FE_BT
+USER --> FE_LB
+
+package "API Process — service/src/main.ts\n(CHỈ nhận lệnh + đọc kết quả — KHÔNG chạy vòng lặp)" as API {
+
+  rectangle "StrategySearchController\n(JwtAuthGuard + @CurrentUser)\nPOST /experiments        → 202\nGET  /experiments/:id    (poll)\nGET  /experiments/:id/top\nPOST /experiments/:id/cancel\nPOST /experiments/:id/extend\nPOST /experiments/:id/regenerate\nGET  /candidates/:id" as C
+
+  rectangle "StrategySearchService — nửa API\nstart()   validate → ghi config bất biến → schedule()\nextend()  reopen + tăng iteration_limit → schedule()\ncancel()  ghi CANCELLED + gỡ job nếu còn chờ\ngetTop()  đọc cache theo version\n\nstart() KHÔNG gọi run()" as S_API
+
+  rectangle "SearchQueueService\nenqueue(): quét job in-flight theo experimentId\n→ coalesce, không thêm job thứ 2\njobId = {id}-run-{timestamp} — LUÔN mới\nattempts 3 · backoff exponential 10s\ncancelIfQueued(): chỉ gỡ job CHƯA chạy" as Q
+
+  rectangle "ExperimentRepository\nExperimentConfigRepository\nExperimentIterationRepository\nCandidateRepository\nStrategyRepository" as REPO
+
+  C --> S_API
+  S_API --> Q : enqueue / cancelIfQueued
+  S_API --> REPO
+}
+FE_API --> C : /api (vite proxy)
+
+queue "Redis\n\nqueue \"search\"   { experimentId, correlationId }\nleaderboard:version:{experimentId}\nstrategy-search:top:{exp}:{user}:v{n}" as REDIS
+
+Q --> REDIS : queue.add()
+
+package "Worker Process — service/src/worker.ts\n(tiến trình riêng · KHÔNG có HTTP nghiệp vụ)" as WK {
+
+  rectangle "SearchProcessor\n@Processor(\"search\") concurrency 5\nrunWithCorrelationId(job.data.correlationId)" as PROC
+
+  rectangle "StrategySearchService.run(experimentId)\n== CÙNG class với nửa API, không fork logic\nactiveRuns guard · setRunning()\nloadConfig() đọc DB tươi mỗi lần" as S_RUN
+
+  package "VÒNG LẶP — while (generated < maxCandidates)" as LOOP {
+    rectangle "**0. CHUẨN BỊ (một lần cho cả run)**\nnạp chuỗi nến của experiment\nAiStrategySignalPrecomputeService (nếu có AI:<id>)\nsentiment series (nếu có NEWS_SENTIMENT)\nbuildRunCatalog() — loại strategy precompute lỗi" as L0
+
+    rectangle "**1. KIỂM TRA ĐIỀU KIỆN DỪNG**\nisCancelled(experimentId)    → return\nDate.now() >= deadline       → MAX_DURATION\nnoImprovement >= max         → NO_IMPROVEMENT\nattempts >= max(100×N, 1000) → SEARCH_SPACE_EXHAUSTED\nhết vòng while               → MAX_CANDIDATES" as L1
+
+    rectangle "**2. GENERATE**\nDomainGuidedRandomGenerator\n≥1 domain hướng (TREND | STRUCTURE)\n+ ≥1 domain xác nhận (MOMENTUM | VOLATILITY)\nCandidateFingerprintService.canonicalize()\n→ .fingerprint()  (SHA-256)" as L2
+
+    rectangle "**3. PERSIST + CHỐNG TRÙNG**\nINSERT experiment_iterations (... , fingerprint)\nON CONFLICT (experiment_id, fingerprint) DO NOTHING\n→ trả NULL = đã thử tổ hợp này rồi\n   → continue: KHÔNG tăng generated,\n     không backtest, không emit\n+ candidates + candidate_strategies\nmỗi member trỏ một row strategies BẤT BIẾN" as L3
+
+    rectangle "**4. BACKTEST**\nBacktestingService.run(candidate, candles, weights)\nmỗi nến → CompositeStrategyService\n1 transaction: backtest_runs + trades + evaluations" as L4
+
+    rectangle "**5. EVALUATE**\noverallScore > bestScore ?\n   bestScore = score · noImprovement = 0\n   : noImprovement += 1" as L5
+
+    rectangle "**6. RANH GIỚI ITERATION**\nawait emitAsync(backtest.completed)\n          HOẶC (backtest.failed)\nnằm NGOÀI try/catch của backtest\nawait emitAsync — không phải emit()" as L6
+
+    rectangle "**7. NHƯỜNG EVENT LOOP**\nawait setImmediate()" as L7
+
+    L0 -down-> L1
+    L1 -down-> L2 : chưa gặp điều kiện dừng
+    L2 -down-> L3
+    L3 -down-> L4
+    L3 -up-> L1 : trùng → bốc lại (chỉ attempts +1)
+    L4 -down-> L5
+    L5 -down-> L6
+    L6 -down-> L7
+    L7 -up-> L1 : vòng kế tiếp
+  }
+
+  rectangle "experiments.finish(COMPLETED, stopReason)\nghi LÝ DO dừng, để UI giải thích được\nvì sao mới 51/100 đã ngừng" as L_END
+  L1 -right-> L_END : gặp điều kiện dừng
+
+  PROC --> S_RUN : pull job → run(experimentId)
+  S_RUN --> LOOP
+}
+PROC --> REDIS : BullMQ Worker (blocking pull)
+
+package "Các module được vòng lặp gọi" as USED {
+  rectangle "DomainGuidedRandomGenerator\nstrategy-catalog.ts\nCandidateFingerprintService · SeededRandom" as GEN
+  rectangle "BacktestingService\nfee · slippage · SL/TP · evaluation metrics\nBacktestRunRepository (1 transaction)" as BT
+  rectangle "CompositeStrategyService\nBUY=+1  SELL=-1  HOLD=0\nscore = Σ(w×signal) / Σw  thuộc [-1, 1]\nscore > buyThreshold → BUY" as COMP
+  rectangle "StrategyEngineService\nchỉ gọi registry.resolve(type).analyze()\nKHÔNG if theo loại strategy" as ENG
+  rectangle "StrategyRegistry\n→ MaPlugin · RsiPlugin · BollingerPlugin\n   SupportResistancePlugin · NewsSentimentPlugin\n→ AiStrategyPluginAdapter cho AI:<id>" as REG
+  BT --> COMP
+  COMP --> ENG
+  ENG --> REG
+}
+L2 --> GEN
+L4 --> BT
+
+package "Domain Events — sống trong MỘT tiến trình" as EV {
+  rectangle "EventEmitter2\nin-process · KHÔNG bền vững\nKHÔNG xuyên tiến trình" as BUS
+  rectangle "LeaderboardEventsHandler\n@OnEvent backtest.completed\n@OnEvent backtest.failed\n   → onIterationBoundary: NUỐT lỗi, log warn\n@OnEvent candidates.regenerated\n   → lỗi lan ra HTTP 5xx" as LBH
+  rectangle "LeaderboardService.rebuildForExperiment()\n1 transaction: DELETE + INSERT leaderboard_entries\nROW_NUMBER() OVER (ORDER BY overall_score DESC)\nrồi cache.incr(leaderboard:version)" as LBS
+  BUS --> LBH : @OnEvent
+  LBH --> LBS
+}
+L6 --> BUS : await emitAsync
+LBS --> REDIS : INCR leaderboard:version\n→ vô hiệu hoá cache Ở API
+S_API --> REDIS : getTop() đọc key ...:v{n}
+
+database "PostgreSQL + TimescaleDB\n\nexperiments (status, stop_reason)\nexperiment_configs — BẤT BIẾN\nexperiment_config_strategies — trọng số\nexperiment_iterations (candidate_fingerprint)\ncandidates · candidate_strategies\nbacktest_runs · trades · evaluations\nleaderboards · leaderboard_entries\nstrategies · candles" as PG
+
+REPO --> PG
+L3 --> PG
+BT --> PG
+LBS --> PG
+
+note bottom of LOOP
+  **Không có while(true).** Điều kiện dừng nằm TRONG run(),
+  ở bước 1, kiểm tra lại mỗi vòng. Có 5 lý do dừng và cả 5
+  đều được GHI vào experiments.stop_reason.
+
+  Trong code KHÔNG có class nào tên ContinuousLoopModule —
+  "loop" là sự phối hợp của Strategy Search + Backtesting +
+  Composite/Engine/Registry + Leaderboard, nối với nhau bằng
+  MỘT job BullMQ và MỘT domain event cho mỗi iteration.
+end note
+
+note right of L3
+  **Chống trùng candidate (migration 005):**
+  Unique index (experiment_id, candidate_fingerprint) trên
+  experiment_iterations — KHÔNG phải trên candidates,
+  vì unique index không trải qua 2 bảng mà ràng buộc
+  này phải scope theo experiment. Bảng iterations
+  đã có sẵn experiment_id; candidates thì phải
+  denormalize thêm.
+
+  Đây cũng là điểm SỚM NHẤT có thể từ chối:
+  iteration row được tạo TRƯỚC candidate row, nên
+  conflict ở đây không để lại gì phải dọn.
+
+  Trước 005: không có cột này → mọi candidate trùng
+  vẫn bị backtest và vẫn cộng vào generated, khiến
+  attempts tăng cùng nhịp generated và SEARCH_SPACE_
+  EXHAUSTED trở thành code chết.
+end note
+
+note right of L6
+  Vì sao emit nằm NGOÀI try/catch của backtest:
+  listener hỏng (rebuild leaderboard lỗi DB) KHÔNG được phép
+  lật ngược một backtest đã COMPLETED thành FAILED.
+
+  Vì sao await emitAsync chứ không emit():
+  emit() không đợi listener async, vòng lặp sẽ chạy tiếp và
+  experiments.finish(COMPLETED) có thể xong TRƯỚC khi lần
+  rebuild cuối commit, làm Top-K và cache version lệch nhau.
+
+  Vì sao phát event cả khi iteration FAIL: rebuild là ranh giới
+  ITERATION, không phải "có điểm mới". Chỉ nghe event thành công
+  sẽ làm giảm số lần INCR version so với hành vi vốn có.
+end note
+
+note bottom of BUS
+  Event in-process không xuyên tiến trình.
+  run() chạy ở WORKER nên listener phải tồn tại Ở WORKER.
+  Vì vậy WorkerModule import LeaderboardModule TƯỜNG MINH.
+  Bỏ import này: event bắn vào hư vô, leaderboard đứng im,
+  và KHÔNG có test nào đỏ.
+end note
+
+note right of REDIS
+  **Vô hiệu hoá cache xuyên tiến trình:**
+  Worker rebuild xong thì INCR version.
+  API getTop() ghép key ...:v{n+1} → miss → SELECT lại.
+  Không cần message hay event riêng giữa hai tiến trình.
+
+  Redis vừa là queue vừa là cache, nhưng KHÔNG dùng chung
+  ioredis client (timeout / offline queue khác nhau) —
+  chỉ dùng chung config host/port.
+end note
+
+note right of Q
+  **Vì sao không dùng jobId = experimentId để chống chạy trùng:**
+  BullMQ no-op add() với jobId đã tồn tại, KỂ CẢ jobId của job đã
+  complete, nên extend() sẽ im lặng không làm gì. Cách đúng: jobId
+  luôn mới, chống trùng bằng cách quét job in-flight theo experimentId.
+end note
+
+note left of S_API
+  Kill tiến trình API giữa chừng KHÔNG dừng vòng lặp:
+  job nằm ở Redis, Worker vẫn chạy tới COMPLETED.
+
+  cancel() không kill job đang chạy — nó chỉ ghi CANCELLED;
+  vòng lặp tự thấy ở bước 1 của iteration kế tiếp.
+end note
+
+@enduml

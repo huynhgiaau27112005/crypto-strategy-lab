@@ -1,259 +1,228 @@
-# AI-Generated Strategy
+# AI-Generated Strategy — mô tả luồng hoạt động
 
-Tài liệu vấn đáp — **kiến trúc đã build**. Đối chiếu sơ đồ:
+Tài liệu vấn đáp cho **module đã build thật**. Đọc file này cùng sơ đồ
+[`architecture-c4-level-3-ai-strategy.puml`](architecture-c4-level-3-ai-strategy.puml)
+là đủ hiểu module chạy thế nào — mọi tên hộp trong sơ đồ đều là tên class/file có thật trong `service/src/modules/ai-strategy/`, `service/src/modules/strategy-plugin/`, `workers/ai-strategy/`, `web-platform/src/`.
 
-- Level 1: `artifacts/architecture-c4-level-1.png`
-- Level 2: `artifacts/architecture-c4-level-2.png`
-- Level 3: `artifacts/architecture-c4-level-3.png`
+Sơ đồ tổng: `artifacts/architecture-c4-level-3.png`. Chi tiết sâu hơn: `artifacts/ai-strategy.md`, `artifacts/queue.md` §4.1, `artifacts/decisions.md` F20/F17.
 
-Nguồn chi tiết: `artifacts/ai-strategy.md`, `artifacts/queue.md` mục 4.1, `artifacts/decisions.md` F20 / F17, `artifacts/api-contract.md` mục 3c.
-
-Đây là **phần mở rộng** so với MVP (đề bài không bắt buộc LLM search). Đã build và gắn vào cùng vòng Search/Backtest với strategy hệ thống.
-
----
-## 1. Mục đích
-
-Người dùng mô tả chiến lược bằng ngôn ngữ tự nhiên → hệ thống **sinh code Python** → **kiểm duyệt** → **lưu version** → **tham gia tổ hợp / search** giống MA, RSI, BB, Support/Resistance.
-
-Ba ràng buộc đề bài va nhau:
-
-1. Không hard-code một model ML (`import openai` rải rác).
-2. Không thêm `if` theo loại strategy trong Strategy Engine.
-3. Strategy hệ thống: in-process, **mỗi nến**. Code AI: subprocess Python, **cả chuỗi nến**. Lệch chi phí hàng bậc — gọi Python mỗi nến = anti-pattern vòng lặp không kiểm soát.
-
-Module giải cả ba mà **không** biến Engine thành chỗ biết “đây là AI”.
+> Đây là **phần mở rộng ngoài MVP** — đề bài không bắt buộc dùng LLM. Nhưng nó đã được build đầy đủ và cắm vào **cùng** vòng Search/Backtest với MA, RSI, Bollinger, Support/Resistance.
 
 ---
 
-## 2. Level 1 — System Context
+## 1. Module này làm gì
 
-Trên C4 Level 1, Crypto Strategy Lab **gọi LLM API** (OpenAI-compatible) để sinh strategy. Trader không nói chuyện trực tiếp với model.
+Người dùng gõ một câu mô tả chiến lược bằng ngôn ngữ tự nhiên ("mua khi giá vượt trung bình 20 nến và RSI dưới 60"). Hệ thống nhờ LLM **sinh ra một hàm Python**, **kiểm duyệt** hàm đó, cho người dùng **sửa và lưu thành một version**, rồi thả nó vào **đúng cỗ máy backtest** đang chạy cho các strategy hệ thống — cùng trọng số, cùng weighted vote, cùng leaderboard.
+
+Nói ngắn: *biến một câu văn thành một thành viên hợp lệ của tổ hợp chiến lược, mà Strategy Engine không cần biết nó là AI.*
+
+---
+
+## 2. Cách đọc sơ đồ
+
+Sơ đồ chia làm 6 vùng, mỗi vùng là **một ranh giới tiến trình hoặc ranh giới sở hữu** — đó là điều quan trọng nhất phải nhớ:
+
+| Vùng trên sơ đồ | Là gì | Điểm phải nhớ |
+|---|---|---|
+| **Frontend** | `AiStrategyPage` + `AiGenerateContext` | Context nằm ở `/app` nên trạng thái generate **sống qua việc đổi tab và F5** |
+| **API Process** | NestJS `main.ts` | Nhận HTTP. **Không bao giờ tự gọi LLM** |
+| **Worker Process** | NestJS `worker.ts` | Cùng codebase, khác tiến trình. **Chỉ nơi này gọi LLM** |
+| **Python Workers** | `workers/ai-strategy/` | `validate.py`, `run.py`. **Không có HTTP client — không gọi mạng** |
+| **Redis** | queue `ai-generate` | Vừa là hàng đợi, vừa là **nơi giữ bản nháp** (job returnvalue) |
+| **PostgreSQL** | bảng `strategies` | Chỉ chứa strategy **đã được bấm Lưu** |
+
+Ba mũi tên hay bị hiểu sai, nói trước cho gọn:
+
+- `API → Worker` **không tồn tại**. Chúng đi qua Redis: `API → Redis → Worker`.
+- Mũi tên đi tới **LLM API** xuất phát từ **Worker**, không phải API, và tuyệt đối không phải từ Python.
+- Có **hai** mũi tên spawn vào Python vì đó là **hai việc khác nhau** (kiểm duyệt và chạy thật), không phải vẽ trùng.
+
+---
+
+## 3. Luồng 1 — Sinh code từ mô tả (bất đồng bộ)
+
+Đây là luồng dài nhất (10–90 giây) nên nó là luồng duy nhất đi qua hàng đợi.
+
+**Bước 1 — Người dùng bấm "Sinh chiến lược".**
+`AiStrategyPage` không tự gọi API. Nó gọi `useAiStrategy`, hook này ủy quyền cho `AiGenerateContext`. Context mới là chỗ giữ trạng thái job — đặt ở `/app` chứ không ở trang, để người dùng đổi sang tab Backtest rồi quay lại vẫn thấy job đang chạy.
+
+**Bước 2 — API chỉ nhận và bỏ vào hàng đợi.**
 
 ```
-Trader  →  Crypto Strategy Lab  →  LLM API     (sinh source)
-                              →  Binance      (nến để validate / run / backtest)
+POST /ai-strategy/generate   →  202 Accepted
 ```
 
-Python `workers/ai-strategy/` **không** phải external system trên Level 1 — nó nằm trong biên hệ thống (Level 2).
+`AiStrategyController.generate()` **không** gọi `AiStrategyService.generate()`. Nó gọi `AiGenerateQueueService.enqueue(userId, prompt)`:
 
----
+- kiểm tra tài khoản này đã có job đang chạy chưa → nếu có thì trả **409 Conflict** (không xếp thêm, không thay thế);
+- đọc `correlationId` đang active (do `ObservabilityMiddleware` gán khi request tới) và **ghi vào job data**, để log trong Worker vẫn truy ngược được về đúng request HTTP ban đầu;
+- `attempts: 1` — hỏng thì **không** tự retry (retry LLM = đốt token lần hai cho một kết quả không chắc khác đi).
 
-## 3. Level 2 — Container (luồng generate vs validate/run)
+**Bước 3 — Worker nhấc job.**
+`AiGenerateProcessor` (`concurrency 5`, `lockDuration 120s`) mở lại context correlation bằng đúng id trong job, rồi gọi `AiStrategyService.generate(prompt)` — **cùng một class** mà API cũng dùng cho các thao tác khác, không có bản logic thứ hai dành riêng cho Worker.
 
-Hộp liên quan:
+**Bước 4 — Gọi LLM.**
+`AiStrategyService.generate()` gọi provider do `LlmProviderFactory` chọn từ env: `OpenAiCompatibleProvider` khi có `OPENAI_API_KEY`, `FakeProvider` khi không (test, hoặc chạy offline).
+Prompt gửi đi không phải câu của người dùng nguyên bản — `contract-prompt.ts` bọc nó lại và **ép contract**: model bắt buộc phải trả về một hàm
 
-| Container | Vai trò với AI strategy |
+```python
+def generate_signals(candles) -> list[str]:   # mỗi phần tử là "BUY" | "SELL" | "HOLD"
+```
+
+Contract nhận **cả chuỗi nến**, không phải một nến — lý do ở §7.
+
+**Bước 5 — Kiểm duyệt ngay, không đợi người dùng bấm.**
+Vẫn trong cùng job đó, `AiStrategyValidatorService` spawn `validate.py` qua `python-process.util` (timeout + SIGKILL + giới hạn output). `validate.py` chạy 4 check và trả nguyên văn lên UI:
+
+| Check | Nội dung |
 |---|---|
-| Web Application | Tab AI Strategy; poll trạng thái generate |
-| API Application | Enqueue generate; HTTP đồng bộ validate / save / run |
-| Redis (BullMQ) | Queue `ai-generate`; returnvalue kết quả job |
-| Background Worker | Gọi LLM + spawn validate sau generate |
-| AI Strategy Worker (Python) | `validate.py` / `run.py` — **không gọi LLM** |
-| Database | Bảng `strategies` (`type = AI_GENERATED`, version, `owner_user_id`) |
-| LLM API | `/chat/completions` từ **NestJS**, không từ Python |
+| `parses` | `ast.parse()` được không |
+| `contract` | có đúng `generate_signals(candles)` với một tham số vị trí không |
+| `safety` | quét AST: cấm `import`, `eval`, `exec`, truy cập file/mạng… |
+| `smoke` | chạy thử trên ~30 nến tổng hợp, trong restricted globals + time limit |
 
-**Cách đọc mũi tên (quan trọng khi chỉ slide Level 2):**
+**Bước 6 — Kết quả về Redis, không về Postgres.**
+Worker trả `{ code, raw, providerName, validation }` làm **returnvalue của job**. Trong lúc đó frontend poll `GET /ai-strategy/generate/status` mỗi 2 giây (`AiGenerateQueueService.getStatus` lọc theo `userId`: tìm job in-flight trước, không có thì lấy job kết thúc gần nhất). Khi status thành `COMPLETED`, trang hiện code và bảng 4 check.
 
-- API **không** HTTP-gọi Worker. Generate: `API → Redis → Worker`.
-- **Generate code** đi từ **Background Worker → LLM API** (TypeScript `OpenAiCompatibleProvider`).
-- Hai mũi tên **Spawn** vào Python AI là **đúng, hai việc khác nhau**:
-  - Worker: spawn `validate.py` sau khi LLM trả code (job `ai-generate`).
-  - API: spawn `validate.py` / `run.py` cho sửa code / chạy thử (`POST /validate`, `POST /save`, `POST /:id/run`).
-
-Nếu một bản Level 2 cũ còn vẽ `API → LLM`, đó là generate **đồng bộ** trước F20. Hiện trạng khớp Level 3: caller LLM là Worker.
-
-News Worker không tham gia generate.
+Lý do không ghi Postgres: đây mới là **bản nháp**, người dùng có thể sửa hoặc vứt. Đổi lại, `removeOnComplete/Fail: 50` nghĩa là bản nháp chỉ sống một cửa sổ ngắn — bỏ đi quá lâu rồi F5 thì mất.
 
 ---
 
-## 4. Level 3 — Component
+## 4. Luồng 2 — Sửa, kiểm tra lại, và Lưu (đồng bộ, trong API)
 
-### 4.1. Sinh code (bất đồng bộ)
-
-**Frontend:** `AiStrategyPage` → `useAiStrategy` / `useAiGenerate` → `AiGenerateContext` (mount ở `/app`, sống khi đổi tab).
+Từ đây trở đi **không còn LLM**. Người dùng sửa tay đoạn code trên trang rồi bấm kiểm tra hoặc lưu — cả hai là thao tác ngắn, chủ động, người dùng đang ngồi đợi, nên đi thẳng HTTP đồng bộ, không qua queue.
 
 ```
-POST /ai-strategy/generate          → 202 + job status
-GET  /ai-strategy/generate/status   → poll 2s tới COMPLETED | FAILED
+POST /ai-strategy/validate  →  AiStrategyService.validateCode()  →  spawn validate.py
+POST /ai-strategy/save      →  AiStrategyService.save()          →  validate lại  →  INSERT
 ```
 
-**API:**
+Hai chi tiết đáng nói khi vấn đáp:
 
-```
-AiStrategyController.generate()
-  → AiGenerateQueueService.enqueue(userId, prompt)
-       payload: { userId, prompt, correlationId }
-       409 nếu cùng user đã có job in-flight
-```
+- **`save()` luôn validate lại**, không tin kết quả validate của request trước — code có thể đã bị sửa giữa chừng. Không hợp lệ thì trả 400 kèm đúng check nào hỏng; không bao giờ lưu code hỏng.
+- **`createVersion()` luôn `INSERT` một row mới**, không `UPDATE` đè. Đây là chống trực tiếp anti-pattern *overwrite strategy history*: một experiment cũ phải trỏ đúng `source_code` mà nó đã thật sự chạy.
 
-Controller **không** gọi `AiStrategyService.generate()`.
+Row được ghi vào bảng `strategies` dùng chung với strategy hệ thống: `type = 'AI_GENERATED'`, `language = 'PYTHON'`, `source_code`, `version`, `owner_user_id`, và `parameters.domain`.
 
-**Worker:**
+**`domain` là người dùng chọn, hệ thống không đoán từ prompt** — TREND / MOMENTUM / VOLATILITY / STRUCTURE. Generator của Strategy Search dùng domain để ghép vai trò trong tổ hợp; đoán sai sẽ làm lệch tổ hợp mà không ai nhìn thấy.
 
-```
-AiGenerateProcessor  @Processor("ai-generate")
-                     concurrency 5, lockDuration 120s
-  → AiStrategyService.generate(prompt)     // cùng class, không fork
-       → LlmProviderFactory
-            OpenAiCompatibleProvider  |  FakeProvider (test / không key)
-       → contract-prompt.ts  (bắt buộc generate_signals(candles))
-       → AiStrategyValidatorService → spawn validate.py
-```
-
-Kết quả job nằm **Redis returnvalue**, không bảng Postgres. User bấm **Lưu** mới INSERT `strategies`.
-
-### 4.2. Validate / save / run (đồng bộ, tiến trình API)
-
-```
-AiStrategyController
-  → AiStrategyService.validateCode / save / run
-       → AiStrategyValidatorService → validate.py
-       → AiStrategyRunnerService    → run.py + sandbox.py
-       → AiStrategyRepository       → INSERT version mới (không UPDATE đè)
-```
-
-Save: `type = AI_GENERATED`, `language = PYTHON`, `owner_user_id`, `domain` **bắt buộc** (user chọn — không suy từ prompt).
-
-### 4.3. Vào Continuous Strategy Loop (cùng Level 3 Search)
-
-Định danh search: `AI:<strategyId>`.
-
-```
-StrategyRegistry.resolve("AI:...")  →  một AiStrategyPluginAdapter (stateless)
-StrategyEngineService               →  không if theo AI vs MA
-```
-
-Trước vòng backtest của **một** experiment run:
-
-```
-StrategySearchService.run()
-  → AiStrategySignalPrecomputeService.precompute()
-       tuần tự từng AI strategy đã chọn
-       spawn run.py một lần trên toàn bộ chuỗi nến
-       lỗi từng cái → loại strategy khỏi run, log, không crash experiment
-  → SignalContext.aiSignals[...]
-```
-
-Trong vòng nến:
-
-```
-AiStrategyPluginAdapter.analyze()  =  tra mảng theo index  O(1)
-```
-
-Cùng weighted vote, cùng `BacktestingService`, cùng event leaderboard. AI strategy **không** có không gian tham số để generator dò — mỗi strategy đã lưu là một điểm cố định trong tổ hợp.
+Sau khi lưu, strategy xuất hiện ở hai chỗ: bảng "Strategy AI của tài khoản" (`GET /ai-strategy/mine`) và **catalog chọn strategy của Strategy Engine** — vì `StrategyPluginService.listCatalog(userId)` ghép built-in lấy từ registry với `AiStrategyRepository.listLatestPerName(userId)`.
 
 ---
 
-## 5. Luồng đầu-cuối (nói khi chỉ sơ đồ)
-
-**Generate (Level 2–3):**
+## 5. Luồng 3 — Chạy thử một strategy đã lưu
 
 ```
-Trader → SPA → API (202 enqueue)
-              → Redis queue ai-generate
-              → Worker → LLM API → source Python
-                       → spawn validate.py
-              → Redis returnvalue
-SPA poll status → hiện code + kết quả cổng kiểm duyệt
+POST /ai-strategy/:id/run
 ```
 
-**Save:**
+`AiStrategyService.run()` kiểm tra quyền sở hữu (`findMineById(id, userId)`), nạp nến thật từ `CandleRepository` rồi **đảo lại thành thứ tự cũ → mới** (contract giả định đọc xuôi thời gian, ví dụ `closes[i-20:i]`), sau đó `AiStrategyRunnerService` spawn `run.py` **một lần cho cả chuỗi**. Trả về `{ candleCount, signals }`.
 
-```
-SPA → API → Postgres strategies (version mới, ownership)
-```
+Đây là bằng chứng end-to-end rằng strategy đã lưu là **code chạy được**, không phải một đoạn text nằm trong DB.
 
-**Search (nối sang Continuous Strategy Loop):**
-
-```
-SPA chọn AI:<id> + built-in → POST experiments
-Worker run() → precompute Python một lần
-            → loop candidate (adapter O(1) mỗi nến)
-            → backtest.completed → leaderboard
-```
+Lỗi ở đây là **400, không phải 500** — source code là dữ liệu người dùng, strategy hỏng là lỗi của họ, không phải bug của hệ thống.
 
 ---
 
-## 6. Quyết định kiến trúc (hỏi / đáp)
+## 6. Luồng 4 — AI strategy tham gia Continuous Strategy Loop
 
-### Q: Vì sao generate đi queue, còn validate/run thì không?
+Đây là phần trả lời câu hỏi "tính mở rộng" của đề bài. Định danh của một AI strategy trong search là chuỗi **`AI:<strategyId>`**.
 
-**A:** Generate = gọi LLM + validate, 10–90 giây, user có thể đổi tab / refresh. Validate khi sửa và `POST /:id/run` là thao tác ngắn, do người dùng chủ động. Queue chỉ việc **nặng và fire-and-forget** (F20).
+**Lúc tạo experiment (`POST /experiments`, chạy ở API).**
+`StrategySearchService.start()` duyệt danh sách trọng số người dùng gửi lên. Gặp một type dạng `AI:*`, nó gọi `AiStrategyRepository.findOwnedActiveById(id, userId)` — sai chủ sở hữu hoặc strategy đã `is_active = false` thì **400 ngay tại đây**, không để lọt vào job. Domain lấy từ chính row đó, không từ một bảng tra cứu cứng.
 
-### Q: Vì sao theo dõi generate bằng poll, không WebSocket?
+**Lúc chạy experiment (`run()`, chạy ở Worker):**
 
-**A:** Cùng pattern experiment progress và news crawl (2 giây). Một namespace socket chỉ cho một tab là over-engineering. Poll đọc Redis, sống sau F5 nhờ `AiGenerateProvider` ở `/app`.
+```
+1.  nạp chuỗi nến của experiment
+2.  AiStrategySignalPrecomputeService.precompute(aiStrategies, candles)   ← MỘT LẦN
+3.  build run catalog  (bỏ mọi AI strategy precompute thất bại)
+4.  vòng lặp candidate → BacktestingService → StrategyEngineService → registry.resolve()
+```
 
-### Q: Việc trùng: coalesce như search, hay 409?
+Bước 2 là điểm mấu chốt của cả module. `precompute()` chạy **tuần tự** từng AI strategy, mỗi cái một lần spawn `run.py` trên **toàn bộ** chuỗi nến, và **bắt lỗi riêng từng cái**: strategy nào hỏng / timeout / trả sai số lượng signal thì bị **loại khỏi lần run đó** kèm log cảnh báo — không throw, không kéo sập cả experiment 100 candidate. Kết quả nằm ở `SignalContext.aiSignals`.
 
-**A:** **409 Conflict**, message cố định: `"A generate job is already running for this account."` Không coalesce prompt khác nhau (sai kết quả), không replace (tốn token song song, race UI).
+Vì sao tuần tự chứ không fan-out song song: để chặn bùng nổ subprocess — đúng cái anti-pattern *uncontrolled infinite loop* mà đề bài cấm.
 
-### Q: Kết quả generate lưu Postgres hay Redis?
+Bước 4 thì Engine **không biết gì về AI**. `StrategyEngineService.analyze()` chỉ gọi `registry.resolve(type).analyze()`. `StrategyRegistry` cố ý tách hai đường:
 
-**A:** Redis returnvalue. Generate là bản nháp trước Save. Tránh migration bảng job. Job completed/failed chỉ giữ một cửa sổ ngắn (`removeOnComplete/Fail`) — reload quá lâu có thể mất bản nháp cũ.
+```
+has("AI:...")      →  false                     (registry chỉ "chứa" built-in)
+resolve("AI:...")  →  AiStrategyPluginAdapter   (một instance duy nhất, stateless)
+```
 
-### Q: Ai gọi LLM — Python worker hay NestJS?
+Và `AiStrategyPluginAdapter.analyze()` chỉ còn một dòng có ý nghĩa:
 
-**A:** **NestJS** `OpenAiCompatibleProvider`, chạy trong **Background Worker** khi process job. `workers/ai-strategy/` không có HTTP client. Vẽ `Python → LLM` là sai.
+```ts
+return context.aiSignals.get(member.type)[context.index] ?? 'HOLD'
+```
 
-### Q: Vì sao API vẫn spawn Python nếu generate đã ở Worker?
+— tra mảng **O(1)**, rẻ ngang một plugin built-in, nhìn từ vòng lặp backtest.
 
-**A:** User sửa code tay rồi bấm kiểm tra / chạy thử — không đi LLM. Hai spawn = hai use-case, không phải vẽ trùng.
+Từ đó trở đi mọi thứ y hệt strategy hệ thống: cùng `experiment_config_strategies` cho trọng số, cùng công thức `Σ(w × signal) / Σw → BUY/SELL/HOLD`, cùng `BacktestingService`, cùng event `backtest.completed` → leaderboard.
 
-### Q: Đổi model / nhà cung cấp có phải sửa code không?
-
-**A:** Không. `OPENAI_BASE_URL` / `OPENAI_MODEL` / `OPENAI_API_KEY`. Factory chọn `OpenAiCompatibleProvider` hoặc `FakeProvider`. Cấm import SDK rải rác (anti-pattern gắn cứng ML).
-
-### Q: Không có API key thì sao? Test có gọi mạng không?
-
-**A:** FakeProvider cho unit test (code mẫu tất định). Request generate thật khi thiếu key **lỗi rõ**, không trả code giả như thể model sinh.
-
-### Q: Contract bắt `generate_signals(candles)` cả chuỗi — vì sao không `analyze(candle)` từng nến?
-
-**A:** Backtest hàng nghìn nến. Spawn Python mỗi nến không dùng được. Precompute một lần/run, adapter O(1) — Engine không cần biết sự khác biệt.
-
-### Q: Vì sao một `AiStrategyPluginAdapter` cho mọi `AI:*`, không register từng strategy?
-
-**A:** Built-in: 4 plugin, biết lúc `onModuleInit`. AI: vô hạn, theo user, nằm Postgres, sinh lúc runtime. Nạp lại registry mỗi lần Save biến registry thành state chia sẻ. `has('AI:...')` = false, `resolve('AI:...')` = adapter — cố ý tách.
-
-### Q: Precompute tuần tự, bắt lỗi từng strategy — vì sao không parallel fan-out?
-
-**A:** Tránh bùng nổ subprocess. Một AI hỏng **không** được kéo sập experiment 100 candidate. Strategy lỗi bị loại khỏi **lần run đó**, không FAIL cả job search.
-
-### Q: Cổng AST có phải security sandbox không?
-
-**A:** **Không.** Chặn tai nạn (`os`, `eval`, mạng…). Không chặn attacker có chủ đích. Đồ án local, user tin cậy. Sandbox thật (container, seccomp) ngoài phạm vi. Nói thẳng khi bị hỏi.
-
-### Q: Timeout Python xử lý thế nào trên Windows?
-
-**A:** Tầng ngoài (bắt buộc): Nest `python-process.util` timeout + SIGKILL. Tầng trong: `signal.alarm` POSIX; Windows không có `SIGALRM` → `threading.Timer`. Interpreter: env → venv news nếu có (đúng `Scripts\` / `bin`) → `python` trên PATH (F17).
-
-### Q: Lưu strategy có UPDATE đè version cũ không?
-
-**A:** Không. INSERT row version mới. Experiment cũ trỏ đúng `source_code` đã chạy — anti-pattern overwrite history.
-
-### Q: `domain` lúc Save — hệ thống có đoán từ prompt không?
-
-**A:** Không. User chọn TREND / MOMENTUM / VOLATILITY / STRUCTURE. Đoán sai làm tổ hợp lệch mà không ai thấy. Generator cần domain để ghép hướng + xác nhận.
-
-### Q: Trọng số AI strategy có công thức riêng không?
-
-**A:** Không. Cùng `experiment_config_strategies` và `Σ(w × signal) / Σw`.
-
-### Q: `attempts` generate = 1, search = 3 — mâu thuẫn?
-
-**A:** Search idempotent theo DB, retry an toàn. Generate fail do LLM/mạng: retry tự động tốn token trùng. User bấm lại.
-
-### Q: `lockDuration` 120s để làm gì?
-
-**A:** BullMQ mặc định lock ngắn hơn thời gian LLM + validate. Hết lock lúc job còn chạy → job bị coi stale / đụng lần 2.
-
-### Q: AI strategy có tham gia fingerprint / random period như MA không?
-
-**A:** Không. Không có tham số dò. Mỗi `AI:<id>` là một thành viên cố định trong tổ hợp. Giới hạn đã thừa nhận khi vấn đáp.
+**Giới hạn đã biết, nên nói thẳng:** AI strategy **không có không gian tham số** để generator dò như MA (period 10/20/50). Mỗi `AI:<id>` là **một điểm cố định** trong tổ hợp; generator chỉ có thể thay đổi việc ghép nó với ai và trọng số bao nhiêu.
 
 ---
 
-## 7. Câu chốt khi trình bày
+## 7. Ba ràng buộc va nhau — và cách module giải
 
-> LLM là **dependency cấu hình** của NestJS Worker. Python chỉ **cổng và máy chạy**. Engine chỉ thấy plugin. Chi phí Python được **trả một lần trước loop**, không phải mỗi nến — nhờ đó AI strategy đi chung Continuous Strategy Loop mà không phá Open/Closed của Strategy Engine.
+Đây là phần nên nói khi giám khảo hỏi "vì sao thiết kế phức tạp thế".
+
+**Ràng buộc 1 — cấm gắn cứng một model ML.**
+Giải: `LlmProviderFactory` + interface `LlmProvider`. Đổi model / nhà cung cấp = đổi `OPENAI_BASE_URL` / `OPENAI_MODEL` / `OPENAI_API_KEY`, không sửa code. Không có `import openai` rải rác trong các service.
+
+**Ràng buộc 2 — cấm `if` theo loại strategy trong Strategy Engine.**
+Giải: `registry.resolve()` trả về adapter. Engine gọi `analyze()` y như với MA. Không có `if (type.startsWith('AI:'))` trong Engine.
+
+**Ràng buộc 3 — lệch chi phí per-candle vs whole-series.**
+Plugin built-in tính trong tiến trình, gọi **mỗi nến**, rẻ. Code AI phải spawn Python. Một backtest có hàng nghìn nến × hàng trăm candidate → spawn mỗi nến là không dùng được, và chính là anti-pattern bị cấm.
+Giải: **trả chi phí Python một lần, trước vòng lặp**. Precompute whole-series 1 lần / experiment run (mọi candidate trong một run dùng chung một chuỗi nến), rồi adapter chỉ tra bảng.
+
+Ba cái này được giải **mà không** biến Engine thành chỗ "biết đây là AI".
+
+---
+
+## 8. Hỏi — đáp khi vấn đáp
+
+**Q: Vì sao generate đi queue mà validate/run thì không?**
+Generate = LLM + validate, 10–90 giây, người dùng có thể bỏ đi. Validate/run là thao tác ngắn, người dùng đang ngồi đợi. Queue chỉ dành cho việc **nặng và fire-and-forget** (F20).
+
+**Q: Vì sao poll 2 giây, không WebSocket?**
+Cùng pattern với experiment progress và news crawl. Một namespace socket riêng chỉ cho một tab là over-engineering. Poll đọc Redis, và sống sau F5 nhờ `AiGenerateProvider` mount ở `/app`.
+
+**Q: Trùng job thì coalesce như search, hay 409?**
+**409**, message cố định `"A generate job is already running for this account."` Không coalesce vì hai prompt khác nhau cho hai kết quả khác nhau; không replace vì tốn token song song và race UI.
+
+**Q: Ai gọi LLM — Python hay NestJS?**
+NestJS (`OpenAiCompatibleProvider`), chạy trong **Worker**. `workers/ai-strategy/` không có HTTP client. Vẽ `Python → LLM` là sai.
+
+**Q: Generate đã ở Worker rồi, sao API vẫn spawn Python?**
+Vì đó là use-case khác: người dùng sửa code tay rồi bấm kiểm tra / chạy thử — không đi qua LLM.
+
+**Q: Không có API key thì sao? Test có gọi mạng không?**
+`FakeProvider` cho unit test (code mẫu tất định, không mạng). Request generate thật khi thiếu key thì **lỗi rõ ràng** (400), không trả code giả như thể model đã sinh. Ngoài ra `GET /ai-strategy/provider` cho UI biết đang nối vào provider nào và có key thật hay không.
+
+**Q: Cổng AST có phải sandbox bảo mật không?**
+**Không.** Nó chặn tai nạn (`os`, `eval`, mạng, vòng lặp treo), không chặn kẻ tấn công có chủ đích. Đồ án chạy local, người dùng tin cậy. Sandbox thật (container, seccomp) ngoài phạm vi. Nên nói thẳng điều này thay vì né.
+
+**Q: Timeout Python trên Windows xử lý sao?**
+Hai tầng. Tầng ngoài (bắt buộc): `python-process.util` của Nest — timeout + SIGKILL. Tầng trong: `sandbox.py` dùng `signal.alarm` trên POSIX; Windows không có `SIGALRM` nên chuyển sang `threading.Timer`. Interpreter chọn theo thứ tự: env → venv của news worker nếu có (đúng `Scripts\` hay `bin`) → `python` trên PATH (F17).
+
+**Q: `attempts` generate = 1 còn search = 3, có mâu thuẫn không?**
+Không. Search idempotent theo DB nên retry an toàn. Generate hỏng do LLM/mạng mà tự retry là đốt token lần hai — để người dùng bấm lại.
+
+**Q: `lockDuration` 120s để làm gì?**
+Lock mặc định của BullMQ ngắn hơn thời gian LLM + validate. Hết lock trong lúc job còn chạy thì job bị coi là stale và có thể bị nhặt lần hai.
+
+**Q: Vì sao một adapter dùng chung cho mọi `AI:*`, không register từng strategy vào registry?**
+Built-in là 4–5 plugin, biết hết lúc `onModuleInit`. AI strategy là vô hạn, theo từng user, nằm trong Postgres, sinh lúc runtime. Nạp lại registry mỗi lần Save sẽ biến registry thành shared mutable state. Adapter stateless nên một instance là đủ.
+
+**Q: Trọng số của AI strategy có công thức riêng không?**
+Không. Nó là một row `strategies` bình thường → dùng nguyên `experiment_config_strategies` và `Σ(w × signal) / Σw`.
+
+---
+
+## 9. Câu chốt khi trình bày
+
+> LLM chỉ là một **dependency cấu hình** của NestJS Worker. Python chỉ là **cổng kiểm duyệt và máy chạy**. Strategy Engine chỉ nhìn thấy một plugin. Và chi phí gọi Python được **trả một lần trước vòng lặp** chứ không phải mỗi nến — nhờ vậy strategy do AI sinh đi chung Continuous Strategy Loop với MA/RSI/BB mà không phá nguyên tắc Open/Closed của Strategy Engine.

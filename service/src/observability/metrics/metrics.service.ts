@@ -74,6 +74,17 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  // Candidates the generator drew that this experiment had already
+  // evaluated, rejected by migration 005's unique fingerprint index before
+  // any backtest ran. A ratio of this to candidates_generated_total that
+  // climbs toward 1 means the configured parameter space is close to
+  // exhausted — the signal that precedes a SEARCH_SPACE_EXHAUSTED stop.
+  readonly candidatesDuplicateTotal = new Counter({
+    name: 'candidates_duplicate_total',
+    help: 'Total generated candidates rejected as duplicates of one already evaluated in the same experiment.',
+    registers: [this.registry],
+  });
+
   readonly backtestsRunTotal = new Counter({
     name: 'backtests_run_total',
     help: 'Total backtests executed (one per candidate) across all search jobs.',

@@ -559,9 +559,25 @@ export class StrategySearchService implements OnApplicationBootstrap {
         continue;
       }
 
+      // Fingerprinted like the search loop (migration 005), which also
+      // hardens this cascade's documented "idempotent per combination"
+      // contract (artifacts/api-contract.md §3): the definition carries
+      // each member's `pluginVersion`, so regenerating against a NEW
+      // strategy version yields a new fingerprint and inserts normally,
+      // while a repeat call for a combination already regenerated at the
+      // same versions collides and is skipped instead of appending a
+      // near-duplicate row.
       const iteration = await this.database.withTransaction((client) =>
-        this.iterations.createNext(client, experimentId),
+        this.iterations.createNext(
+          client,
+          experimentId,
+          this.fingerprintService.fingerprint(candidateDefinition),
+        ),
       );
+      if (!iteration) {
+        skipped += 1;
+        continue;
+      }
       let candidateEntity: Awaited<
         ReturnType<CandidateRepository['createForIteration']>
       >;
@@ -1100,6 +1116,13 @@ export class StrategySearchService implements OnApplicationBootstrap {
           stopReason = 'NO_IMPROVEMENT';
           break;
         }
+        // Reachable only because duplicates below `continue` without
+        // advancing `generated`: in a narrow parameter space the generator
+        // eventually only redraws combinations this experiment already
+        // evaluated, and without this guard the loop would spin until
+        // MAX_DURATION with nothing to show for it. Before migration 005
+        // restored the de-duplication, `attempts` rose in lockstep with
+        // `generated` and this branch was dead code.
         if (attempts >= maximumAttempts) {
           stopReason = 'SEARCH_SPACE_EXHAUSTED';
           break;
@@ -1110,9 +1133,31 @@ export class StrategySearchService implements OnApplicationBootstrap {
         const candidateDefinition =
           this.fingerprintService.canonicalize(generatedCandidate);
 
+        // Duplicate guard (migration 005). Enforced by a unique index on
+        // (experiment_id, candidate_fingerprint) rather than a read-then-write,
+        // and placed HERE — before the iteration row is committed and long
+        // before the backtest — so a redraw costs one INSERT that changed
+        // nothing, leaves no orphan iteration behind, and neither inflates
+        // `generated` (which the UI shows as candidate count) nor
+        // `noImprovement` (which would otherwise end the search early
+        // because re-testing the same combination can never beat its own
+        // score). Weights are deliberately absent from the fingerprint —
+        // they belong to the configuration, not the candidate (see
+        // artifacts/architecture.md §167), so the same parameter set does
+        // not fingerprint differently across experiments.
+        const fingerprint = this.fingerprintService.fingerprint(candidateDefinition);
         const iteration = await this.database.withTransaction((client) =>
-          this.iterations.createNext(client, experimentId),
+          this.iterations.createNext(client, experimentId, fingerprint),
         );
+        if (!iteration) {
+          this.metrics.candidatesDuplicateTotal.inc();
+          // Yields exactly like the bottom of the loop body does. A `continue`
+          // that skipped it would let a long duplicate streak (up to
+          // `maximumAttempts` of them) hold the event loop on microtasks
+          // alone, starving this worker's other jobs and its health endpoint.
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          continue;
+        }
         generated += 1;
         let candidateEntity:
           | Awaited<ReturnType<CandidateRepository['createForIteration']>>
