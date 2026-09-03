@@ -1,0 +1,110 @@
+@startuml
+title C4 Level 3 — News Subsystem
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam linetype ortho
+skinparam nodesep 30
+skinparam ranksep 55
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 11
+
+actor "User / Browser" as USER
+
+package "Frontend" as FE {
+    rectangle "NewsPage\nNewsList\nCrawlStatusWidget" as FE_UI
+    rectangle "api/client.ts" as FE_API
+}
+
+package "Backend — NestJS (API Process)" as BE {
+
+    package "News Module" as NEWS_MOD {
+        rectangle "NewsController\nGET /news\nPOST /news/crawl\nGET /news/crawl/status\nPOST /news/crawl/cancel" as NEWS_C
+        rectangle "NewsService\nlist & filter\nHTML strip & pagination" as NEWS_S
+        rectangle "NewsCrawlQueueService\nenqueue()\ncoalescing & cancel tracker" as NEWS_Q
+    }
+
+    package "Shared Repositories & Precompute" as SHARED {
+        rectangle "NewsRepository (TypeScript)\nSELECT queries\naggregate sentiment stats" as NEWS_REPO_TS
+        rectangle "NewsSentimentPrecomputeService\n2-pointer sliding window\nprecomputes candle sentiment" as PRECOMPUTE
+    }
+
+    package "Database Layer" as DB_LAYER {
+        rectangle "DatabaseService\nraw pg.Pool" as DB_S
+    }
+}
+
+package "Worker Process (worker.ts)" as WORKER {
+    rectangle "NewsCrawlProcessor\n@Processor('news-crawl')\nconcurrency = 1\npolls cancelRequested" as CRAWL_PROC
+    rectangle "NewsCrawlService\nchild_process.spawn launcher\n10m timeout + stdout parser" as CRAWL_EXEC
+}
+
+package "Queue / Broker" as INFRA {
+    queue "Redis 7\nBullMQ Queue: 'news-crawl'\ncancelRequested flag" as REDIS
+}
+
+database "PostgreSQL\n\nTable: news\n(id, title, content, url, source,\npublished_at, coins, sentiment,\nsentiment_score)" as PG
+
+package "Python Auxiliary Worker (workers/news)" as PYTHON_NEWS {
+    rectangle "main.py\nCLI orchestrator\nloads configs & dedupes" as PY_MAIN
+    rectangle "NewsCrawler\npipeline coordinator" as PY_CRAWLER
+    rectangle "HTTPFetcher\ncustom headers & timeout" as PY_FETCHER
+    rectangle "ParserFactory\nRSSParser / HTMLParser" as PY_PARSER
+    rectangle "NewsNormalizer\nURL & text cleaning" as PY_NORMALIZER
+    rectangle "CoinEntityExtractor\nRegex matching (BTC, ETH...)" as PY_EXTRACTOR
+    rectangle "NewsValidator\nlength & URL validation" as PY_VALIDATOR
+    rectangle "NewsRepository (Python)\npsycopg2 batch UPSERT\non conflict (url) do update" as PY_REPO
+}
+
+cloud "External News Outlets\nCoinDesk, Cointelegraph, Binance News\n(RSS XML / HTML Web)" as OUTLETS
+
+USER --> FE_UI
+FE_UI --> FE_API
+
+FE_API --> NEWS_C
+NEWS_C --> NEWS_S : list news
+NEWS_C --> NEWS_Q : crawl / cancel
+NEWS_S --> NEWS_REPO_TS : query articles
+NEWS_REPO_TS --> DB_S
+DB_S --> PG : SQL SELECT
+
+NEWS_Q --> REDIS : add job / set cancel flag
+REDIS --> CRAWL_PROC : dispatch job
+CRAWL_PROC --> CRAWL_EXEC : execute()
+CRAWL_EXEC --> PY_MAIN : child_process.spawn
+
+PY_MAIN --> PY_CRAWLER : crawl()
+PY_CRAWLER --> PY_FETCHER : HTTP GET
+PY_FETCHER --> OUTLETS : scrape feeds & pages
+PY_CRAWLER --> PY_PARSER : parse HTML/XML
+PY_CRAWLER --> PY_NORMALIZER : clean text
+PY_CRAWLER --> PY_EXTRACTOR : tag coins
+PY_CRAWLER --> PY_VALIDATOR : validate items
+
+PY_MAIN --> PY_REPO : save validated items
+PY_REPO --> PG : direct SQL UPSERT
+
+PY_MAIN --> CRAWL_EXEC : stdout: JSON NEWS_CRAWL_SUMMARY
+
+PRECOMPUTE --> DB_S : read news in candle window
+
+note right of CRAWL_PROC
+    Hàng đợi news-crawl cấu hình
+    concurrency = 1 để tránh
+    bị chặn IP (HTTP 429).
+end note
+
+note bottom of PYTHON_NEWS
+    Tiến trình Python chạy độc lập.
+    Sự cố lỗi mạng khi cào bài viết
+    không làm sập tiến trình Node.js API
+    hoặc luồng WebSocket thị trường.
+end note
+
+note right of PRECOMPUTE
+    Được gọi một lần duy nhất trước Backtest
+    để tính toán mảng điểm cảm xúc O(candles + news),
+    giúp StrategyPlugin đọc O(1) trong bộ nhớ.
+end note
+
+@enduml

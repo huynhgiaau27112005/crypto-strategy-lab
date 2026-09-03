@@ -1,0 +1,93 @@
+@startuml
+title C4 Level 3 — Sentiment Analysis Subsystem & Integration
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam linetype ortho
+skinparam nodesep 30
+skinparam ranksep 55
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 11
+
+actor "User / Browser" as USER
+
+package "Frontend" as FE {
+    rectangle "SentimentWidget\nRolling Distribution Pie/Bar\nNet Sentiment Gauge" as FE_UI
+    rectangle "api/client.ts" as FE_API
+}
+
+package "Backend — NestJS (API Process)" as BE {
+
+    package "Sentiment Module" as SENT_MOD {
+        rectangle "SentimentController\nGET /sentiment/summary?hours=24" as SENT_C
+        rectangle "SentimentService\ncompute positive / negative /\nneutral share & net score" as SENT_S
+    }
+
+    package "News Integration Layer" as NEWS_LAYER {
+        rectangle "NewsRepository (TypeScript)\nsummarizeSentiment(hours)\nSQL aggregate queries" as NEWS_REPO_TS
+        rectangle "NewsSentimentPrecomputeService\n2-pointer sliding window\nO(candles + news) precompute" as PRECOMPUTE
+    }
+
+    package "Strategy Engine Integration" as STRAT_ENGINE {
+        rectangle "NewsSentimentPlugin\ntype: NEWS_SENTIMENT\nbuyThreshold / sellThreshold" as PLUGIN
+        rectangle "StrategyRegistry\nresolve('NEWS_SENTIMENT')" as REGISTRY
+    }
+
+    package "Database Layer" as DB_LAYER {
+        rectangle "DatabaseService\nraw pg.Pool" as DB_S
+    }
+}
+
+database "PostgreSQL\n\nTable: news\nColumns: sentiment, sentiment_score" as PG
+
+package "Python Sentiment Layer (workers/news/src/core/sentiment)" as PY_SENT {
+    rectangle "SentimentFactory\nresolve_sentiment_provider()\nFinBERT -> Lexicon -> Noop" as PY_FACTORY
+    rectangle "FinbertSentimentProvider\nPyTorch HuggingFace Transformer\nworkers/news/models/finbert" as PY_FINBERT
+    rectangle "LexiconSentimentProvider\nFinancial keyword rules fallback\n(bullish/rally vs bearish/crash)" as PY_LEXICON
+    rectangle "NoopSentimentProvider\nZero-operation fallback" as PY_NOOP
+}
+
+cloud "Crawler Ingestion Loop\nworkers/news/main.py" as CRAWLER_LOOP
+
+USER --> FE_UI
+FE_UI --> FE_API
+
+FE_API --> SENT_C : GET /sentiment/summary
+SENT_C --> SENT_S : getSummary(hours)
+SENT_S --> NEWS_REPO_TS : summarizeSentiment(hours)
+NEWS_REPO_TS --> DB_S : SQL aggregate
+DB_S --> PG
+
+CRAWLER_LOOP --> PY_FACTORY : resolve_sentiment_provider()
+PY_FACTORY --> PY_FINBERT : weights available
+PY_FACTORY --> PY_LEXICON : fallback on error / no GPU
+PY_FACTORY --> PY_NOOP : provider='none'
+
+CRAWLER_LOOP --> PG : save articles with sentiment
+
+PRECOMPUTE --> DB_S : load articles in candle window
+PRECOMPUTE --> PLUGIN : attach sentimentScores[] to SignalContext
+
+REGISTRY --> PLUGIN : register plugin
+
+note right of SENT_C
+    Cung cấp chỉ số cảm xúc
+    lăn (rolling 24h) phục vụ
+    hiển thị widget cho người dùng.
+end note
+
+note bottom of PY_SENT
+    Cơ chế dự phòng linh hoạt:
+    Nếu không có card GPU hoặc thiếu PyTorch,
+    hệ thống tự động hạ cấp xuống Lexicon,
+    đảm bảo dữ liệu không bao giờ bị NULL.
+end note
+
+note right of PRECOMPUTE
+    Thuật toán cửa sổ trượt Two-pointer:
+    Chạy 1 lần duy nhất trước Backtest.
+    Plugin chỉ việc đọc mảng trong bộ nhớ O(1),
+    không truy vấn DB trong vòng lặp nến.
+end note
+
+@enduml
