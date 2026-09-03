@@ -1,6 +1,7 @@
 # Phân Tích Kiến Trúc & Cách Hoạt Động Phân Hệ Tin Tức (News Module)
 
 > **Tài liệu tham chiếu trong dự án**:
+>
 > - [01-repository-architecture-evidence.md](file:///home/ltp/Code/Course/Software_Architecture/Project/crypto-strategy-lab/temp/01-repository-architecture-evidence.md)
 > - [02-news-sentiment-deep-analysis.md](file:///home/ltp/Code/Course/Software_Architecture/Project/crypto-strategy-lab/temp/02-news-sentiment-deep-analysis.md)
 > - [report-news.md](file:///home/ltp/Code/Course/Software_Architecture/Project/crypto-strategy-lab/temp/report-news.md)
@@ -14,6 +15,7 @@
 **News Module (Mô-đun 10)** là phân hệ chịu trách nhiệm thu thập thông tin thị trường phi cấu trúc từ các nguồn tin tức công khai (RSS, HTML Web, REST API), thực hiện chuẩn hóa dữ liệu, bóc tách thực thể tiền mã hóa (coin tags), đánh giá cảm xúc văn bản, và lưu trữ vào cơ sở dữ liệu để phục vụ hiển thị cho người dùng cũng như cung cấp tín hiệu định lượng cho bộ máy Backtest.
 
 ### Nhiệm vụ cốt lõi:
+
 1. **Thu thập tin tức đa nguồn (Multi-Source Ingestion)**: Cào dữ liệu theo chu kỳ từ các trang báo crypto lớn (CoinDesk, Cointelegraph, Binance News) dựa trên cấu hình YAML.
 2. **Làm sạch & Chuẩn hóa (Cleaning & Normalization)**: Loại bỏ thẻ HTML rác, unescape các thực thể ký tự đặc biệt, chuẩn hóa URL tuyệt đối để phục vụ định danh duy nhất.
 3. **Bóc tách thực thể (Coin Entity Extraction)**: Tự động quét và nhận diện các mã coin được nhắc tới trong tiêu đề và nội dung bài viết (`BTC`, `ETH`, `SOL`, `XRP`...).
@@ -133,23 +135,23 @@ C4Component
 
 ### 3.1. Bảng Thành phần (Component Inventory)
 
-| Component | Trách nhiệm | Input | Output | Phụ thuộc |
-| :--- | :--- | :--- | :--- | :--- |
-| **NewsController** | Cung cấp REST endpoints cho tin tức | HTTP Requests (`/news`, `/news/crawl`, `/status`, `/cancel`) | HTTP JSON Response | `NewsService`, `NewsCrawlQueueService` |
-| **NewsService** | Nghiệp vụ hiển thị tin tức | Tham số lọc (coin, khoảng thời gian, sentiment, trang) | Danh sách bài viết sạch thẻ HTML | `NewsRepository (TypeScript)` |
-| **NewsCrawlQueueService** | Producer hàng đợi cào tin tức | Yêu cầu cào tin từ người dùng | Thêm job vào `'news-crawl'`, chống trùng lặp job | BullMQ `Queue` |
-| **NewsCrawlProcessor** | Consumer hàng đợi cào tin tức | Job data từ BullMQ (concurrency = 1) | Điều phối tiến trình con Python, lắng nghe cờ hủy | `NewsCrawlService`, BullMQ |
-| **NewsCrawlService** | Quản lý tiến trình cào tin bên ngoài | Lệnh chạy kèm thời gian timeout 10 phút | Chuỗi JSON tổng hợp (`NEWS_CRAWL_SUMMARY`) từ stdout | `child_process.spawn`, Python CLI |
-| **NewsRepository (TypeScript)** | Truy vấn dữ liệu tin tức từ SQL | Điều kiện lọc SQL | Danh sách bài viết và các thống kê phân trang | `DatabaseService` (PostgreSQL) |
-| **NewsSentimentPrecomputeService** | Tiền tính toán điểm cảm xúc cho Backtest | Dải nến (`candles`) của đợt thử nghiệm | Mảng điểm cảm xúc `SignalContext.sentimentScores` | `DatabaseService` |
-| **main.py (Python)** | Điểm vào của tiến trình cào tin tức | Cấu hình nguồn tin từ YAML | Điều phối crawler, gọi sentiment và lưu DB | `NewsCrawler`, `NewsRepository (Python)` |
-| **NewsCrawler (Python)** | Điều phối luồng xử lý cào tin | Danh sách cấu hình nguồn tin | Mảng `NewsItem` đã làm sạch và loại trùng | Fetcher, Parser, Normalizer, Extractor, Validator |
-| **HTTPFetcher (Python)** | Tải mã nguồn HTML và RSS feed | URL nguồn tin, User-Agent, timeout | Chuỗi thô HTML / XML | `requests` / `urllib` |
-| **ParserFactory (Python)** | Khởi tạo parser theo loại nguồn tin | Định dạng nguồn (`rss`, `html`, `api`) | Thể hiện tương ứng (`RSSParser`, `HTMLParser`) | `BeautifulSoup4`, `feedparser` |
-| **NewsNormalizer (Python)** | Làm sạch và chuẩn hóa văn bản | Dữ liệu văn bản thô, URL ban đầu | Văn bản sạch, unescape HTML, URL tuyệt đối | Python built-ins |
-| **CoinEntityExtractor (Python)** | Bóc tách mã coin liên quan | Tiêu đề và nội dung bài viết | Danh sách mã coin (`["BTC", "ETH"]`...) | Regex Token Patterns |
-| **NewsValidator (Python)** | Xác thực bài viết hợp lệ | Dữ liệu bài viết | `True` / `False` (loại bỏ bài thiếu trường bắt buộc) | Quy tắc độ dài tối thiểu |
-| **NewsRepository (Python)** | Lưu bài viết trực tiếp vào database | Danh sách `NewsItem` hợp lệ | Số lượng bài thêm mới và cập nhật | `psycopg2`, PostgreSQL |
+| Component                                | Trách nhiệm                                   | Input                                                                | Output                                                           | Phụ thuộc                                       |
+| :--------------------------------------- | :---------------------------------------------- | :------------------------------------------------------------------- | :--------------------------------------------------------------- | :------------------------------------------------ |
+| **NewsController**                 | Cung cấp REST endpoints cho tin tức           | HTTP Requests (`/news`, `/news/crawl`, `/status`, `/cancel`) | HTTP JSON Response                                               | `NewsService`, `NewsCrawlQueueService`        |
+| **NewsService**                    | Nghiệp vụ hiển thị tin tức                 | Tham số lọc (coin, khoảng thời gian, sentiment, trang)           | Danh sách bài viết sạch thẻ HTML                            | `NewsRepository (TypeScript)`                   |
+| **NewsCrawlQueueService**          | Producer hàng đợi cào tin tức              | Yêu cầu cào tin từ người dùng                                 | Thêm job vào`'news-crawl'`, chống trùng lặp job           | BullMQ`Queue`                                   |
+| **NewsCrawlProcessor**             | Consumer hàng đợi cào tin tức              | Job data từ BullMQ (concurrency = 1)                                | Điều phối tiến trình con Python, lắng nghe cờ hủy        | `NewsCrawlService`, BullMQ                      |
+| **NewsCrawlService**               | Quản lý tiến trình cào tin bên ngoài     | Lệnh chạy kèm thời gian timeout 10 phút                         | Chuỗi JSON tổng hợp (`NEWS_CRAWL_SUMMARY`) từ stdout       | `child_process.spawn`, Python CLI               |
+| **NewsRepository (TypeScript)**    | Truy vấn dữ liệu tin tức từ SQL            | Điều kiện lọc SQL                                                | Danh sách bài viết và các thống kê phân trang            | `DatabaseService` (PostgreSQL)                  |
+| **NewsSentimentPrecomputeService** | Tiền tính toán điểm cảm xúc cho Backtest | Dải nến (`candles`) của đợt thử nghiệm                      | Mảng điểm cảm xúc`SignalContext.sentimentScores`          | `DatabaseService`                               |
+| **main.py (Python)**               | Điểm vào của tiến trình cào tin tức     | Cấu hình nguồn tin từ YAML                                       | Điều phối crawler, gọi sentiment và lưu DB                 | `NewsCrawler`, `NewsRepository (Python)`      |
+| **NewsCrawler (Python)**           | Điều phối luồng xử lý cào tin            | Danh sách cấu hình nguồn tin                                     | Mảng`NewsItem` đã làm sạch và loại trùng               | Fetcher, Parser, Normalizer, Extractor, Validator |
+| **HTTPFetcher (Python)**           | Tải mã nguồn HTML và RSS feed               | URL nguồn tin, User-Agent, timeout                                  | Chuỗi thô HTML / XML                                           | `requests` / `urllib`                         |
+| **ParserFactory (Python)**         | Khởi tạo parser theo loại nguồn tin         | Định dạng nguồn (`rss`, `html`, `api`)                     | Thể hiện tương ứng (`RSSParser`, `HTMLParser`)          | `BeautifulSoup4`, `feedparser`                |
+| **NewsNormalizer (Python)**        | Làm sạch và chuẩn hóa văn bản            | Dữ liệu văn bản thô, URL ban đầu                              | Văn bản sạch, unescape HTML, URL tuyệt đối                 | Python built-ins                                  |
+| **CoinEntityExtractor (Python)**   | Bóc tách mã coin liên quan                  | Tiêu đề và nội dung bài viết                                  | Danh sách mã coin (`["BTC", "ETH"]`...)                      | Regex Token Patterns                              |
+| **NewsValidator (Python)**         | Xác thực bài viết hợp lệ                  | Dữ liệu bài viết                                                 | `True` / `False` (loại bỏ bài thiếu trường bắt buộc) | Quy tắc độ dài tối thiểu                    |
+| **NewsRepository (Python)**        | Lưu bài viết trực tiếp vào database       | Danh sách`NewsItem` hợp lệ                                      | Số lượng bài thêm mới và cập nhật                       | `psycopg2`, PostgreSQL                          |
 
 ---
 
@@ -216,6 +218,7 @@ sequenceDiagram
 ## 5. Hợp Đồng Dữ Liệu & Nguồn Tin Ngoại Bộ
 
 ### 5.1. Cấu trúc Mô hình Bài viết (`NewsItem`)
+
 ```python
 class NewsItem(BaseModel):
     id: str                 # Mã SHA-256 tạo từ URL chuẩn hóa (Primary Key)
@@ -230,6 +233,7 @@ class NewsItem(BaseModel):
 ```
 
 ### 5.2. Nhận diện Mã Coin & Cấu hình Nguồn tin
+
 - **Bóc tách thực thể Coin**: `CoinEntityExtractor` sử dụng các biểu thức chính quy với ranh giới từ (`\bBTC\b`, `\bBITCOIN\b`, `\bETH\b`, `\bETHEREUM\b`, `\bSOL\b`...) để quét qua cả tiêu đề và nội dung bài viết.
 - **Nguồn tin ngoại bộ**: Được cấu hình bằng YAML trong `workers/news/config/`:
   - `rss_sources.yml`: Cấu hình danh sách RSS feeds (CoinDesk, Cointelegraph).
