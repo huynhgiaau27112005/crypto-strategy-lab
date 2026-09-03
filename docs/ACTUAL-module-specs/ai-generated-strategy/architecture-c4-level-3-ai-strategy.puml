@@ -1,0 +1,110 @@
+@startuml
+title C4 Level 3 — AI-Generated Strategy Subsystem & Integration
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam linetype ortho
+skinparam nodesep 30
+skinparam ranksep 55
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 11
+
+actor "User / Browser" as USER
+
+package "Frontend" as FE {
+    rectangle "AiStrategyPage\nCodeEditor (Monaco)\nValidationCheckTable" as FE_UI
+    rectangle "api/client.ts" as FE_API
+}
+
+package "Backend — NestJS (API Process)" as BE {
+
+    package "AI Strategy Module" as AI_MOD {
+        rectangle "AiStrategyController\nPOST /generate\nPOST /validate\nPOST /save\nPOST /run\nGET /mine" as AI_C
+        rectangle "AiStrategyService\ngenerate / validate / save / run\norchestrator" as AI_S
+        rectangle "AiGenerateQueueService\nenqueue(userId, prompt)\nBullMQ producer" as AI_Q
+        rectangle "LlmProviderFactory\nresolve: OpenAI / Fake" as LLM_FACTORY
+        rectangle "AiStrategyValidatorService\nchild_process.spawn validate.py\n10s hard timeout" as AI_VAL_SVC
+        rectangle "AiStrategyRunnerService\nchild_process.spawn run.py\n30s hard timeout" as AI_RUN_SVC
+        rectangle "AiStrategyRepository\nSELECT MAX(version)+1\nINSERT immutable version" as AI_REPO
+    }
+
+    package "Database Layer" as DB_LAYER {
+        rectangle "DatabaseService\nraw pg.Pool" as DB_S
+    }
+}
+
+package "Worker Process (worker.ts)" as WORKER {
+    rectangle "AiGenerateProcessor\n@Processor('ai-generate')\nconcurrency = 2\nstores draft in returnvalue" as AI_PROC
+    rectangle "AiStrategySignalPrecomputeService\nwhole-series execution\nruns once per experiment" as AI_PRE
+}
+
+package "Strategy Engine Integration" as STRAT_ENGINE {
+    rectangle "AiStrategyPluginAdapter\nStrategyPlugin for 'AI:<id>'\nO(1) memory lookup" as ADAPTER
+    rectangle "StrategyRegistry\nroutes 'AI:*' -> Adapter" as REGISTRY
+}
+
+package "Queue / Cache" as INFRA {
+    queue "Redis 7\nBullMQ Queue: 'ai-generate'\ndraft job returnvalue" as REDIS
+}
+
+database "PostgreSQL\n\nTable: strategies\nColumns: id, name, code, prompt,\nmodel_name, version, type='AI_GENERATED'" as PG
+
+package "Python Subprocesses (workers/ai-strategy)" as PYTHON_AI {
+    rectangle "validate.py\n4 chốt chặn:\nparses, contract, safety, smoke" as PY_VAL
+    rectangle "sandbox.py\nAST Visitor: cấm import/dunder\nrestricted builtins whitelist" as PY_SANDBOX
+    rectangle "run.py\ngenerate_signals(candles)\nsignal.alarm(20) timeout" as PY_RUN
+}
+
+cloud "External LLM API\nOpenAI / OpenRouter\nChat Completions" as EXT_LLM
+
+USER --> FE_UI
+FE_UI --> FE_API
+
+FE_API --> AI_C : REST calls
+AI_C --> AI_S : direct validate/save/run
+AI_C --> AI_Q : async generate
+
+AI_Q --> REDIS : add job
+REDIS --> AI_PROC : dispatch job
+AI_PROC --> AI_S : generate(prompt)
+AI_PROC --> REDIS : store draft result
+
+AI_S --> LLM_FACTORY : get provider
+LLM_FACTORY --> EXT_LLM : HTTP Chat Completions
+AI_S --> AI_VAL_SVC : validateCode()
+AI_VAL_SVC --> PY_VAL : spawn (stdin/stdout JSON)
+PY_VAL --> PY_SANDBOX : AST scan
+
+AI_S --> AI_REPO : save version
+AI_REPO --> DB_S : atomic INSERT
+DB_S --> PG
+
+AI_PRE --> AI_RUN_SVC : precompute(candles, id)
+AI_RUN_SVC --> PY_RUN : spawn (stdin/stdout JSON)
+PY_RUN --> PY_SANDBOX : AST scan
+AI_PRE --> ADAPTER : stash signals in SignalContext
+
+REGISTRY --> ADAPTER : route 'AI:<id>'
+
+note right of AI_VAL_SVC
+    Kiểm duyệt an toàn nghiêm ngặt:
+    Cấm toàn bộ import, cấm dunder.
+    Chạy thử trên 5 nến mẫu trước khi
+    cho phép lưu vào database.
+end note
+
+note bottom of AI_PRE
+    Whole-Series Precomputation:
+    Python runner chỉ chạy ĐÚNG 1 LẦN
+    cho toàn bộ chuỗi nến của đợt thử nghiệm.
+    Giảm chi phí IPC từ O(N) xuống O(1).
+end note
+
+note right of ADAPTER
+    Strategy Engine hoàn toàn
+    không biết chi tiết AI hay Python.
+    Adapter đóng vai trò cầu nối chuẩn,
+    trả tín hiệu O(1) từ bộ nhớ.
+end note
+
+@enduml

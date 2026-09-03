@@ -1,0 +1,74 @@
+@startuml C4_Level3_Strategy_Modules
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Component View: Strategy Search Service
+
+Person(customer, "Trading User", "A user who wants to search, backtest, and evaluate trading strategies.")
+
+Container(spa, "UI", "SPA / JavaScript", "Single-page app where users configure and run strategy searches and backtests.")
+ContainerQueue(queue, "Message Queue", "BullMQ", "Decouples strategy search requests from long-running backtest execution.")
+ContainerDb(db, "Database", "PostgreSQL + TimescaleDB", "Stores market candle data, strategy configs, and backtest results.")
+
+System_Boundary(strategySearchSystem, "Strategy Search System") {
+
+    Component(searchApi, "Strategy Search API", "Component: REST/JSON API", "Receives strategy search requests, orchestrates data readiness, queues backtest jobs, and returns results to the UI.")
+
+    Component(marketData, "Market Data Module", "Component: Javascript", "Ensures required candle data exists and is up to date before any strategy or search algorithm runs, so callers never need to manually check or manage database state.")
+
+    Component(processor, "Search Processor", "Component: Queue Consumer/Worker", "Consumes queued backtest jobs and drives execution via the Backtesting Module.")
+
+    Component(backtesting, "Backtesting Module", "Component: Javascript", "Runs a strategy against historical market data and produces performance results.")
+
+    Component(compositeStrategy, "Composite Strategy Module", "Component: Javascript", "Combines and orchestrates one or more strategies into a single executable strategy definition.")
+
+    Component(searchModule, "Strategy Search Module", "Component: Javascript", "Coordinates the search execution flow for a job, delegating strategy evaluation to the Backtesting Module.")
+
+    Component(strategyEngine, "Strategy Engine Module", "Component: Javascript", "Core execution engine that evaluates strategy logic against market data bar-by-bar.")
+
+    Component(strategyPlugin, "Strategy Plugin Module", "Component: Javascript", "Pluggable, user- or vendor-defined strategy implementations invoked by the composite strategy.")
+}
+
+' 1. UI calls the Search API
+Rel(customer, spa, "Uses")
+Rel(spa, searchApi, "Runs strategy search / backtest using", "JSON/HTTPS")
+
+' 2. Search API uses Market Data Module to guarantee data readiness
+Rel(searchApi, marketData, "Requests data readiness check from", "in-process call")
+Note right of marketData
+  Guarantees that any downstream
+  trading strategy or search algorithm
+  always has the candle data it needs
+  to run — fetching/backfilling from
+  external sources as required —
+  so callers never manually manage
+  database state.
+end note
+
+' 2.2 Market Data Module reads/writes candle data
+Rel(marketData, db, "Reads from and writes to", "PostgreSQL + TimescaleDB")
+
+' 3. Search API pushes job to queue
+Rel(searchApi, queue, "Pushes backtest job to")
+Rel(searchApi, db, "Retrieves candle data")
+
+' 4. Processor receives job and uses Backtesting Module
+Rel(queue, processor, "Delivers job to")
+Rel(processor, searchModule, "Delegates job to")
+Rel(searchModule, backtesting, "Runs backtest using")
+
+' 5. Backtesting calls Composite Strategy Module
+Rel(backtesting, compositeStrategy, "Evaluates strategy via")
+
+' 6. Composite Strategy calls Strategy Engine Module
+Rel(compositeStrategy, strategyEngine, "Delegates execution to")
+
+' 7. Composite Strategy calls Strategy Plugin Module
+Rel(strategyEngine, strategyPlugin, "Invokes")
+
+' 8. Result is emitted and returned via the Strategy Search API
+Rel(processor, searchApi, "Emits completed result to", "event/callback")
+Rel(searchApi, spa, "Returns backtest result to", "JSON/HTTPS")
+
+@enduml

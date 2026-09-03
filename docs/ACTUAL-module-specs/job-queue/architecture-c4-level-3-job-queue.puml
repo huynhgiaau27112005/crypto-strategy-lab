@@ -1,0 +1,145 @@
+@startuml
+title C4 Level 3 — Job Queue & Worker Infrastructure
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam linetype ortho
+skinparam nodesep 30
+skinparam ranksep 55
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 11
+
+actor "User / Browser" as USER
+
+package "Frontend" as FE {
+    rectangle "StrategySearchPage\nNewsPage\nAiStrategyPage" as FE_UI
+    rectangle "api/client.ts" as FE_API
+}
+
+package "Backend — NestJS (API Process)" as BE {
+
+    package "Strategy Search Module" as SEARCH_MOD {
+        rectangle "StrategySearchController\nPOST /start\nGET /experiments/:id" as SEARCH_C
+        rectangle "SearchQueueService\nenqueue(experimentId)\ncoalescing check" as SEARCH_Q
+    }
+
+    package "News Module" as NEWS_MOD {
+        rectangle "NewsController\nPOST /news/crawl\nGET /news/crawl/status" as NEWS_C
+        rectangle "NewsCrawlQueueService\nenqueue()\ncoalescing check" as NEWS_Q
+    }
+
+    package "AI Strategy Module" as AI_MOD {
+        rectangle "AiStrategyController\nPOST /ai-strategy/generate/queue" as AI_C
+        rectangle "AiGenerateQueueService\nenqueue(userId, prompt)" as AI_Q
+    }
+
+    package "Queue Observability" as HEALTH_MOD {
+        rectangle "QueueHealthService\nGET /health/queue\ninspects BullMQ states" as HEALTH_S
+    }
+
+    package "Database Layer" as DB_LAYER {
+        rectangle "DatabaseService\nraw pg.Pool" as DB_S
+    }
+}
+
+package "Worker Process (worker.ts)" as WORKER {
+
+    package "Search Execution" as WORKER_SEARCH {
+        rectangle "SearchProcessor\n@Processor('search')\nconcurrency = 5" as SEARCH_PROC
+        rectangle "StrategySearchService\nrun(experimentId)\ncandidate loop" as SEARCH_EXEC
+        rectangle "CandidateFingerprintService\nSHA-256 canonical hash" as FINGERPRINT
+        rectangle "BacktestingService\nsimulation engine" as BACKTEST
+    }
+
+    package "News Crawl Execution" as WORKER_NEWS {
+        rectangle "NewsCrawlProcessor\n@Processor('news-crawl')\nconcurrency = 1" as NEWS_PROC
+        rectangle "NewsCrawlService\nspawn main.py\ntimeout 10m" as NEWS_EXEC
+    }
+
+    package "AI Generation Execution" as WORKER_AI {
+        rectangle "AiGenerateProcessor\n@Processor('ai-generate')\nconcurrency = 2" as AI_PROC
+        rectangle "AiStrategyService\ngenerate(prompt)\ncalls LLM provider" as AI_EXEC
+    }
+
+    package "CQRS & Events" as WORKER_EVENTS {
+        rectangle "EventEmitter2\nin-process event bus" as EVENT_BUS
+        rectangle "LeaderboardEventsHandler\nrebuilds leaderboard" as LB_HANDLER
+    }
+}
+
+package "Broker & Cache" as INFRA {
+    queue "Redis 7\nBullMQ Queues:\n'search', 'news-crawl', 'ai-generate'\nleaderboard:version counters" as REDIS
+}
+
+database "PostgreSQL / TimescaleDB\n\nexperiments\ncandidates\nbacktest_runs\nnews\nstrategies\nleaderboards" as PG
+
+cloud "Python Subprocesses" as PYTHON {
+    rectangle "workers/news/main.py\n(Scraper + Sentiment)" as PY_NEWS
+    rectangle "workers/ai-strategy/run.py\n(Whole-series runner)" as PY_AI
+}
+
+USER --> FE_UI
+FE_UI --> FE_API
+
+FE_API --> SEARCH_C : POST /strategy-search/start
+FE_API --> NEWS_C : POST /news/crawl
+FE_API --> AI_C : POST /ai-strategy/generate/queue
+FE_API --> HEALTH_S : GET /health/queue
+
+SEARCH_C --> SEARCH_Q
+NEWS_C --> NEWS_Q
+AI_C --> AI_Q
+
+SEARCH_C --> DB_S : INSERT experiments (PENDING)
+DB_S --> PG
+
+SEARCH_Q --> REDIS : add('run', { experimentId, correlationId })
+NEWS_Q --> REDIS : add('crawl', payload)
+AI_Q --> REDIS : add('generate', payload)
+
+HEALTH_S --> REDIS : query queue counts
+
+REDIS --> SEARCH_PROC : dispatch search job
+REDIS --> NEWS_PROC : dispatch news-crawl job
+REDIS --> AI_PROC : dispatch ai-generate job
+
+SEARCH_PROC --> SEARCH_EXEC : run(experimentId)
+SEARCH_EXEC --> FINGERPRINT : canonicalize & hash
+SEARCH_EXEC --> BACKTEST : run backtest
+SEARCH_EXEC --> DB_S : persist results
+SEARCH_EXEC --> EVENT_BUS : emit(BacktestCompleted)
+
+EVENT_BUS --> LB_HANDLER
+LB_HANDLER --> DB_S : rebuild leaderboard_entries
+LB_HANDLER --> REDIS : INCR leaderboard:version:<id>
+
+NEWS_PROC --> NEWS_EXEC : execute()
+NEWS_EXEC --> PY_NEWS : child_process.spawn
+PY_NEWS --> PG : direct SQL UPSERT
+
+AI_PROC --> AI_EXEC : generate()
+AI_PROC --> REDIS : store draft in returnvalue
+
+SEARCH_EXEC --> PY_AI : precompute AI signals
+
+note right of SEARCH_Q
+    Producer kiểm tra in-flight jobs
+    để thực hiện coalescing,
+    tránh chạy trùng lặp cùng một workload.
+end note
+
+note bottom of WORKER
+    Worker Process hoàn toàn độc lập,
+    KHÔNG mở cổng HTTP phục vụ người dùng.
+    Sự cố cạn kiệt bộ nhớ (OOM) trong Worker
+    không làm gián đoạn API hoặc WebSocket.
+end note
+
+note right of REDIS
+    BullMQ lưu trữ trạng thái tác vụ,
+    retry exponential backoff (10s),
+    và tự động dọn dẹp job
+    (removeOnComplete/Fail: 50).
+end note
+
+@enduml

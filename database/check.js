@@ -51,15 +51,15 @@ try {
     `);
 
     const userStrategyCount = await client.query(`
-        SELECT COUNT(*) AS count
+        SELECT COUNT(DISTINCT name) AS count
         FROM strategies
         WHERE type = 'SYSTEM';
     `);
 
-    const expectedUserStrategies = 4;
+    const expectedUserStrategies = 5;
     if (Number(userStrategyCount.rows[0].count) !== expectedUserStrategies) {
         throw new Error(
-            `System strategies incomplete: expected ${expectedUserStrategies}, found ${userStrategyCount.rows[0].count}.`
+            `System strategy catalog incomplete: expected ${expectedUserStrategies} names, found ${userStrategyCount.rows[0].count}.`
         );
     }
 
