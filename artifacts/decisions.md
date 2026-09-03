@@ -701,3 +701,17 @@ Dạng array có trong type signature nhưng được truyền thẳng cho `even
 - Khi thiếu API key LLM, AI Strategy giữ app hoạt động nhưng generate thất bại với
   thông báo cấu hình trên frontend. Không dùng `FakeLlmProvider` và không tạo code
   mẫu có thể bị hiểu nhầm là kết quả từ AI.
+
+## F22. Khôi phục workspace và thực thi News Sentiment đúng candidate (2026-09-03)
+
+- Workspace Backtest/Leaderboard (`experimentId`, config, candidate đang xem và form)
+  được lưu trong `sessionStorage`: refresh cùng tab không mất kết quả, nhưng phiên
+  trình duyệt mới không tự kế thừa state cũ.
+- Khi người dùng bật domain `INFORMATION`, News Sentiment là member bắt buộc của
+  mỗi candidate; nó không còn có thể biến mất khỏi toàn bộ Top-K vì bước chọn domain
+  ngẫu nhiên.
+- Sentiment được query một lần rồi dựng chuỗi riêng cho từng `lookbackHours` mà các
+  version có thể dùng. Search và regenerate đều truyền đúng chuỗi của candidate vào
+  backtester; không dùng một cửa sổ xấp xỉ chung và không bỏ sentiment ở regenerate.
+- Backtest chart hiển thị Entry, Exit, TP và SL của trade đang chọn. Leaderboard đặt
+  `overallScore` cạnh Version và bỏ Max DD khỏi bảng chính theo UI đã chốt.

@@ -30,11 +30,12 @@ export interface PriceMarker {
   tone: 'up' | 'down' | 'neutral'
 }
 
-/** Time-based marker (LONG/SHORT entry arrows on the candle series). */
+/** Time-based marker for a trade entry or exit on the candle series. */
 export interface TimeMarker {
   time: string
   label: string
   side: 'LONG' | 'SHORT'
+  kind?: 'ENTRY' | 'EXIT'
 }
 
 function toSeconds(iso: string): UTCTimestamp {
@@ -120,7 +121,7 @@ export default function CandleChart({
   showVolume?: boolean
   /** Extra horizontal price lines (entry / stop-loss / take-profit of a backtested trade). */
   markers?: PriceMarker[]
-  /** Entry arrows at trade open times (LONG below bar, SHORT above). */
+  /** Entry arrows and the selected trade's exit point. */
   timeMarkers?: TimeMarker[]
   height?: number
 }) {
@@ -354,13 +355,25 @@ export default function CandleChart({
 
     const markerPlugin = seriesMarkersRef.current
     if (markerPlugin) {
-      const seriesMarkers: SeriesMarker<UTCTimestamp>[] = (timeMarkers ?? []).map((m) => ({
-        time: toSeconds(m.time),
-        position: m.side === 'LONG' ? 'belowBar' : 'aboveBar',
-        color: m.side === 'LONG' ? upColor : downColor,
-        shape: m.side === 'LONG' ? 'arrowUp' : 'arrowDown',
-        text: m.side === 'LONG' ? 'LONG ENTRY' : 'SHORT ENTRY',
-      }))
+      const seriesMarkers: SeriesMarker<UTCTimestamp>[] = (timeMarkers ?? [])
+        .map((m): SeriesMarker<UTCTimestamp> =>
+          m.kind === 'EXIT'
+            ? {
+                time: toSeconds(m.time),
+                position: 'inBar',
+                color: accentColor,
+                shape: 'circle',
+                text: m.label,
+              }
+            : {
+                time: toSeconds(m.time),
+                position: m.side === 'LONG' ? 'belowBar' : 'aboveBar',
+                color: m.side === 'LONG' ? upColor : downColor,
+                shape: m.side === 'LONG' ? 'arrowUp' : 'arrowDown',
+                text: m.label,
+              },
+        )
+        .sort((a, b) => Number(a.time) - Number(b.time))
       markerPlugin.setMarkers(seriesMarkers)
     }
   }, [candles, overlays, showLevels, showVolume, markers, timeMarkers])

@@ -461,6 +461,20 @@ export class StrategySearchService implements OnApplicationBootstrap {
     const created: string[] = [];
     let skipped = 0;
 
+    const sentimentLookbacks = new Set<number>();
+    for (const members of combinations.values()) {
+      const sentiment = members.find((member) => member.name === 'NEWS_SENTIMENT');
+      if (!sentiment) continue;
+      const parameters =
+        strategyName === 'NEWS_SENTIMENT' ? newParameters : sentiment.parameters;
+      const hours = Number(parameters.lookbackHours);
+      if (Number.isFinite(hours) && hours > 0) sentimentLookbacks.add(hours);
+    }
+    const sentimentByLookback = await this.sentimentPrecompute.precomputeMany(
+      candles,
+      [...sentimentLookbacks],
+    );
+
     for (const members of combinations.values()) {
       // Substitute ONLY the changed strategy: its new version row and its
       // newly saved parameters. Every other member keeps the exact row and
@@ -575,7 +589,10 @@ export class StrategySearchService implements OnApplicationBootstrap {
           candles,
           weightMap,
           aiSignals,
-          undefined,
+          this.sentimentSeriesForCandidate(
+            candidateDefinition,
+            sentimentByLookback,
+          ),
           config.costs,
           experimentConfig.start_time,
         );
@@ -626,28 +643,15 @@ export class StrategySearchService implements OnApplicationBootstrap {
       summaries,
     };
   }
-
-
-  // The sentiment series depends on `lookbackHours`, which is a per-member
-  // parameter the generator varies. Precomputing per candidate would undo
-  // the whole point of precomputing, so one series is built per run at the
-  // WIDEST lookback the catalog can sample. Narrower windows are a subset
-  // of a wider one and, on this data density (a handful of articles a day),
-  // resolve to the same sign — documented in artifacts/decisions.md as an
-  // accepted approximation rather than left as a silent inaccuracy.
-  private static readonly SENTIMENT_LOOKBACK_HOURS = 48;
-
-  // Empty (and therefore always-abstaining) unless the run actually
-  // contains a sentiment member — no reason to touch `news` otherwise.
-  private async sentimentSeriesFor(
-    candles: CandleEntity[],
-    hasSentimentMember: boolean,
-  ): Promise<Array<number | null> | undefined> {
-    if (!hasSentimentMember) return undefined;
-    return this.sentimentPrecompute.precompute(
-      candles,
-      StrategySearchService.SENTIMENT_LOOKBACK_HOURS,
+  private sentimentSeriesForCandidate(
+    candidate: CandidateDefinition,
+    byLookback: Map<number, Array<number | null>>,
+  ): Array<number | null> | undefined {
+    const sentiment = candidate.members.find(
+      (member) => member.type === 'NEWS_SENTIMENT',
     );
+    if (!sentiment) return undefined;
+    return byLookback.get(Number(sentiment.parameters.lookbackHours));
   }
 
   // Loads the Python source for each AI member being regenerated, keyed the
@@ -1033,13 +1037,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
         StrategySignal[]
       >;
 
-      // Required-flow #17: a sentiment member reads this series, built once
-      // for the whole run exactly like the AI signals above.
-      const sentimentScores = await this.sentimentSeriesFor(
-        candles,
-        keyedRows.some(({ row }) => row.name === 'NEWS_SENTIMENT'),
-      );
-
       // Every selectable parameter version for the built-ins this
       // experiment was configured with — the generator samples over these
       // rather than an in-code tuple list, so a candidate's version label
@@ -1049,6 +1046,24 @@ export class StrategySearchService implements OnApplicationBootstrap {
           .filter(({ row }) => row.type !== 'AI_GENERATED')
           .map(({ row }) => row.name),
         experiment.user_id,
+      );
+      const hasSentiment = keyedRows.some(
+        ({ row }) => row.name === 'NEWS_SENTIMENT',
+      );
+      const configuredLookbacks = versionRows
+        .filter((row) => row.name === 'NEWS_SENTIMENT')
+        .map((row) => Number((row.parameters as Record<string, unknown>).lookbackHours))
+        .filter((hours) => Number.isFinite(hours) && hours > 0);
+      // An unseeded database uses the in-code NEWS_SENTIMENT sampler, which
+      // can emit any of these four values.
+      const sentimentLookbacks = hasSentiment
+        ? configuredLookbacks.length > 0
+          ? configuredLookbacks
+          : [6, 12, 24, 48]
+        : [];
+      const sentimentByLookback = await this.sentimentPrecompute.precomputeMany(
+        candles,
+        sentimentLookbacks,
       );
       const runCatalog = this.buildRunCatalog(
         keyedRows,
@@ -1135,7 +1150,10 @@ export class StrategySearchService implements OnApplicationBootstrap {
             candles,
             weightMap,
             aiSignals,
-            sentimentScores,
+            this.sentimentSeriesForCandidate(
+              candidateDefinition,
+              sentimentByLookback,
+            ),
             config.costs,
             experimentConfig.start_time,
           );

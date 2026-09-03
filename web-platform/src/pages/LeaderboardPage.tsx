@@ -300,9 +300,9 @@ export default function LeaderboardPage() {
                     <th style={{ width: 52 }}>Rank</th>
                     <th>Tổ hợp</th>
                     <th style={{ width: 96 }}>Version</th>
+                    <th style={{ textAlign: 'right' }}>Overall Score</th>
                     <th style={{ textAlign: 'right' }}>Profit (USD)</th>
                     <th style={{ textAlign: 'right' }}>Winrate</th>
-                    <th style={{ textAlign: 'right' }}>Max DD</th>
                     <th style={{ textAlign: 'right' }}>Trades</th>
                   </tr>
                 </thead>
@@ -327,14 +327,14 @@ export default function LeaderboardPage() {
                         <td>
                           <span className="tag tag-outline mono">{versionLabel(r.candidate_id)}</span>
                         </td>
+                        <td className="mono" style={{ textAlign: 'right', fontWeight: 600 }}>
+                          {fmtNum(Number(r.overall_score))}
+                        </td>
                         <td className="mono text-up" style={{ textAlign: 'right' }}>
                           {fmtUsd(Number(r.profit_loss))}
                         </td>
                         <td className="mono" style={{ textAlign: 'right' }}>
                           {fmtPct(Number(r.win_rate))}
-                        </td>
-                        <td className="mono text-down" style={{ textAlign: 'right' }}>
-                          {fmtPctRaw(Number(r.max_drawdown))}
                         </td>
                         <td className="mono" style={{ textAlign: 'right' }}>
                           {r.number_of_trades}
@@ -367,9 +367,9 @@ export default function LeaderboardPage() {
                 <tr>
                   <th style={{ width: 96 }}>Hạng</th>
                   <th>Tổ hợp</th>
+                  <th style={{ textAlign: 'right' }}>Overall Score</th>
                   <th style={{ textAlign: 'right' }}>Profit (USD)</th>
                   <th style={{ textAlign: 'right' }}>Winrate</th>
-                  <th style={{ textAlign: 'right' }}>Max DD</th>
                   <th style={{ textAlign: 'right' }}>Trades</th>
                   <th style={{ width: 150 }} />
                 </tr>
@@ -384,14 +384,14 @@ export default function LeaderboardPage() {
                     <td className="mono" style={{ fontSize: 13 }}>
                       {row.combo}
                     </td>
+                    <td className="mono" style={{ textAlign: 'right', fontWeight: 600 }}>
+                      {row.overallScore == null ? '—' : fmtNum(row.overallScore)}
+                    </td>
                     <td className="mono" style={{ textAlign: 'right' }}>
                       {row.profitLoss == null ? '—' : fmtUsd(row.profitLoss)}
                     </td>
                     <td className="mono" style={{ textAlign: 'right' }}>
                       {row.winRate == null ? '—' : fmtPct(row.winRate)}
-                    </td>
-                    <td className="mono text-down" style={{ textAlign: 'right' }}>
-                      {row.maxDrawdown == null ? '—' : fmtPctRaw(row.maxDrawdown)}
                     </td>
                     <td className="mono" style={{ textAlign: 'right' }}>
                       {row.numberOfTrades}

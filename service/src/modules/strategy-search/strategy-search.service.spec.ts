@@ -149,6 +149,7 @@ describe('StrategySearchService', () => {
     };
     const sentimentPrecompute = {
       precompute: jest.fn().mockResolvedValue([]),
+      precomputeMany: jest.fn().mockResolvedValue(new Map()),
     };
     // start() backfills candles before checking the window; the mock makes
     // that a no-op so these tests stay offline and deterministic.

@@ -1,11 +1,11 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { MarketInterval, RankedCandidateSummary } from '../api/types'
 import { vietnamDaysAgo, vietnamToday } from '../lib/datetime'
 
 /**
  * The applied config of the most recent `POST /strategy-search/experiments`
- * call — kept client-side only (the backend does not echo a config summary
- * back beyond what's persisted). `maxCandidates` is always the backend's
+ * call — kept client-side and mirrored to this tab's sessionStorage (the
+ * backend does not echo a complete display summary). `maxCandidates` is always the backend's
  * own default (100, artifacts/api-contract.md §2) because the approved
  * config form (docs/ui-prototype) has no field for it.
  */
@@ -104,21 +104,69 @@ interface ExperimentContextValue {
 
 const ExperimentContext = createContext<ExperimentContextValue | undefined>(undefined)
 
+const EXPERIMENT_WORKSPACE_KEY = 'crypto-strategy-lab:experiment-workspace:v1'
+
+interface PersistedExperimentWorkspace {
+  experimentId: string | null
+  backtestCandidateId: string | null
+  lastConfig: LastRunConfig | null
+  backtestForm: BacktestFormState
+  myVersionCandidates: RankedCandidateSummary[]
+}
+
+function loadPersistedWorkspace(): Partial<PersistedExperimentWorkspace> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = sessionStorage.getItem(EXPERIMENT_WORKSPACE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Partial<PersistedExperimentWorkspace>
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
 /**
- * Shares the current experiment run (id + applied config) and the
+ * Shares and session-persist the current experiment run (id + applied config) and the
  * candidate currently drilled into, between the Backtest and Leaderboard
  * tabs — same live state, no second fetch, no backend endpoint to store
  * it. Scoped at the `/app` route (like StrategySelectionContext) so it
- * survives switching tabs.
+ * survives switching tabs and a browser refresh in the same tab.
  */
 export function ExperimentProvider({ children }: { children: ReactNode }) {
-  const [experimentId, setExperimentId] = useState<string | null>(null)
-  const [backtestCandidateId, setBacktestCandidateId] = useState<string | null>(null)
-  const [lastConfig, setLastConfig] = useState<LastRunConfig | null>(null)
-  const [backtestForm, setBacktestForm] = useState<BacktestFormState>(DEFAULT_BACKTEST_FORM)
-  const [myVersionCandidates, setMyVersionCandidates] = useState<RankedCandidateSummary[]>([])
+  const [persisted] = useState(loadPersistedWorkspace)
+  const [experimentId, setExperimentId] = useState<string | null>(persisted.experimentId ?? null)
+  const [backtestCandidateId, setBacktestCandidateId] = useState<string | null>(
+    persisted.backtestCandidateId ?? null,
+  )
+  const [lastConfig, setLastConfig] = useState<LastRunConfig | null>(persisted.lastConfig ?? null)
+  const [backtestForm, setBacktestForm] = useState<BacktestFormState>({
+    ...DEFAULT_BACKTEST_FORM,
+    ...persisted.backtestForm,
+  })
+  const [myVersionCandidates, setMyVersionCandidates] = useState<RankedCandidateSummary[]>(
+    persisted.myVersionCandidates ?? [],
+  )
   const [leaderboardRev, setLeaderboardRev] = useState(0)
   const bumpLeaderboard = useCallback(() => setLeaderboardRev((n) => n + 1), [])
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(
+        EXPERIMENT_WORKSPACE_KEY,
+        JSON.stringify({
+          experimentId,
+          backtestCandidateId,
+          lastConfig,
+          backtestForm,
+          myVersionCandidates,
+        } satisfies PersistedExperimentWorkspace),
+      )
+    } catch {
+      // Storage can be unavailable in locked-down/private browser modes;
+      // the in-memory workspace remains fully functional in that case.
+    }
+  }, [experimentId, backtestCandidateId, lastConfig, backtestForm, myVersionCandidates])
 
   const value = useMemo<ExperimentContextValue>(
     () => ({

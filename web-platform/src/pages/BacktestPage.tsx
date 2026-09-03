@@ -273,17 +273,32 @@ export default function BacktestPage() {
     if (selectedTrade.takeProfit != null) {
       out.push({ price: selectedTrade.takeProfit, label: 'Take Profit', tone: 'up' })
     }
+    if (selectedTrade.exitPrice != null) {
+      out.push({ price: selectedTrade.exitPrice, label: 'Exit', tone: 'neutral' })
+    }
     return out
   }, [selectedTrade])
 
   const chartTimeMarkers = useMemo(
-    () =>
-      trades.map((t) => ({
+    () => {
+      const entries = trades.map((t) => ({
         time: t.entryTime,
         label: t.side === 'LONG' ? 'LONG ENTRY' : 'SHORT ENTRY',
         side: t.side,
-      })),
-    [trades],
+        kind: 'ENTRY' as const,
+      }))
+      if (!selectedTrade?.exitTime) return entries
+      return [
+        ...entries,
+        {
+          time: selectedTrade.exitTime,
+          label: `EXIT · ${selectedTrade.exitReason ? (EXIT_REASON_LABEL[selectedTrade.exitReason] ?? selectedTrade.exitReason) : 'Kết thúc'}`,
+          side: selectedTrade.side,
+          kind: 'EXIT' as const,
+        },
+      ]
+    },
+    [trades, selectedTrade],
   )
 
   const resultStatusMessage = useMemo(() => {
@@ -625,10 +640,10 @@ export default function BacktestPage() {
                         selectedTrade.entryPrice,
                       )}${selectedTrade.stopLoss != null ? ` · SL ${fmtNum(selectedTrade.stopLoss)}` : ''}${
                         selectedTrade.takeProfit != null ? ` · TP ${fmtNum(selectedTrade.takeProfit)}` : ''
-                      }. Bấm một dòng trong bảng bên dưới để đổi lệnh được đánh dấu.`
+                      }${selectedTrade.exitPrice != null ? ` · Exit ${fmtNum(selectedTrade.exitPrice)}` : ''}. Bấm một dòng trong bảng bên dưới để đổi lệnh được đánh dấu.`
                     : 'Chưa có lệnh nào để đánh dấu trên biểu đồ.'}
                   {!hasProtectiveLevels && trades.length > 0
-                    ? ' Run này chạy với Stop Loss / Take Profit tắt nên chỉ có điểm Entry.'
+                    ? ' Run này chạy với Stop Loss / Take Profit tắt nên chỉ có Entry và Exit.'
                     : ''}
                 </p>
               </>

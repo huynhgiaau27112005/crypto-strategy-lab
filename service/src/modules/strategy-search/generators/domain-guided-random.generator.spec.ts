@@ -53,4 +53,23 @@ describe('DomainGuidedRandomGenerator', () => {
       expect(member).not.toHaveProperty('weight');
     }
   });
+
+  it('always includes News Sentiment when INFORMATION is enabled', () => {
+    const random = createSeededRandom(20260903);
+    const config = {
+      ...DEFAULT_SEARCH_CONFIG,
+      enabledDomains: [
+        'TREND',
+        'MOMENTUM',
+        'VOLATILITY',
+        'STRUCTURE',
+        'INFORMATION',
+      ] as const,
+    };
+
+    for (let iteration = 0; iteration < 100; iteration += 1) {
+      const candidate = generator.generate(random, config);
+      expect(candidate.members.some((member) => member.type === 'NEWS_SENTIMENT')).toBe(true);
+    }
+  });
 });
