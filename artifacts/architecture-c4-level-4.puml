@@ -1,0 +1,438 @@
+@startuml architecture-c4-level-3
+' C4 Level 3 — Component (AS BUILT)
+' Nguồn sự thật: service/src, web-platform/src, workers/, database/migrations
+' Mọi tên trong sơ đồ là tên class/file có thật trong code.
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam linetype ortho
+skinparam nodesep 30
+skinparam ranksep 55
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 11
+skinparam ArrowColor #444444
+skinparam rectangle {
+  BackgroundColor #FAFAFA
+  BorderColor #999999
+}
+skinparam package {
+  BackgroundColor #FFFFFF
+  BorderColor #666666
+}
+skinparam database {
+  BackgroundColor #EEF3F8
+  BorderColor #597EA3
+}
+skinparam cloud {
+  BackgroundColor #F7F3EE
+  BorderColor #A08A6A
+}
+
+actor "User / Browser" as USER
+
+' =====================================================================
+package "Frontend — React 19 + Vite (web-platform/)" as FE {
+  rectangle "LandingPage\nAuthPage" as FE_AUTH
+  rectangle "WorkspaceLayout\nNavRail" as FE_SHELL
+  rectangle "RealtimePage\n(4 pane, chart nến)" as FE_RT
+  rectangle "StrategyEnginePage\nWeightedVotingTable\nParameterPanel" as FE_STRAT
+  rectangle "AiStrategyPage" as FE_AI
+  rectangle "BacktestPage\nConfirmRerunDialog" as FE_BT
+  rectangle "LeaderboardPage" as FE_LB
+  rectangle "NewsSentimentPage" as FE_NEWS
+
+  rectangle "api/client.ts\n(apiFetch, single-flight refresh)" as FE_API
+  rectangle "auth/AuthContext\nRequireAuth" as FE_AUTHCTX
+  rectangle "lib/marketSocket.ts\n(socket.io-client)" as FE_SOCK
+  rectangle "hooks/\nuseMarketSocket, useExperiment,\nuseTopCandidates, useCandidateDetail,\nuseAiStrategy, useAiGenerate" as FE_HOOKS
+  rectangle "state/\nStrategySelectionContext\nExperimentContext\nNewsCrawlContext\nAiGenerateContext" as FE_STATE
+}
+
+USER --> FE_AUTH
+USER --> FE_SHELL
+
+FE_AUTH --> FE_AUTHCTX
+FE_SHELL --> FE_RT
+FE_SHELL --> FE_STRAT
+FE_SHELL --> FE_AI
+FE_SHELL --> FE_BT
+FE_SHELL --> FE_LB
+FE_SHELL --> FE_NEWS
+
+FE_RT --> FE_HOOKS
+FE_BT --> FE_HOOKS
+FE_LB --> FE_HOOKS
+FE_AI --> FE_HOOKS
+FE_STRAT --> FE_STATE
+FE_BT --> FE_STATE
+FE_HOOKS --> FE_STATE
+FE_HOOKS --> FE_API
+FE_AUTHCTX --> FE_API
+FE_RT --> FE_SOCK
+
+' =====================================================================
+package "Modular Monolith — NestJS (service/)" as BE {
+
+  package "Auth Module" as M_AUTH {
+    rectangle "AuthController\n/auth/register /login\n/refresh /logout" as AUTH_C
+    rectangle "AuthService\n(bcrypt, JWT 15m,\nrefresh 30d + rotation)" as AUTH_S
+    rectangle "JwtStrategy\nJwtAuthGuard\n@CurrentUser" as AUTH_G
+    rectangle "UserRepository\nRefreshTokenRepository\n(SHA-256 token hash)" as AUTH_R
+    AUTH_C --> AUTH_S
+    AUTH_S --> AUTH_R
+    AUTH_S ..> AUTH_G
+  }
+
+  package "Market Data Module" as M_MKT {
+    rectangle "MarketDataController\n/market-data/candles\n/market-data/import" as MKT_C
+    rectangle "MarketDataService\nassertAllowedInterval\ngetCandles() = cache-aside\n(task-17)" as MKT_S
+    rectangle "MarketDataGateway\nSocket.IO ns /market\n(1 upstream/interval,\nref-counted teardown)" as MKT_GW
+    rectangle "BinanceClient\n(REST klines + WS stream,\nreconnect backoff)" as MKT_BIN
+    rectangle "CandleRepository" as MKT_R
+    rectangle "config.ts\nALLOWED_INTERVALS" as MKT_CFG
+    MKT_C --> MKT_S
+    MKT_S --> MKT_BIN
+    MKT_S --> MKT_R
+    MKT_S --> MKT_CFG
+    MKT_GW --> MKT_BIN
+    MKT_GW --> MKT_R
+    MKT_GW --> MKT_CFG
+  }
+
+  package "Strategy Plugin Module" as M_PLUG {
+    rectangle "StrategyRegistry\nregister/get/list/has\n(built-ins) +\nresolve(type) (task-15:\nbuilt-in hoặc AI adapter)" as PLUG_REG
+    rectangle "MaPlugin\nRsiPlugin\nBollingerPlugin\nSupportResistancePlugin\nNewsSentimentPlugin\n(INFORMATION — required-flow #17)" as PLUG_P
+    rectangle "AiStrategyPluginAdapter\n(task-15) 1 instance dùng\nchung cho MỌI \"AI:<id>\";\nanalyze() = tra bảng\nSignalContext.aiSignals" as PLUG_AI
+    rectangle "StrategyPluginController\nGET /strategy-plugin/strategies\nGET|POST /strategies/:name/versions" as PLUG_C
+    rectangle "StrategyPluginService\nlistCatalog(userId)\n= built-ins + AI rows\ncủa user (task-15)" as PLUG_S
+    PLUG_P --> PLUG_REG : onModuleInit\nregister()
+    PLUG_AI --> PLUG_REG : onModuleInit\nregisterAiAdapter()
+    PLUG_C --> PLUG_S
+    PLUG_S --> PLUG_REG
+  }
+
+  package "Strategy Engine Module" as M_ENG {
+    rectangle "StrategyEngineService\nanalyze(member, ctx)\n→ delegate to registry" as ENG_S
+    rectangle "RealtimeSignalController\n/strategy-engine/signal" as ENG_RC
+    rectangle "RealtimeSignalService" as ENG_RS
+    ENG_RC --> ENG_RS
+    ENG_RS --> ENG_S
+  }
+
+  package "Composite Strategy Module" as M_COMP {
+    rectangle "CompositeStrategyService\nscore = Σ(w×signal) / Σw\n→ BUY / SELL / HOLD" as COMP_S
+  }
+
+  package "Strategy Search Module" as M_SEARCH {
+    rectangle "StrategySearchController\nPOST /experiments\nGET /experiments/:id[/top]\nPOST /:id/cancel /:id/extend\nPOST /:id/regenerate\nGET /candidates/:id" as SR_C
+    rectangle "StrategySearchService\nstart/extend → schedule()\n= enqueue only.\nrun() = search loop thật,\nchỉ được gọi bởi SearchProcessor.\ngetTop() = cache theo\nleaderboard version (task-17)" as SR_S
+    rectangle "SearchQueueService\nenqueue (scan+coalesce\nby experimentId)\ncancelIfQueued" as SR_Q
+    rectangle "DomainGuidedRandomGenerator" as SR_GEN
+    rectangle "strategy-catalog.ts\nTREND / MOMENTUM /\nVOLATILITY / STRUCTURE" as SR_CAT
+    rectangle "CandidateFingerprintService\nSeededRandom" as SR_FP
+    rectangle "ExperimentRepository\nExperimentConfigRepository\nExperimentIterationRepository\nCandidateRepository\nStrategyRepository" as SR_R
+    SR_C --> SR_S
+    SR_S --> SR_Q : enqueue(experimentId)\ncancelIfQueued(experimentId)
+    SR_S --> SR_GEN
+    SR_GEN --> SR_CAT
+    SR_GEN --> SR_FP
+    SR_S --> SR_R
+  }
+
+  package "Backtesting Module" as M_BT {
+    rectangle "BacktestingService\nrun(candidate, candles, weights)\nfee + slippage, SL/TP,\nevaluation metrics" as BT_S
+    rectangle "BacktestRunRepository\n(1 transaction:\nruns + trades + evaluations)" as BT_R
+    BT_S --> BT_R
+  }
+
+  package "Domain Events" as M_EV {
+    rectangle "EventEmitter2\n(@nestjs/event-emitter)\nin-process, KHÔNG bền vững,\nKHÔNG xuyên tiến trình.\nKhác BullMQ — xem\nartifacts/event-catalog.md" as EV_BUS
+  }
+
+  package "Leaderboard Module" as M_LB {
+    rectangle "LeaderboardEventsHandler\nonIterationBoundary → nuốt lỗi\nonCandidatesRegenerated →\nsuppressErrors:false, lỗi lan\nra HTTP 5xx" as LB_H
+    rectangle "LeaderboardService\nCQRS write side:\nmaterialise leaderboard_entries\n→ cache.incr(version)\nĐược gọi bởi LB_H, KHÔNG\ncòn bởi StrategySearchService" as LB_S
+  }
+
+  package "News Module" as M_NEWS {
+    rectangle "NewsController\nGET /news\nPOST /news/crawl\nPOST /news/crawl/cancel\nGET /news/crawl/status" as NW_C
+    rectangle "NewsService" as NW_S
+    rectangle "NewsCrawlQueueService\ntrigger (scan+coalesce)\ngetStatus (đọc job Redis)" as NW_Q
+    rectangle "NewsCrawlService.execute()\nspawn + await 1 job\n(timeout, exit code)\n— chỉ được gọi bởi\nNewsCrawlProcessor" as NW_X
+    rectangle "NewsRepository" as NW_R
+    rectangle "NewsSentimentPrecomputeService\nchuỗi sentiment/nến,\n1 lần mỗi run" as NW_PC
+    NW_C --> NW_S
+    NW_C --> NW_Q : trigger() / getStatus()
+    NW_S --> NW_R
+  }
+
+  package "Sentiment Module" as M_SENT {
+    rectangle "SentimentController\nGET /sentiment/summary" as ST_C
+    rectangle "SentimentService\n(tính % ở service,\nkhông ở SQL/frontend)" as ST_S
+    ST_C --> ST_S
+    ST_S --> NW_R
+  }
+
+  package "AI Strategy Module" as M_AI {
+    rectangle "AiStrategyController\nPOST /generate → 202 enqueue\nGET /generate/status (poll)\nPOST /validate /save\nGET /mine /:id /samples\nPOST /:id/run" as AI_C
+    rectangle "AiGenerateQueueService\nenqueue (409 if in-flight)\ngetStatus (filter userId)" as AI_Q
+    rectangle "AiStrategyService\ngenerate() chỉ gọi từ Worker\n(validate/save/run vẫn từ API)" as AI_S
+    rectangle "LlmProviderFactory\nOpenAiCompatibleProvider\nFakeProvider (tests, no key)" as AI_P
+    rectangle "AiStrategyValidatorService\n(AST gate)" as AI_V
+    rectangle "AiStrategyRunnerService\npython-process.util\n(timeout, output cap)" as AI_RUN
+    rectangle "contract-prompt.ts\ngenerate_signals(candles)\n→ [BUY|SELL|HOLD]" as AI_CT
+    rectangle "AiStrategyRepository\nlistLatestPerName(userId)\nfindOwnedActiveById\n(task-15)" as AI_R
+    rectangle "AiStrategySignalPrecomputeService\n(task-15) chạy whole-series\n1 lần/experiment run, tuần tự,\ncatch từng lỗi → loại strategy\nkhỏi run, không throw" as AI_PRE
+    AI_C --> AI_Q : generate / status
+    AI_C --> AI_S : validate / save / run
+    AI_S --> AI_P
+    AI_S --> AI_V
+    AI_S --> AI_RUN
+    AI_S --> AI_R
+    AI_P --> AI_CT
+    AI_PRE --> AI_RUN
+  }
+
+  package "Database Module" as M_DB {
+    rectangle "DatabaseService\nraw pg.Pool\nquery / withTransaction\n(KHÔNG dùng ORM)" as DB_S
+  }
+}
+
+' ---- dependency giữa các module (theo imports thật trong *.module.ts)
+ENG_S --> PLUG_REG : registry.resolve(type)\n.analyze() (task-15:\nkhông if theo loại strategy)
+COMP_S --> ENG_S
+BT_S --> COMP_S
+SR_S --> BT_S
+SR_S --> EV_BUS : **await** emitAsync\n"backtest.completed" /\n"backtest.failed" /\n"candidates.regenerated"
+EV_BUS --> LB_H : @OnEvent
+LB_H --> LB_S : rebuildForExperiment\n(topK lấy từ payload)
+LB_S --> EV_BUS : emit "leaderboard.updated"\n(không await)
+SR_S --> PLUG_REG
+SR_FP --> PLUG_REG : displayName
+SR_S --> AI_R : findOwnedActiveById\n(resolve "AI:<id>" ở start())
+SR_S --> AI_PRE : precompute()\n1 lần/run, trước vòng lặp\ncandidate (task-15)
+ENG_RS --> MKT_S
+PLUG_S --> DB_S
+PLUG_S --> AI_R : listLatestPerName(userId)\n(nhóm "Strategy do AI generate")
+
+AUTH_R --> DB_S
+MKT_R --> DB_S
+SR_R --> DB_S
+BT_R --> DB_S
+LB_S --> DB_S
+NW_R --> DB_S
+AI_R --> DB_S
+
+package "Queue Module (queue/) — @Global, dùng bởi cả API và Worker" as M_QUEUE {
+  rectangle "QueueModule\nBullModule.forRootAsync\n(1 nơi duy nhất tạo\nkết nối Redis cho BullMQ)" as Q_MOD
+  rectangle "QueueHealthController\nGET /queue/health" as Q_HC
+  rectangle "QueueHealthService\ngetJobCounts + getWorkers\n(mỗi lần gọi, không cache)" as Q_HS
+  Q_HC --> Q_HS
+}
+SR_Q ..> Q_MOD : @InjectQueue("search")
+NW_Q ..> Q_MOD : @InjectQueue("news-crawl")
+AI_Q ..> Q_MOD : @InjectQueue("ai-generate")
+
+package "Cache Module (cache/) — @Global, dùng bởi cả API và Worker (task-17)" as M_CACHE {
+  rectangle "redis-connection.ts\nredisConnectionOptions()\n(cùng hàm QueueModule dùng —\nkhông đọc REDIS_HOST/PORT\nlần thứ 2)" as CACHE_CFG
+  rectangle "CacheModule\nioredis client riêng\nenableOfflineQueue: false\n(fail nhanh, khác BullMQ)" as CACHE_MOD
+  rectangle "CacheService\nget/set/del/incr\nnơi DUY NHẤT gọi ioredis\n— không bao giờ throw" as CACHE_S
+  CACHE_MOD --> CACHE_CFG
+  CACHE_MOD --> CACHE_S
+}
+MKT_S ..> CACHE_S : candles cache\n(TTL = 1 interval)
+SR_S ..> CACHE_S : getTop() cache\n(key theo leaderboard\nversion)
+LB_S ..> CACHE_S : incr(version)\nsau rebuild
+Q_MOD ..> CACHE_CFG : dùng chung config\n(không phải chung client)
+
+package "Observability Module (observability/) — @Global, dùng bởi cả API và Worker (task-18)" as M_OBS {
+  rectangle "correlation-context.ts\nAsyncLocalStorage<{correlationId}>\nrunWithCorrelationId / getCorrelationId" as OBS_CTX
+  rectangle "ObservabilityMiddleware\napp.use('*')\nX-Request-Id in/out +\nhttp_requests_total/duration +\naccess log" as OBS_MW
+  rectangle "StructuredLogger\nimplements LoggerService\nJSON/pretty, redact() mọi field\napp.useLogger() ở main.ts/worker.ts" as OBS_LOG
+  rectangle "redact.ts\nkey-based + Bearer/JWT\npattern redaction" as OBS_REDACT
+  rectangle "MetricsService\nprom-client Registry\nhttp_*, search_*, cache_*,\nqueue_depth, binance_*" as OBS_MET
+  rectangle "MetricsController\nGET /metrics\n(unauthenticated)" as OBS_MC
+  rectangle "HealthService\nreadiness: Postgres + Redis\nliveness: process only" as OBS_HS
+  rectangle "HealthController\nGET /health/live\nGET /health/ready" as OBS_HC
+  OBS_MW --> OBS_CTX
+  OBS_MW --> OBS_MET
+  OBS_LOG --> OBS_CTX
+  OBS_LOG --> OBS_REDACT
+  OBS_MC --> OBS_MET
+  OBS_HC --> OBS_HS
+}
+OBS_HS ..> DB_S : isHealthy()
+OBS_HS ..> CACHE_S : ping()
+CACHE_S ..> OBS_MET : cacheHitsTotal/\ncacheMissesTotal
+SR_Q ..> OBS_CTX : ghi correlationId\nvào job payload
+AI_Q ..> OBS_CTX : ghi correlationId\nvào job payload
+SR_Q ..> OBS_MET : searchJobsEnqueuedTotal
+MKT_BIN ..> OBS_MET : binanceRequestsTotal/\nDurationSeconds
+
+' =====================================================================
+package "Worker Process — service/src/worker.ts\n(tiến trình Node riêng, KHÔNG có HTTP server nghiệp vụ)" as WK {
+  rectangle "SearchProcessor\n@Processor(\"search\")\nconcurrency 5" as WK_SR
+  rectangle "NewsCrawlProcessor\n@Processor(\"news-crawl\")\nconcurrency 1" as WK_NW
+  rectangle "AiGenerateProcessor\n@Processor(\"ai-generate\")\nconcurrency 5, lockDuration 120s" as WK_GEN
+  rectangle "worker-metrics-server.ts\nnode:http riêng :3001\nGET /metrics · /health/live\n(task-18, dùng lại OBS_MET/OBS_HS)" as WK_OBS
+}
+WK_SR ..> Q_MOD : BullMQ Worker\n(pull job)
+WK_NW ..> Q_MOD : BullMQ Worker\n(pull job)
+WK_GEN ..> Q_MOD : BullMQ Worker\n(pull job)
+WK_SR --> SR_S : run(experimentId)\n(cùng 1 class,\nkhông fork logic)
+WK_NW --> NW_X : execute()
+WK_GEN --> AI_S : generate(prompt)\n(cùng 1 class,\nkhông fork logic)
+WK_SR ..> OBS_CTX : runWithCorrelationId(\njob.data.correlationId)
+WK_GEN ..> OBS_CTX : runWithCorrelationId(\njob.data.correlationId)
+WK_SR ..> OBS_MET : searchDurationSeconds/\nCompleted/Failed
+WK_OBS ..> OBS_MET
+WK_OBS ..> OBS_HS
+
+note bottom of WK
+  Worker import CÙNG StrategySearchModule /
+  NewsModule / AiStrategyModule với API
+  (không có module thứ 2).
+  Chỉ khác: Worker có thêm 3 @Processor()
+  làm provider — thứ khiến @nestjs/bullmq
+  khởi động BullMQ Worker thật. AppModule
+  (API) không bao giờ khai báo 3 class này.
+
+  **Cross-process cache invalidation (task-17):**
+  LeaderboardService.rebuildForExperiment() chạy
+  Ở ĐÂY (worker) sau mỗi iteration, StrategySearch
+  Service.getTop() đọc cache Ở API — 2 process khác
+  nhau, không share bộ nhớ. Giải pháp: cả 2 gọi
+  CACHE_S trên cùng 1 Redis instance; rebuild
+  xong thì incr(version), lần đọc kế tiếp ở API
+  tự nhiên đọc key version mới → cache miss →
+  query lại. Không cần event/message riêng.
+  Xem artifacts/cache.md mục 4.
+
+  **Domain event chỉ sống trong 1 tiến trình (2026-08-29):**
+  backtest.completed được emit Ở ĐÂY (worker), nên
+  LeaderboardEventsHandler cũng phải tồn tại Ở ĐÂY.
+  Vì vậy WorkerModule import LeaderboardModule TƯỜNG
+  MINH — trước đây nó chỉ có gián tiếp qua Strategy
+  SearchModule, mà module đó nay không còn cần tới
+  Leaderboard nữa. Bỏ import này thì event bắn vào hư
+  vô: leaderboard ngừng cập nhật, KHÔNG test nào đỏ.
+end note
+
+note bottom of M_OBS
+  **Correlation xuyên process (task-18):**
+  SR_Q (SearchQueueService, ở API) đọc
+  correlationId đang active từ OBS_CTX
+  (do OBS_MW gán lúc request HTTP tới)
+  và ghi vào job.data trước khi enqueue.
+  WK_SR (worker) đọc lại đúng field đó,
+  mở 1 context OBS_CTX mới cùng id ấy —
+  StructuredLogger tự đọc context này ở
+  MỌI dòng log, cả 2 process, không cần
+  truyền tham số qua từng hàm.
+  Xem artifacts/observability.md mục 2.
+end note
+
+' ---- guard áp lên mọi controller nghiệp vụ
+' (vẽ thành note thay vì 7 mũi tên cắt ngang sơ đồ)
+note right of AUTH_G
+  **JwtAuthGuard + @CurrentUser** áp lên
+  MỌI controller nghiệp vụ:
+  MarketData · StrategySearch · StrategyPlugin
+  RealtimeSignal · News · Sentiment · AiStrategy
+
+  Dữ liệu thuộc sở hữu user (experiments,
+  candidates, AI strategies) còn scope thêm
+  theo user_id ngay trong câu SQL.
+end note
+
+' =====================================================================
+package "Python Workers (workers/) — tiến trình tách biệt" as PW {
+  package "news/" as PW_NEWS {
+    rectangle "main.py\n(entry point)" as PWN_MAIN
+    rectangle "NewsCrawler\nfetcher / parser factory\nrss | html | api\nnormalizer / validator" as PWN_CRAWL
+    rectangle "SentimentProvider (interface)\nFinbertProvider\nfactory.py" as PWN_SENT
+    rectangle "NewsRepository (psycopg2)\nON CONFLICT(url)" as PWN_DB
+    rectangle "models/finbert\n(local, gitignored)" as PWN_MODEL
+    PWN_MAIN --> PWN_CRAWL
+    PWN_MAIN --> PWN_SENT
+    PWN_MAIN --> PWN_DB
+    PWN_SENT --> PWN_MODEL
+  }
+  package "ai-strategy/" as PW_AI {
+    rectangle "validate.py\n(ast walk, allowlist)\nKHÔNG gọi LLM" as PWA_VAL
+    rectangle "run.py\nsandbox.py\n(whole-series execution)\nKHÔNG gọi LLM" as PWA_RUN
+  }
+}
+
+NW_X --> PWN_MAIN : spawn process\n(job boundary, timeout)
+AI_V --> PWA_VAL : spawn
+AI_RUN --> PWA_RUN : spawn\n(candles in → signals out)
+
+' =====================================================================
+package "Infrastructure" as INFRA {
+  database "PostgreSQL 18 + TimescaleDB\n\nusers, refresh_tokens\ncandles (hypertable)\nstrategies\nexperiments, experiment_configs,\nexperiment_config_strategies,\nexperiment_iterations\ncandidates, candidate_strategies\nbacktest_runs, trades, evaluations\nleaderboards, leaderboard_entries\nnews" as PG
+  queue "Redis\nBullMQ + Cache\n\nqueue \"search\"\nqueue \"news-crawl\"\nqueue \"ai-generate\"\ncache: candles,\nleaderboard:version:{id},\nstrategy-search:top:...:v{n}" as REDIS
+}
+
+cloud "Binance\nREST klines + WebSocket" as EXT_BIN
+cloud "LLM API\n(OpenAI-compatible,\nbase URL + model qua env)" as EXT_LLM
+
+DB_S --> PG
+WK_SR --> PG : SQL (search loop\nghi trực tiếp, xem\nStrategySearchService.run())
+PWN_DB --> PG
+MKT_BIN --> EXT_BIN
+AI_P --> EXT_LLM : HTTP — chỉ từ NestJS\n(generate() chạy ở Worker)
+
+note right of EXT_LLM
+  **Không** vẽ Python → LLM.
+  OpenAiCompatibleProvider (TypeScript)
+  gọi LLM khi AiStrategyService.generate()
+  chạy trong AiGenerateProcessor.
+  validate.py / run.py không gọi mạng.
+end note
+Q_MOD --> REDIS : ioredis\n(maxRetriesPerRequest: null)
+CACHE_MOD --> REDIS : ioredis riêng\n(maxRetriesPerRequest: 1,\nenableOfflineQueue: false)
+
+FE_API --> AUTH_C : "/api (vite proxy)"
+FE_SOCK --> MKT_GW : WebSocket
+
+note right of EXT_BIN
+  Frontend KHÔNG BAO GIỜ gọi Binance.
+  Mọi dữ liệu thị trường đi qua service/.
+end note
+
+note bottom of PLUG_REG
+  Thêm strategy mới = đăng ký plugin.
+  StrategyEngineService không có
+  switch/if theo loại strategy.
+end note
+
+note bottom of AI_V
+  Đây là VALIDATION GATE, không phải
+  security sandbox. Chạy code do LLM sinh
+  trong subprocess + timeout không đủ để
+  chặn kẻ tấn công có chủ đích.
+end note
+
+note right of PLUG_AI
+  **task-15 — cost asymmetry per-candle vs whole-series:**
+  Built-in plugin.analyze() = tính toán rẻ, gọi
+  1 lần/candle trong vòng lặp backtest. AI strategy
+  cần 1 lần gọi subprocess Python cho CẢ chuỗi nến
+  (contract generate_signals(candles)). Gọi Python
+  mỗi candle sẽ là chính anti-pattern "uncontrolled
+  infinite loop" bị cấm.
+  Giải: AI_PRE chạy whole-series 1 LẦN/EXPERIMENT RUN
+  (mọi candidate trong 1 run dùng chung 1 chuỗi nến),
+  lưu kết quả vào SignalContext.aiSignals TRƯỚC khi
+  vòng lặp candidate bắt đầu. PLUG_AI.analyze() sau đó
+  chỉ là tra bảng O(1) — rẻ ngang built-in per-candle,
+  nhìn từ vòng lặp backtest.
+  Domain: bắt buộc chọn ở POST /ai-strategy/save
+  (không suy đoán, không mặc định).
+  Weight: strategy AI là 1 row `strategies` bình thường
+  → dùng nguyên experiment_config_strategies, không có
+  cơ chế trọng số riêng.
+end note
+
+@enduml
