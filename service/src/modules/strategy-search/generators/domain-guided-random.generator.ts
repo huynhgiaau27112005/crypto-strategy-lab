@@ -69,14 +69,30 @@ export class DomainGuidedRandomGenerator implements SearchAlgorithm<RunCatalog> 
       );
     }
 
-    const upperBound = Math.min(config.maxMembers, available.length);
-    const lowerBound = Math.max(2, Math.min(config.minMembers, upperBound));
-    const memberCount =
-      lowerBound + Math.floor(random() * (upperBound - lowerBound + 1));
     const selected = new Set<StrategyDomain>([
       directional[Math.floor(random() * directional.length)],
       confirmation[Math.floor(random() * confirmation.length)],
     ]);
+
+    // INFORMATION is supplementary rather than directional/confirmation,
+    // but when the user explicitly enables it they expect News Sentiment
+    // to participate in the candidates being evaluated. Previously it was
+    // left in the optional shuffled tail, so it could disappear from every
+    // visible Top-K row regardless of the weight the user assigned it.
+    if (available.includes('INFORMATION')) selected.add('INFORMATION');
+
+    const upperBound = Math.min(config.maxMembers, available.length);
+    if (selected.size > upperBound) {
+      throw new Error(
+        'maxMembers is too small for the required directional, confirmation and information domains.',
+      );
+    }
+    const lowerBound = Math.max(
+      selected.size,
+      Math.min(config.minMembers, upperBound),
+    );
+    const memberCount =
+      lowerBound + Math.floor(random() * (upperBound - lowerBound + 1));
 
     const shuffled = available.filter((domain) => !selected.has(domain));
     for (let index = shuffled.length - 1; index > 0; index -= 1) {

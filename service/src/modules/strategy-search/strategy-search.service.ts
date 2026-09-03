@@ -461,6 +461,20 @@ export class StrategySearchService implements OnApplicationBootstrap {
     const created: string[] = [];
     let skipped = 0;
 
+    const sentimentLookbacks = new Set<number>();
+    for (const members of combinations.values()) {
+      const sentiment = members.find((member) => member.name === 'NEWS_SENTIMENT');
+      if (!sentiment) continue;
+      const parameters =
+        strategyName === 'NEWS_SENTIMENT' ? newParameters : sentiment.parameters;
+      const hours = Number(parameters.lookbackHours);
+      if (Number.isFinite(hours) && hours > 0) sentimentLookbacks.add(hours);
+    }
+    const sentimentByLookback = await this.sentimentPrecompute.precomputeMany(
+      candles,
+      [...sentimentLookbacks],
+    );
+
     for (const members of combinations.values()) {
       // Substitute ONLY the changed strategy: its new version row and its
       // newly saved parameters. Every other member keeps the exact row and
@@ -545,9 +559,25 @@ export class StrategySearchService implements OnApplicationBootstrap {
         continue;
       }
 
+      // Fingerprinted like the search loop (migration 005), which also
+      // hardens this cascade's documented "idempotent per combination"
+      // contract (artifacts/api-contract.md §3): the definition carries
+      // each member's `pluginVersion`, so regenerating against a NEW
+      // strategy version yields a new fingerprint and inserts normally,
+      // while a repeat call for a combination already regenerated at the
+      // same versions collides and is skipped instead of appending a
+      // near-duplicate row.
       const iteration = await this.database.withTransaction((client) =>
-        this.iterations.createNext(client, experimentId),
+        this.iterations.createNext(
+          client,
+          experimentId,
+          this.fingerprintService.fingerprint(candidateDefinition),
+        ),
       );
+      if (!iteration) {
+        skipped += 1;
+        continue;
+      }
       let candidateEntity: Awaited<
         ReturnType<CandidateRepository['createForIteration']>
       >;
@@ -575,7 +605,10 @@ export class StrategySearchService implements OnApplicationBootstrap {
           candles,
           weightMap,
           aiSignals,
-          undefined,
+          this.sentimentSeriesForCandidate(
+            candidateDefinition,
+            sentimentByLookback,
+          ),
           config.costs,
           experimentConfig.start_time,
         );
@@ -626,28 +659,15 @@ export class StrategySearchService implements OnApplicationBootstrap {
       summaries,
     };
   }
-
-
-  // The sentiment series depends on `lookbackHours`, which is a per-member
-  // parameter the generator varies. Precomputing per candidate would undo
-  // the whole point of precomputing, so one series is built per run at the
-  // WIDEST lookback the catalog can sample. Narrower windows are a subset
-  // of a wider one and, on this data density (a handful of articles a day),
-  // resolve to the same sign — documented in artifacts/decisions.md as an
-  // accepted approximation rather than left as a silent inaccuracy.
-  private static readonly SENTIMENT_LOOKBACK_HOURS = 48;
-
-  // Empty (and therefore always-abstaining) unless the run actually
-  // contains a sentiment member — no reason to touch `news` otherwise.
-  private async sentimentSeriesFor(
-    candles: CandleEntity[],
-    hasSentimentMember: boolean,
-  ): Promise<Array<number | null> | undefined> {
-    if (!hasSentimentMember) return undefined;
-    return this.sentimentPrecompute.precompute(
-      candles,
-      StrategySearchService.SENTIMENT_LOOKBACK_HOURS,
+  private sentimentSeriesForCandidate(
+    candidate: CandidateDefinition,
+    byLookback: Map<number, Array<number | null>>,
+  ): Array<number | null> | undefined {
+    const sentiment = candidate.members.find(
+      (member) => member.type === 'NEWS_SENTIMENT',
     );
+    if (!sentiment) return undefined;
+    return byLookback.get(Number(sentiment.parameters.lookbackHours));
   }
 
   // Loads the Python source for each AI member being regenerated, keyed the
@@ -1033,13 +1053,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
         StrategySignal[]
       >;
 
-      // Required-flow #17: a sentiment member reads this series, built once
-      // for the whole run exactly like the AI signals above.
-      const sentimentScores = await this.sentimentSeriesFor(
-        candles,
-        keyedRows.some(({ row }) => row.name === 'NEWS_SENTIMENT'),
-      );
-
       // Every selectable parameter version for the built-ins this
       // experiment was configured with — the generator samples over these
       // rather than an in-code tuple list, so a candidate's version label
@@ -1049,6 +1062,24 @@ export class StrategySearchService implements OnApplicationBootstrap {
           .filter(({ row }) => row.type !== 'AI_GENERATED')
           .map(({ row }) => row.name),
         experiment.user_id,
+      );
+      const hasSentiment = keyedRows.some(
+        ({ row }) => row.name === 'NEWS_SENTIMENT',
+      );
+      const configuredLookbacks = versionRows
+        .filter((row) => row.name === 'NEWS_SENTIMENT')
+        .map((row) => Number((row.parameters as Record<string, unknown>).lookbackHours))
+        .filter((hours) => Number.isFinite(hours) && hours > 0);
+      // An unseeded database uses the in-code NEWS_SENTIMENT sampler, which
+      // can emit any of these four values.
+      const sentimentLookbacks = hasSentiment
+        ? configuredLookbacks.length > 0
+          ? configuredLookbacks
+          : [6, 12, 24, 48]
+        : [];
+      const sentimentByLookback = await this.sentimentPrecompute.precomputeMany(
+        candles,
+        sentimentLookbacks,
       );
       const runCatalog = this.buildRunCatalog(
         keyedRows,
@@ -1085,6 +1116,13 @@ export class StrategySearchService implements OnApplicationBootstrap {
           stopReason = 'NO_IMPROVEMENT';
           break;
         }
+        // Reachable only because duplicates below `continue` without
+        // advancing `generated`: in a narrow parameter space the generator
+        // eventually only redraws combinations this experiment already
+        // evaluated, and without this guard the loop would spin until
+        // MAX_DURATION with nothing to show for it. Before migration 005
+        // restored the de-duplication, `attempts` rose in lockstep with
+        // `generated` and this branch was dead code.
         if (attempts >= maximumAttempts) {
           stopReason = 'SEARCH_SPACE_EXHAUSTED';
           break;
@@ -1095,9 +1133,31 @@ export class StrategySearchService implements OnApplicationBootstrap {
         const candidateDefinition =
           this.fingerprintService.canonicalize(generatedCandidate);
 
+        // Duplicate guard (migration 005). Enforced by a unique index on
+        // (experiment_id, candidate_fingerprint) rather than a read-then-write,
+        // and placed HERE — before the iteration row is committed and long
+        // before the backtest — so a redraw costs one INSERT that changed
+        // nothing, leaves no orphan iteration behind, and neither inflates
+        // `generated` (which the UI shows as candidate count) nor
+        // `noImprovement` (which would otherwise end the search early
+        // because re-testing the same combination can never beat its own
+        // score). Weights are deliberately absent from the fingerprint —
+        // they belong to the configuration, not the candidate (see
+        // artifacts/architecture.md §167), so the same parameter set does
+        // not fingerprint differently across experiments.
+        const fingerprint = this.fingerprintService.fingerprint(candidateDefinition);
         const iteration = await this.database.withTransaction((client) =>
-          this.iterations.createNext(client, experimentId),
+          this.iterations.createNext(client, experimentId, fingerprint),
         );
+        if (!iteration) {
+          this.metrics.candidatesDuplicateTotal.inc();
+          // Yields exactly like the bottom of the loop body does. A `continue`
+          // that skipped it would let a long duplicate streak (up to
+          // `maximumAttempts` of them) hold the event loop on microtasks
+          // alone, starving this worker's other jobs and its health endpoint.
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          continue;
+        }
         generated += 1;
         let candidateEntity:
           | Awaited<ReturnType<CandidateRepository['createForIteration']>>
@@ -1135,7 +1195,10 @@ export class StrategySearchService implements OnApplicationBootstrap {
             candles,
             weightMap,
             aiSignals,
-            sentimentScores,
+            this.sentimentSeriesForCandidate(
+              candidateDefinition,
+              sentimentByLookback,
+            ),
             config.costs,
             experimentConfig.start_time,
           );

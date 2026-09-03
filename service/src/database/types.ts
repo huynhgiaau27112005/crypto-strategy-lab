@@ -101,6 +101,13 @@ export interface ExperimentIterationEntity {
   started_at: Date | null;
   completed_at: Date | null;
   error_message: string | null;
+  /**
+   * SHA-256 of the canonicalised candidate this iteration ran, unique per
+   * experiment — the duplicate-candidate guard (migration 005). NULL on
+   * rows written before that migration, which are therefore never
+   * de-duplicated against.
+   */
+  candidate_fingerprint: string | null;
   created_at: Date;
 }
 

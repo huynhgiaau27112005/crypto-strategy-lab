@@ -36,11 +36,36 @@ export class NewsSentimentPrecomputeService {
     candles: CandleEntity[],
     lookbackHours: number,
   ): Promise<Array<number | null>> {
-    if (candles.length === 0) return [];
+    const normalizedLookback = Math.max(1, lookbackHours);
+    const series = await this.precomputeMany(candles, [normalizedLookback]);
+    return series.get(normalizedLookback) ?? [];
+  }
+
+  /**
+   * Builds one exact series per requested lookback while querying `news`
+   * only once. Strategy Search can therefore honor every candidate
+   * version's `lookbackHours` without falling back to one approximate
+   * global window or issuing a database query per candidate.
+   */
+  async precomputeMany(
+    candles: CandleEntity[],
+    lookbackHours: number[],
+  ): Promise<Map<number, Array<number | null>>> {
+    const windows = [
+      ...new Set(
+        lookbackHours
+          .filter((hours) => Number.isFinite(hours))
+          .map((hours) => Math.max(1, hours)),
+      ),
+    ];
+    const empty = new Map<number, Array<number | null>>(
+      windows.map((hours) => [hours, []]),
+    );
+    if (candles.length === 0 || windows.length === 0) return empty;
 
     const firstTs = new Date(candles[0].timestamp).getTime();
     const lastTs = new Date(candles[candles.length - 1].timestamp).getTime();
-    const windowMs = Math.max(1, lookbackHours) * 3_600_000;
+    const maximumWindowMs = Math.max(...windows) * 3_600_000;
 
     let rows: SentimentRow[];
     try {
@@ -51,7 +76,7 @@ export class NewsSentimentPrecomputeService {
            AND sentiment IS NOT NULL
            AND published_at >= $1 AND published_at <= $2
          ORDER BY published_at ASC`,
-        [new Date(firstTs - windowMs), new Date(lastTs)],
+        [new Date(firstTs - maximumWindowMs), new Date(lastTs)],
       );
       rows = result.rows;
     } catch (error) {
@@ -62,7 +87,9 @@ export class NewsSentimentPrecomputeService {
           error instanceof Error ? error.message : String(error)
         }`,
       );
-      return candles.map(() => null);
+      return new Map(
+        windows.map((hours) => [hours, candles.map(() => null)]),
+      );
     }
 
     const points = rows
@@ -72,8 +99,25 @@ export class NewsSentimentPrecomputeService {
       }))
       .filter((p) => p.score !== null) as Array<{ at: number; score: number }>;
 
-    if (points.length === 0) return candles.map(() => null);
+    if (points.length === 0) {
+      return new Map(
+        windows.map((hours) => [hours, candles.map(() => null)]),
+      );
+    }
 
+    return new Map(
+      windows.map((hours) => [
+        hours,
+        this.buildSeries(candles, points, hours * 3_600_000),
+      ]),
+    );
+  }
+
+  private buildSeries(
+    candles: CandleEntity[],
+    points: Array<{ at: number; score: number }>,
+    windowMs: number,
+  ): Array<number | null> {
     // Two-pointer sweep over the time-ordered arrays — O(candles + news)
     // rather than a window scan per candle.
     const out: Array<number | null> = [];

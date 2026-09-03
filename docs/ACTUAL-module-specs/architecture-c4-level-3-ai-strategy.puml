@@ -1,0 +1,179 @@
+@startuml
+title C4 Level 3 — AI-Generated Strategy
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam linetype ortho
+skinparam nodesep 30
+skinparam ranksep 55
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 11
+skinparam ArrowColor #444444
+skinparam rectangle {
+  BackgroundColor #FAFAFA
+  BorderColor #999999
+}
+skinparam package {
+  BackgroundColor #FFFFFF
+  BorderColor #666666
+}
+
+actor "User / Browser" as USER
+
+' =====================================================================
+package "Frontend — React (web-platform/)" as FE {
+  rectangle "AiStrategyPage\n(ô mô tả · code · panel validation ·\nbảng strategy AI của tài khoản)" as FE_PAGE
+  rectangle "AiGenerateContext\n(mount ở /app — sống khi đổi tab,\nresume poll sau F5)" as FE_CTX
+  rectangle "useAiStrategy\nuseAiProvider" as FE_HOOK
+  rectangle "api/client.ts\napiFetch" as FE_API
+  FE_PAGE --> FE_HOOK
+  FE_HOOK --> FE_CTX : enqueueGenerate() / job
+  FE_HOOK --> FE_API
+  FE_CTX --> FE_API : POST /generate\nGET /generate/status (2s)
+}
+USER --> FE_PAGE
+
+' =====================================================================
+package "API Process — NestJS (service/src/main.ts)" as API {
+
+  package "AI Strategy Module" as M_AI {
+    rectangle "AiStrategyController\n(JwtAuthGuard + @CurrentUser)\nPOST /generate → 202\nGET  /generate/status\nPOST /validate · /save · /:id/run\nGET  /mine · /:id · /samples · /provider" as AI_C
+
+    rectangle "AiGenerateQueueService\nenqueue() → 409 nếu user\nđang có job in-flight\ngetStatus() lọc theo userId" as AI_Q
+
+    rectangle "AiStrategyService\ngenerate() ← chỉ Worker gọi\nvalidateCode / save / run\n← API gọi trực tiếp" as AI_S
+
+    rectangle "LlmProviderFactory\nOpenAiCompatibleProvider\nFakeProvider (test / thiếu key)" as AI_P
+
+    rectangle "contract-prompt.ts\nép contract\ngenerate_signals(candles)\n→ [BUY|SELL|HOLD]" as AI_CT
+
+    rectangle "AiStrategyValidatorService\ncổng kiểm duyệt (4 check)" as AI_V
+
+    rectangle "AiStrategyRunnerService\nchạy 1 lần / CẢ chuỗi nến" as AI_RUN
+
+    rectangle "python-process.util\nspawn + timeout + SIGKILL\n+ giới hạn output" as AI_PY
+
+    rectangle "AiStrategySignalPrecomputeService\ntuần tự từng AI strategy,\n1 lần / experiment run;\nlỗi 1 cái → loại khỏi run" as AI_PRE
+
+    rectangle "AiStrategyRepository\nlistMine · findMineById\nfindOwnedActiveById\nlistLatestPerName\ncreateVersion (INSERT version mới)" as AI_R
+
+    AI_C --> AI_Q : generate / status
+    AI_C --> AI_S : validate / save / run
+    AI_S --> AI_P
+    AI_P --> AI_CT
+    AI_S --> AI_V
+    AI_S --> AI_RUN
+    AI_S --> AI_R
+    AI_PRE --> AI_RUN
+    AI_V --> AI_PY
+    AI_RUN --> AI_PY
+  }
+
+  package "Strategy Plugin Module" as M_PLUG {
+    rectangle "StrategyRegistry\nregister() cho built-in\nregisterAiAdapter()\nresolve(type)" as PL_REG
+    rectangle "AiStrategyPluginAdapter\n1 instance dùng chung cho MỌI \"AI:<id>\"\nanalyze() = tra SignalContext.aiSignals[index]\nO(1)" as PL_AI
+    rectangle "MaPlugin · RsiPlugin · BollingerPlugin\nSupportResistancePlugin · NewsSentimentPlugin" as PL_BI
+    rectangle "StrategyPluginService\nlistCatalog(userId) =\nbuilt-in + AI rows của user" as PL_S
+    PL_AI --> PL_REG : onModuleInit\nregisterAiAdapter()
+    PL_BI --> PL_REG : onModuleInit\nregister()
+  }
+  PL_S --> AI_R : listLatestPerName(userId)
+
+  package "Strategy Search Module" as M_SR {
+    rectangle "StrategySearchService\nstart(): resolve \"AI:<id>\"\nrun(): precompute → vòng lặp candidate" as SR_S
+  }
+  package "Strategy Engine Module" as M_ENG {
+    rectangle "StrategyEngineService\nanalyze(member, ctx)\nKHÔNG có if theo loại strategy" as ENG_S
+  }
+  package "Backtesting Module" as M_BT {
+    rectangle "BacktestingService\nweighted vote → trades → metrics" as BT_S
+  }
+
+  SR_S --> AI_R : findOwnedActiveById\n(kiểm tra sở hữu + is_active)
+  SR_S --> AI_PRE : precompute(candles)\n1 lần / run, TRƯỚC vòng lặp
+  SR_S --> BT_S
+  BT_S --> ENG_S
+  ENG_S --> PL_REG : resolve(type).analyze()
+  PL_REG --> PL_AI : mọi \"AI:<id>\"
+  PL_REG --> PL_BI : MA / RSI / BB / SR / NEWS
+
+  rectangle "DatabaseService\nraw pg.Pool" as DB_S
+  AI_R --> DB_S
+}
+
+' =====================================================================
+package "Worker Process — service/src/worker.ts" as WK {
+  rectangle "AiGenerateProcessor\n@Processor(\"ai-generate\")\nconcurrency 5 · lockDuration 120s\nattempts 1 (không auto-retry)" as WK_GEN
+  rectangle "SearchProcessor\n@Processor(\"search\")" as WK_SR
+}
+
+' =====================================================================
+package "Python Workers — workers/ai-strategy/ (tiến trình tách biệt)" as PY {
+  rectangle "validate.py\nast.parse · contract · safety scan · smoke run\nKHÔNG gọi mạng" as PY_VAL
+  rectangle "run.py + sandbox.py\nrestricted globals + time limit\n(SIGALRM / threading.Timer trên Windows)\ncandles vào → signals[] ra\nKHÔNG gọi mạng" as PY_RUN
+}
+
+' =====================================================================
+queue "Redis\n\nqueue \"ai-generate\"\n(job data: userId, prompt, correlationId)\nreturnvalue = code + validation\nremoveOnComplete/Fail: 50" as REDIS
+
+database "PostgreSQL + TimescaleDB\n\nstrategies\n  type = AI_GENERATED\n  language = PYTHON\n  source_code · version\n  owner_user_id · parameters.domain\ncandles (hypertable)" as PG
+
+cloud "LLM API\nOpenAI-compatible\n(OPENAI_BASE_URL / MODEL / API_KEY)" as LLM
+
+' ---- luồng generate (bất đồng bộ)
+FE_API --> AI_C : /api (vite proxy)
+AI_Q --> REDIS : add job\n(409 nếu đã có job)
+WK_GEN --> REDIS : pull job\n/ ghi returnvalue
+WK_GEN --> AI_S : generate(prompt)\n(CÙNG class, không fork logic)
+AI_P --> LLM : POST /chat/completions\n(chỉ chạy trong Worker)
+
+' ---- spawn Python
+AI_PY --> PY_VAL : spawn validate.py
+AI_PY --> PY_RUN : spawn run.py
+
+' ---- search
+WK_SR --> SR_S : run(experimentId)
+DB_S --> PG
+
+note right of LLM
+  Chỉ NestJS gọi LLM
+  (OpenAiCompatibleProvider, TypeScript).
+  validate.py / run.py KHÔNG có HTTP client.
+  Vẽ mũi tên Python → LLM là SAI.
+end note
+
+note bottom of REDIS
+  Kết quả generate nằm ở Redis returnvalue,
+  KHÔNG ghi Postgres. Đó mới là bản nháp.
+  Chỉ khi user bấm "Lưu" (POST /save) mới
+  INSERT một row `strategies`.
+end note
+
+note bottom of AI_PRE
+  **Lệch chi phí per-candle vs whole-series:**
+  Plugin built-in: tính trong tiến trình, gọi mỗi nến — rẻ.
+  Strategy AI: 1 lần spawn Python cho CẢ chuỗi nến.
+  Gọi Python mỗi nến = anti-pattern vòng lặp không kiểm soát.
+
+  Giải: precompute whole-series 1 LẦN / experiment run
+  (mọi candidate trong run dùng chung 1 chuỗi nến)
+  → SignalContext.aiSignals
+  → adapter chỉ còn tra mảng O(1) mỗi nến.
+end note
+
+note bottom of AI_V
+  Đây là VALIDATION GATE, không phải security sandbox.
+  Chặn tai nạn (import os, eval, mạng, vòng lặp treo).
+  Không chặn attacker có chủ đích — nói thẳng khi vấn đáp.
+end note
+
+note right of PL_AI
+  registry.has("AI:...")  = false
+  registry.resolve("AI:...") = adapter
+  → cố ý tách: built-in là tập hữu hạn biết lúc
+  onModuleInit; AI strategy là vô hạn, theo user,
+  nằm trong Postgres, sinh lúc runtime.
+  Không nạp lại registry mỗi lần Save.
+end note
+
+@enduml

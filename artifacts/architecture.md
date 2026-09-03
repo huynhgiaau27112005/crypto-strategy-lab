@@ -226,11 +226,28 @@ Hai điểm phải nhớ khi vấn đáp (chi tiết ở [event-catalog.md](even
 | Leaderboard rebuild nằm trong cùng try-block với backtest | 1 lỗi tạm thời khi rebuild leaderboard → backtest **đã thành công** bị đánh dấu FAILED, evaluation tốt bị loại vĩnh viễn khỏi Top-K | Đã vá (Task 8) — tách ra try-block riêng |
 | Test cho `BacktestRunRepository` chỉ kiểm `.some()` substring | Không phát hiện được bug hoán đổi `profit_loss`/`return_pct`, thiếu câu lệnh DELETE, sai thứ tự ghi | Đã vá (Task 7) — test giờ kiểm thứ tự + tham số ràng buộc |
 
-## 5b. Giới hạn đã biết: mất cơ chế chống trùng candidate
+## 5b. ~~Giới hạn đã biết: mất cơ chế chống trùng candidate~~ — **Đã vá (migration 005, 2026-09-03)**
 
-Bản code cũ (mô hình phẳng) dùng `fingerprint` (SHA-256 của tham số) + `ON CONFLICT` để bỏ qua candidate đã test trùng, không tính vào `generated`. Khi rewire sang schema Candidate mới (Task 8), cơ chế này **chưa được khôi phục** — mỗi candidate sinh ra đều tạo iteration + lưu DB + tính vào `generated`, kể cả khi trùng tham số với candidate trước đó. Hệ quả: trong không gian tham số hẹp (vd chỉ bật 2 domain), có thể thấy nhiều candidate giống hệt nhau trong Top-K. **Không phải lỗi dữ liệu/crash** — chỉ là kết quả kém đa dạng hơn mong đợi.
+**Bối cảnh (giữ lại để hiểu vì sao code có hình dạng này):** bản code cũ (mô hình phẳng) dùng `fingerprint` (SHA-256 của tham số) + `ON CONFLICT` để bỏ qua candidate đã test trùng, không tính vào `generated`. Khi rewire sang schema Candidate mới (Task 8), cơ chế này bị mất — mỗi candidate sinh ra đều tạo iteration + lưu DB + tính vào `generated`, kể cả khi trùng tham số với candidate trước đó. Hệ quả: trong không gian tham số hẹp (vd chỉ bật 2 domain), Top-K có thể chứa nhiều candidate giống hệt nhau. Không phải lỗi dữ liệu/crash, chỉ là kết quả kém đa dạng hơn mong đợi. Quyết định lúc đó: hoãn, vì cần thêm 1 migration nữa và đang sát deadline đợt migrate.
 
-**Quyết định:** không sửa trong đợt migrate này (cần thêm cột `fingerprint` + unique index vào `candidates`, tức thêm 1 migration nữa, rủi ro cho deadline). `CandidateFingerprintService` hiện chưa được dùng ở luồng chính (chỉ còn test riêng của nó). Việc tiếp theo (nếu còn thời gian): thêm cột fingerprint hoặc dọn hẳn code chết (`attempts`/`maximumAttempts`/`SEARCH_SPACE_EXHAUSTED` hiện không bao giờ kích hoạt vì lý do tương tự — `attempts` tăng cùng nhịp `generated`).
+**Đã khôi phục.** `005_candidate_fingerprint.sql` thêm cột `candidate_fingerprint char(64)` + unique index `(experiment_id, candidate_fingerprint)` lên **`experiment_iterations`**, không phải `candidates`. Hai lý do:
+
+1. Unique index không trải được qua 2 bảng, mà ràng buộc này **bắt buộc phải scope theo experiment** (cùng tổ hợp chạy trên khoảng nến khác / chi phí khác là kết quả khác, phải được chạy lại). `experiment_iterations` đã có sẵn `experiment_id`; `candidates` thì phải denormalize thêm cột.
+2. Trong `run()`, iteration row được tạo **trước** candidate row — nên đây là điểm sớm nhất có thể từ chối, và conflict ở đây không để lại gì phải dọn.
+
+`candidates.iteration_id` là UNIQUE nên iteration ↔ candidate là 1:1; đặt ở bảng nào cũng định danh đúng một candidate.
+
+**Thay đổi kéo theo:**
+
+- `ExperimentIterationRepository.createNext()` nhận thêm `fingerprint`, dùng `ON CONFLICT ... DO NOTHING` và trả `null` khi trùng (không throw). Không dùng SELECT-rồi-INSERT: 1 round trip, không có khe race.
+- `run()` gọi `continue` khi nhận `null` — **không** tăng `generated`, **không** tạo candidate, **không** backtest, **không** emit event. Chỉ `attempts` tăng.
+- `regenerateForStrategyVersion()` cũng truyền fingerprint, làm chặt thêm ràng buộc "idempotent theo tổ hợp" (`api-contract.md` §3): `pluginVersion` nằm trong definition nên version mới ra fingerprint mới và vẫn insert được, còn gọi lại lần hai ở cùng bộ version thì bị skip.
+- **`attempts` / `maximumAttempts` / `SEARCH_SPACE_EXHAUSTED` hết là code chết** — giờ `attempts` mới thực sự tăng nhanh hơn `generated`. Có test canh nhánh này (`strategy-search.service.spec.ts`, describe `run() duplicate-candidate guard`).
+- Metric mới `candidates_duplicate_total`. Tỉ lệ của nó so với `candidates_generated_total` tiến về 1 là dấu hiệu không gian tham số sắp cạn.
+
+**Đổi hành vi cần biết (không chỉ đổi cấu trúc):** trước đây candidate trùng vẫn được backtest và **vẫn cộng vào `noImprovement`**. Nay `noImprovement` chỉ đếm candidate thật sự mới, nên search **chạy lâu hơn** trước khi dừng vì `NO_IMPROVEMENT`. Đúng hướng, nhưng số liệu demo chụp trước ngày 2026-09-03 sẽ không khớp nữa.
+
+**Chưa kiểm chứng trên DB thật:** migration được viết theo đúng khuôn `004` (additive, `IF NOT EXISTS`, chạy lại được, không cần backfill vì Postgres coi các `NULL` là phân biệt trong unique index) và toàn bộ 355 unit test xanh, nhưng chưa chạy `database/migrate.js` lên Postgres thật (Docker không bật lúc thực hiện). Cần chạy trước khi merge.
 
 ## 6. Nợ kiến trúc lớn nhất còn lại — ưu tiên cao nhất cho việc tiếp theo
 

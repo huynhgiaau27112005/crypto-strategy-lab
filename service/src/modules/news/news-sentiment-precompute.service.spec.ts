@@ -56,6 +56,22 @@ describe('NewsSentimentPrecomputeService', () => {
     expect(score).toBeCloseTo((1 - 0.5) / 2);
   });
 
+  it('builds exact series for multiple lookbacks with one database query', async () => {
+    const { service, query } = build([
+      { published_at: new Date('2026-01-01T00:00:00Z'), sentiment: 'POSITIVE', sentiment_score: '1' },
+      { published_at: new Date('2026-01-02T00:00:00Z'), sentiment: 'NEGATIVE', sentiment_score: '0.5' },
+    ]);
+
+    const series = await service.precomputeMany(
+      [candle('2026-01-02T01:00:00Z')],
+      [6, 48],
+    );
+
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(series.get(6)?.[0]).toBeCloseTo(-0.5);
+    expect(series.get(48)?.[0]).toBeCloseTo(0.25);
+  });
+
   // The core correctness property: a candle must only see news published
   // at or BEFORE it, and only within its own lookback window. Leaking a
   // future article backwards would be lookahead bias — the backtest would
