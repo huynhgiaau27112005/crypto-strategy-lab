@@ -9,7 +9,7 @@ function makeService(overrides: {
   candles?: any;
 } = {}) {
   const llmProvider = overrides.llmProvider ?? {
-    generateStrategy: jest.fn().mockResolvedValue({ code: 'def generate_signals(candles):\n    return []', raw: '```python\n...\n```', providerName: 'fake' }),
+    generateStrategy: jest.fn().mockResolvedValue({ code: 'def generate_signals(candles):\n    return []', raw: '```python\n...\n```', providerName: 'test-provider' }),
   };
   const validator = overrides.validator ?? {
     validate: jest.fn().mockResolvedValue({ valid: true, checks: [] }),

@@ -36,7 +36,7 @@ export const DEFAULT_BACKTEST_COSTS: BacktestCosts = {
 };
 
 export interface SimulatedTrade {
-  side: 'LONG';
+  side: 'LONG' | 'SHORT';
   entryTime: Date;
   entryPrice: number;
   exitTime: Date;

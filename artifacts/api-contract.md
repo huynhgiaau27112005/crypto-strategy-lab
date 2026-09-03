@@ -938,7 +938,7 @@ tôi"** dưới bảng Top-K.
 ### `GET /ai-strategy/provider`
 
 Cho biết LLM nào đang thực sự được nối. Không có endpoint này thì không phân biệt
-được "key đúng" với "không có key" — provider giả lập trả về Python **hợp lệ**.
+được "key đúng" với "không có key".
 
 ```json
 { "name": "openai-compatible", "live": true, "keySource": "OPENROUTER_API_KEY",
@@ -946,4 +946,6 @@ Cho biết LLM nào đang thực sự được nối. Không có endpoint này t
 ```
 
 `live: false` ⇒ chưa cấu hình key nào (hoặc key đặt dưới tên biến backend không
-đọc). Backend chấp nhận **`OPENAI_API_KEY`** hoặc **`OPENROUTER_API_KEY`**.
+đọc). Khi đó `name` là `unavailable`; tác vụ generate chuyển sang `FAILED` với
+thông báo cấu hình rõ ràng và **không sinh code thay thế**. Backend chấp nhận
+**`OPENAI_API_KEY`** hoặc **`OPENROUTER_API_KEY`**.

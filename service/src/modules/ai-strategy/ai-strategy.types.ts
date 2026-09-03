@@ -34,7 +34,7 @@ export interface GeneratedStrategy {
   code: string;
   /** The full, unprocessed model response — kept for debugging/audit. */
   raw: string;
-  /** Name of the provider that produced this ('openai-compatible' | 'fake'). */
+  /** Name of the live provider that produced this code. */
   providerName: string;
 }
 

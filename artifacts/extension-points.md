@@ -64,7 +64,7 @@ Nguyên tắc chung ở đây: **có interface thôi chưa đủ** — nếu con
 | Trục | Cơ chế |
 |---|---|
 | Thêm strategy mới | `strategy-plugin/strategy-registry.ts` — plugin registry, không có `if type === ...` ở đâu cả |
-| Đổi LLM sinh strategy | `ai-strategy/providers/llm-provider.factory.ts` — chọn theo env, fallback `FakeLlmProvider` khi không có key |
+| Đổi LLM sinh strategy | `ai-strategy/providers/llm-provider.factory.ts` — chọn theo env; khi không có key, provider `unavailable` trả lỗi rõ ràng và không sinh code thay thế |
 | Đổi model sentiment | `workers/news/src/core/sentiment/provider.py` + `factory.py` — chọn theo `SENTIMENT_PROVIDER`, hiện có 3 implementation (`FinbertSentimentProvider`, `LexiconSentimentProvider`, `NoopSentimentProvider`) và tự xuống cấp FinBERT → lexicon khi thiếu weights. `resolve_sentiment_provider()` báo lại provider **thực sự** chạy để UI không gán nhầm nhãn cho FinBERT |
 | Thêm nguồn tin | `workers/news/config/*_sources.yml` + `BaseParser` — thêm nguồn là thêm entry YAML, không sửa `NewsCrawler` |
 | Đổi cache backend | `cache/cache.service.ts` — get/set/del/incr thuần, call site không tự gọi ioredis |

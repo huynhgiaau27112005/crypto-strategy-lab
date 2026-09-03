@@ -123,7 +123,7 @@ describe('AiGenerateQueueService', () => {
       const result = {
         code: 'def generate_signals(candles): pass',
         raw: 'raw response',
-        providerName: 'fake',
+        providerName: 'test-provider',
         validation: { valid: true, checks: [] },
       };
       const completed = makeJob({

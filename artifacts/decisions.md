@@ -690,3 +690,14 @@ Dạng array có trong type signature nhưng được truyền thẳng cho `even
 | Lưu kết quả job | **Redis returnvalue (BullMQ)**, không Postgres | Generate là thao tác ephemeral trước khi user bấm Save; không cần migration/bảng job; client poll đọc `result` khi `COMPLETED` |
 
 **Hệ quả kiến trúc:** Job đi `API → Redis → Worker` (không có HTTP API→Worker). Worker (NestJS) gọi LLM (`WORKER → LLM` trên C4 level 2) — **không** phải Python `workers/ai-strategy/` gọi LLM. Spawn Python cho validate sau generate nằm trong worker; spawn cho validate/run thủ công vẫn từ API. Sơ đồ: `architecture-c4-level-2.puml` / `architecture-c4-level-3.puml`. Chi tiết: `artifacts/queue.md` mục 4.1, `artifacts/ai-strategy.md` mục 2b, `artifacts/api-contract.md` mục 3c.
+
+## F21. Backtest hai chiều và AI generate fail rõ ràng (2026-09-03)
+
+- `BUY` khi không có vị thế mở LONG; `SELL` khi không có vị thế mở SHORT. Tín hiệu
+  ngược hướng đóng vị thế hiện tại. P&L, equity, slippage, phí, stop-loss và
+  take-profit được tính đối xứng theo hướng lệnh.
+- Backtest UI hiển thị `overallScore` trong chi tiết candidate vì đây là điểm
+  tổng hợp được dùng để xếp hạng Top-K.
+- Khi thiếu API key LLM, AI Strategy giữ app hoạt động nhưng generate thất bại với
+  thông báo cấu hình trên frontend. Không dùng `FakeLlmProvider` và không tạo code
+  mẫu có thể bị hiểu nhầm là kết quả từ AI.

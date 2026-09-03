@@ -48,15 +48,13 @@ export default function AiStrategyPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* A missing/misnamed API key is otherwise invisible: the fallback
-          provider returns canned but perfectly valid Python. */}
+      {/* Report missing provider configuration before generation. */}
       {provider && !provider.live ? (
         <div className="ai-provider-warning blueprint">
           <BlueprintCorners />
-          <strong>Đang dùng provider giả lập ({provider.name}).</strong> Code Python sinh ra là code
-          mẫu cố định, KHÔNG gọi LLM thật — vì backend chưa đọc được API key nào. Đặt{' '}
+          <strong>Chưa cấu hình LLM provider.</strong> Hệ thống sẽ không sinh code mẫu thay thế. Đặt{' '}
           <code>OPENAI_API_KEY</code> hoặc <code>OPENROUTER_API_KEY</code> trong{' '}
-          <code>service/.env</code> rồi khởi động lại API (xem <code>service/.env.example</code>).
+          <code>service/.env</code> rồi khởi động lại API và worker (xem <code>service/.env.example</code>).
         </div>
       ) : provider ? (
         <div className="text-muted mono" style={{ fontSize: 11 }}>

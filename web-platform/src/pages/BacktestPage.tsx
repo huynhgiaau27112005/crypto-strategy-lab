@@ -302,6 +302,12 @@ export default function BacktestPage() {
 
   const metrics: { key: string; k: string; v: string; note: string; tone?: 'up' | 'down' }[] = [
     {
+      key: 'overall-score',
+      k: 'Overall Score',
+      v: evaluation ? fmtNum(evaluation.overallScore) : '—',
+      note: 'Điểm tổng hợp dùng để xếp hạng candidate',
+    },
+    {
       key: 'winrate',
       k: 'Winrate',
       v: evaluation ? fmtPct(evaluation.winRate) : '—',

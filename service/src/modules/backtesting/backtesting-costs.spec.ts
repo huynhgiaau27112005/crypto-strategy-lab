@@ -186,4 +186,65 @@ describe('BacktestingService — configurable costs and protective exits', () =>
     expect(result.trades[0].takeProfit).toBeNull();
     expect(result.trades[0].exitReason).toBe('SIGNAL');
   });
+
+  it('opens a SHORT on SELL and closes it profitably on BUY after price falls', () => {
+    const candles = [
+      candle(0, { open: 100, high: 100, low: 100, close: 100 }),
+      candle(1, { open: 90, high: 90, low: 90, close: 90 }),
+      candle(2, { open: 80, high: 80, low: 80, close: 80 }),
+    ];
+    const service = new BacktestingService(
+      scriptedComposite(['SELL', 'HOLD', 'BUY']),
+    );
+    const result = service.run(
+      CANDIDATE,
+      candles,
+      {},
+      undefined,
+      undefined,
+      costs({ initialCapital: 1_000 }),
+    );
+
+    expect(result.trades).toHaveLength(1);
+    expect(result.trades[0].side).toBe('SHORT');
+    expect(result.trades[0].entryPrice).toBeCloseTo(100, 8);
+    expect(result.trades[0].exitPrice).toBeCloseTo(80, 8);
+    expect(result.trades[0].profitLoss).toBeCloseTo(200, 8);
+    expect(result.evaluation.profitLoss).toBeCloseTo(200, 8);
+  });
+
+  it('mirrors slippage, fees, stop-loss and take-profit for SHORT positions', () => {
+    const candles = [
+      candle(0, { open: 100, high: 100, low: 100, close: 100 }),
+      candle(1, { open: 100, high: 106, low: 89, close: 100 }),
+      candle(2, { open: 100, high: 100, low: 100, close: 100 }),
+    ];
+    const service = new BacktestingService(
+      scriptedComposite(['SELL', 'HOLD', 'HOLD']),
+    );
+    const result = service.run(
+      CANDIDATE,
+      candles,
+      {},
+      undefined,
+      undefined,
+      costs({
+        initialCapital: 1_000,
+        transactionCostPct: 0.1,
+        slippageBps: 10,
+        stopLossPct: 5,
+        takeProfitPct: 10,
+      }),
+    );
+
+    const trade = result.trades[0];
+    expect(trade.side).toBe('SHORT');
+    expect(trade.entryPrice).toBeCloseTo(100 * 0.999, 8);
+    expect(trade.stopLoss).toBeCloseTo(trade.entryPrice * 1.05, 8);
+    expect(trade.takeProfit).toBeCloseTo(trade.entryPrice * 0.9, 8);
+    // Both levels are touched, so the conservative stop-first rule applies.
+    expect(trade.exitReason).toBe('STOP_LOSS');
+    expect(trade.exitPrice).toBeCloseTo((trade.stopLoss as number) * 1.001, 8);
+    expect(trade.profitLoss).toBeLessThan(0);
+  });
 });

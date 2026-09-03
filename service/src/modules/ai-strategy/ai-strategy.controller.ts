@@ -48,8 +48,7 @@ export class AiStrategyController {
   /**
    * Which LLM is actually wired up right now. The AI Strategy tab shows
    * this next to the generated code: without it, a missing/misnamed API
-   * key was indistinguishable from a working one, because
-   * FakeLlmProvider's canned Python is perfectly valid Python.
+   * key is reported before the user starts a generation job.
    */
   @Get('provider')
   provider() {

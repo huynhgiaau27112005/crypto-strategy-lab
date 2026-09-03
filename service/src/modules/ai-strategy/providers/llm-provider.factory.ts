@@ -1,12 +1,22 @@
-import { FakeLlmProvider } from './fake.provider';
 import { OpenAiCompatibleProvider } from './openai-compatible.provider';
-import { LlmProvider } from '../ai-strategy.types';
+import type { GeneratedStrategy, LlmProvider } from '../ai-strategy.types';
 
 export const LLM_PROVIDER = 'LLM_PROVIDER';
 
 /** Default endpoint per key variable, so only the key is mandatory. */
 const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 const OPENROUTER_DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1';
+
+/** Keeps the module bootable while making generation fail explicitly. */
+class UnavailableLlmProvider implements LlmProvider {
+  readonly name = 'unavailable';
+
+  async generateStrategy(_prompt: string): Promise<GeneratedStrategy> {
+    throw new Error(
+      'Chưa cấu hình LLM provider. Hãy đặt OPENAI_API_KEY hoặc OPENROUTER_API_KEY trong service/.env rồi khởi động lại API và worker.',
+    );
+  }
+}
 
 export interface ResolvedLlmProvider {
   provider: LlmProvider;
@@ -22,8 +32,7 @@ export interface ResolvedLlmProvider {
  * Both OPENAI_API_KEY and OPENROUTER_API_KEY are accepted: the
  * architecture notes name OpenRouter as the hosted LLM, but only
  * OPENAI_API_KEY used to be read, so a correctly-configured
- * OPENROUTER_API_KEY silently fell through to FakeLlmProvider and the tab
- * kept returning canned Python with no indication why. Either key selects
+ * OPENROUTER_API_KEY used to silently fall through to canned Python. Either key selects
  * the OpenAI-compatible provider (OpenRouter speaks that protocol);
  * endpoint and model stay fully configurable, so switching model or vendor
  * is still a config change, never a code change.
@@ -63,10 +72,11 @@ export function resolveLlmProvider(): ResolvedLlmProvider {
     };
   }
 
-  // No key: the deterministic fake keeps the app bootable and every
-  // generate/validate/save/run path exercisable with no network access.
+  // No key: keep the rest of the app bootable, but never manufacture code.
+  // generate() will turn this provider's actionable error into a failed job
+  // that the AI Strategy tab reports to the user.
   return {
-    provider: new FakeLlmProvider(),
+    provider: new UnavailableLlmProvider(),
     keySource: null,
     baseUrl: null,
     model: null,

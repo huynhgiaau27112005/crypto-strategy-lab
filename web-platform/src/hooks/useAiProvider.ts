@@ -7,8 +7,7 @@ import type { AiProviderInfo } from '../api/types'
  *
  * Without this the tab could not tell a working key from a missing one:
  * with no API key configured the backend falls back to a deterministic
- * fake provider whose canned Python is perfectly valid, so "I set my key
- * but the code is still fake" had no visible explanation. `live: false`
+ * unavailable provider never returns fabricated code. `live: false`
  * means no key is configured (or the key is under a variable name the
  * backend does not read).
  */

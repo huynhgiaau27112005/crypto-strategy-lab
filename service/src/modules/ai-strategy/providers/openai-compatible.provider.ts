@@ -13,8 +13,8 @@ interface ChatCompletionResponse {
  * is the concrete answer to the project's "no hard-coded model" rule
  * (docs/about-projects/03-anti-patterns-to-avoid.md).
  *
- * Selected by ai-strategy.module.ts's provider factory only when
- * OPENAI_API_KEY is set; otherwise FakeLlmProvider is used instead, so this
+ * Selected by ai-strategy.module.ts's provider factory only when an
+ * OpenAI/OpenRouter API key is set, so this
  * class is never touched by the test suite (no network, no cost).
  */
 @Injectable()

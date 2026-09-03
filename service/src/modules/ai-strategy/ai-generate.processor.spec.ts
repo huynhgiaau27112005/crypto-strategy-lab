@@ -34,7 +34,7 @@ describe('AiGenerateProcessor', () => {
     const expected: AiGenerateJobResult = {
       code: 'def generate_signals(candles): return []',
       raw: 'raw response',
-      providerName: 'fake',
+      providerName: 'test-provider',
       validation: {
         valid: true,
         checks: [{ key: 'syntax', passed: true, message: 'Valid syntax' }],

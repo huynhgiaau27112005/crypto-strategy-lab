@@ -310,7 +310,7 @@ export interface RankedCandidateSummary {
 /** Response of `GET /ai-strategy/provider`. */
 export interface AiProviderInfo {
   name: string
-  /** False when no API key is configured and canned code is being returned. */
+  /** False when no API key is configured; generation will fail without producing code. */
   live: boolean
   keySource: 'OPENAI_API_KEY' | 'OPENROUTER_API_KEY' | null
   baseUrl: string | null

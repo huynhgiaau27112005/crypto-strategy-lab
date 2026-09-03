@@ -16,6 +16,7 @@ import {
 } from './backtesting.types';
 
 interface Position {
+  side: 'LONG' | 'SHORT';
   entryTime: Date;
   entryPrice: number;
   quantity: number;
@@ -100,9 +101,19 @@ export class BacktestingService {
         weights,
       );
       if (!tradingAllowed) continue;
-      if (!position && result.signal === 'BUY') {
-        position = this.openPosition(candle.timestamp, close, capital, costs);
-      } else if (position && result.signal === 'SELL') {
+      if (!position && result.signal !== 'HOLD') {
+        position = this.openPosition(
+          result.signal === 'BUY' ? 'LONG' : 'SHORT',
+          candle.timestamp,
+          close,
+          capital,
+          costs,
+        );
+      } else if (
+        position &&
+        ((position.side === 'LONG' && result.signal === 'SELL') ||
+          (position.side === 'SHORT' && result.signal === 'BUY'))
+      ) {
         const trade = this.closePosition(
           position,
           candle.timestamp,
@@ -116,7 +127,11 @@ export class BacktestingService {
       }
 
       const equity = position
-        ? capital + (close - position.entryPrice) * position.quantity
+        ? capital +
+          (position.side === 'LONG'
+            ? close - position.entryPrice
+            : position.entryPrice - close) *
+            position.quantity
         : capital;
       peakEquity = Math.max(peakEquity, equity);
       maximumDrawdown = Math.max(
@@ -145,11 +160,12 @@ export class BacktestingService {
   }
 
   /**
-   * Opens a long at `close`, adjusted for slippage (a buy fills above the
-   * reference price) and sized so the entry commission comes out of the
-   * same capital that funds the position.
+   * Opens a directional position at `close`. Buys fill above and sells fill
+   * below the reference price; size includes the entry commission so LONG
+   * and SHORT consume the same configured capital.
    */
   private openPosition(
+    side: Position['side'],
     entryTime: Date,
     close: number,
     capital: number,
@@ -157,10 +173,11 @@ export class BacktestingService {
   ): Position {
     const slippage = costs.slippageBps / 10_000;
     const fee = costs.transactionCostPct / 100;
-    const entryPrice = close * (1 + slippage);
+    const entryPrice = close * (side === 'LONG' ? 1 + slippage : 1 - slippage);
     // notional * (1 + fee) = capital  ->  notional = capital / (1 + fee)
     const notional = capital / (1 + fee);
     return {
+      side,
       entryTime,
       entryPrice,
       quantity: notional / entryPrice,
@@ -168,11 +185,17 @@ export class BacktestingService {
       stopLoss:
         costs.stopLossPct == null
           ? null
-          : entryPrice * (1 - costs.stopLossPct / 100),
+          : entryPrice *
+            (side === 'LONG'
+              ? 1 - costs.stopLossPct / 100
+              : 1 + costs.stopLossPct / 100),
       takeProfit:
         costs.takeProfitPct == null
           ? null
-          : entryPrice * (1 + costs.takeProfitPct / 100),
+          : entryPrice *
+            (side === 'LONG'
+              ? 1 + costs.takeProfitPct / 100
+              : 1 - costs.takeProfitPct / 100),
     };
   }
 
@@ -181,12 +204,19 @@ export class BacktestingService {
     position: Position,
     candle: CandleEntity,
   ): { price: number; reason: ExitReason } | null {
-    if (position.stopLoss != null && Number(candle.low) <= position.stopLoss) {
+    if (
+      position.stopLoss != null &&
+      (position.side === 'LONG'
+        ? Number(candle.low) <= position.stopLoss
+        : Number(candle.high) >= position.stopLoss)
+    ) {
       return { price: position.stopLoss, reason: 'STOP_LOSS' };
     }
     if (
       position.takeProfit != null &&
-      Number(candle.high) >= position.takeProfit
+      (position.side === 'LONG'
+        ? Number(candle.high) >= position.takeProfit
+        : Number(candle.low) <= position.takeProfit)
     ) {
       return { price: position.takeProfit, reason: 'TAKE_PROFIT' };
     }
@@ -202,18 +232,23 @@ export class BacktestingService {
   ): SimulatedTrade {
     const slippage = costs.slippageBps / 10_000;
     const fee = costs.transactionCostPct / 100;
-    // A sell fills below the reference price - the mirror of the entry. A
-    // protective exit is already an exact level, but it is subject to the
-    // same execution slippage as any other fill.
-    const fillPrice = exitPrice * (1 - slippage);
+    // Closing LONG sells below the reference; closing SHORT buys above it.
+    // Protective exits are exact trigger levels but still pay execution
+    // slippage, just like signal exits.
+    const fillPrice =
+      exitPrice * (position.side === 'LONG' ? 1 - slippage : 1 + slippage);
     const exitNotional = fillPrice * position.quantity;
+    const grossProfitLoss =
+      (position.side === 'LONG'
+        ? fillPrice - position.entryPrice
+        : position.entryPrice - fillPrice) * position.quantity;
     const profitLoss =
-      (fillPrice - position.entryPrice) * position.quantity -
+      grossProfitLoss -
       position.entryFee -
       exitNotional * fee;
     const entryNotional = position.entryPrice * position.quantity;
     return {
-      side: 'LONG',
+      side: position.side,
       entryTime: position.entryTime,
       entryPrice: position.entryPrice,
       exitTime,
