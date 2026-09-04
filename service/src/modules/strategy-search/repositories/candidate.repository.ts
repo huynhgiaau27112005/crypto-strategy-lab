@@ -15,6 +15,10 @@ export interface CandidateStrategyInput {
 
 export interface CandidateDetailMember {
   type: SearchStrategyType;
+  /** Human-readable strategy name from the exact pinned strategy row.
+   * For AI members, `type` remains `AI:<strategyId>` for execution while
+   * this field is what result UIs should render. */
+  name: string;
   /** The exact `strategies` row version this candidate's member was pinned
    * to at experiment-creation time — NOT the currently-latest version for
    * this name/user (that can have moved on since). Rendering the live
@@ -343,6 +347,7 @@ export class CandidateRepository {
       iterationNumber: header.iteration_number,
       members: membersResult.rows.map((row) => ({
         type: strategyTypeKey({ id: row.strategy_id, name: row.name, type: row.strategy_type }),
+        name: row.name,
         version: row.version,
         parameters: row.parameters,
         weight: Number(row.weight),

@@ -188,8 +188,8 @@ describe('CandidateRepository', () => {
         experimentId: 'exp-1',
         iterationNumber: 3,
         members: [
-          { type: 'MA', version: 1, parameters: { fastPeriod: 20, slowPeriod: 50 }, weight: 0.5 },
-          { type: 'RSI', version: 3, parameters: { period: 14 }, weight: 0.5 },
+          { type: 'MA', name: 'MA', version: 1, parameters: { fastPeriod: 20, slowPeriod: 50 }, weight: 0.5 },
+          { type: 'RSI', name: 'RSI', version: 3, parameters: { period: 14 }, weight: 0.5 },
         ],
         evaluation: {
           totalReturn: 18.24,
@@ -221,7 +221,7 @@ describe('CandidateRepository', () => {
       });
     });
 
-    it('resolves an AI_GENERATED member row to type "AI:<strategyId>", not its human name', async () => {
+    it('keeps the AI execution type while returning its human name for result UIs', async () => {
       const query = jest
         .fn()
         .mockResolvedValueOnce({ rows: [headerRow] })
@@ -244,7 +244,9 @@ describe('CandidateRepository', () => {
 
       const detail = await repository.findDetail(CANDIDATE_ID, USER_ID, 1, 20);
 
-      expect(detail?.members).toEqual([{ type: 'AI:ai-1', version: 2, parameters: {}, weight: 0.5 }]);
+      expect(detail?.members).toEqual([
+        { type: 'AI:ai-1', name: 'MyMomentumBot', version: 2, parameters: {}, weight: 0.5 },
+      ]);
     });
 
     it('returns evaluation: null when the candidate has no evaluation row yet', async () => {

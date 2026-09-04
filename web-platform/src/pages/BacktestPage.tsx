@@ -227,7 +227,7 @@ export default function BacktestPage() {
         return {
           id: row.candidate_id,
           rank: row.rank,
-          combo: detail ? detail.members.map((m) => m.type).join(' + ') : '…',
+          combo: detail ? detail.members.map((m) => m.name).join(' + ') : '…',
           iteration: detail?.iterationNumber,
         }
       }),
@@ -238,7 +238,7 @@ export default function BacktestPage() {
   const candCurrentLabel = currentOption
     ? `#${currentOption.rank} · ${currentOption.combo}`
     : candidate
-      ? candidate.members.map((m) => m.type).join(' + ')
+      ? candidate.members.map((m) => m.name).join(' + ')
       : '—'
 
   // The chart shows the window the run was actually configured over, not

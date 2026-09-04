@@ -406,6 +406,8 @@ export interface TopCandidateRow {
 /** One member of `GET /strategy-search/candidates/:id`'s `members` array. */
 export interface CandidateMemberDto {
   type: SearchStrategyType
+  /** Human-readable name from the exact strategy version pinned to this candidate. */
+  name: string
   /** The exact `strategies` row version this candidate's member was pinned
    * to when it was generated — NOT necessarily the currently-latest version
    * for this type (that moves on every time the user saves a new parameter
