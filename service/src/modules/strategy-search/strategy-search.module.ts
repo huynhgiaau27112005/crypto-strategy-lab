@@ -15,6 +15,8 @@ import { CandidateRepository } from './repositories/candidate.repository';
 import { StrategyRepository } from './repositories/strategy.repository';
 import { CandidateFingerprintService } from './services/candidate-fingerprint.service';
 import { SearchQueueService } from './services/search-queue.service';
+import { SearchConfigService } from './services/search-config.service';
+import { SearchRunCatalogService } from './services/search-run-catalog.service';
 
 // Deliberately does NOT declare SearchProcessor as a provider here: this
 // module is imported by AppModule (the HTTP process), and instantiating a
@@ -63,6 +65,8 @@ const searchAlgorithm = {
     StrategyRepository,
     CandidateFingerprintService,
     SearchQueueService,
+    SearchConfigService,
+    SearchRunCatalogService,
   ],
   exports: [StrategySearchService],
 })

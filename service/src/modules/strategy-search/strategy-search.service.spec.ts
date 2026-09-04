@@ -495,7 +495,7 @@ describe('StrategySearchService', () => {
   describe('buildRunCatalog()', () => {
     it('contributes exactly the static discrete entry for a built-in row — never reads its `parameters` column', () => {
       const { service } = buildService();
-      const catalog = (service as any).buildRunCatalog(
+      const catalog = (service as any).runCatalog.build(
         [{ row: { strategy_id: 's-ma', name: 'MA', type: 'SYSTEM', version: 1, parameters: {}, source_code: null, weight: '1' }, key: 'MA' }],
         new Map(),
       );
@@ -518,7 +518,7 @@ describe('StrategySearchService', () => {
     // carry that version's row id.
     it('emits one entry per selectable version, each sampling exactly that version\'s stored parameters', () => {
       const { service } = buildService();
-      const catalog = (service as any).buildRunCatalog(
+      const catalog = (service as any).runCatalog.build(
         [{ row: maRow, key: 'MA' }],
         new Map(),
         [
@@ -544,7 +544,7 @@ describe('StrategySearchService', () => {
 
     it('falls back to the in-code sampler when the database has no selectable version, rather than refusing to search', () => {
       const { service } = buildService();
-      const catalog = (service as any).buildRunCatalog(
+      const catalog = (service as any).runCatalog.build(
         [{ row: maRow, key: 'MA' }],
         new Map(),
         [],
@@ -554,7 +554,7 @@ describe('StrategySearchService', () => {
 
     it('places a NEWS_SENTIMENT row in the INFORMATION domain (required-flow #17)', () => {
       const { service } = buildService();
-      const catalog = (service as any).buildRunCatalog(
+      const catalog = (service as any).runCatalog.build(
         [{
           row: { strategy_id: 's-ns', name: 'NEWS_SENTIMENT', type: 'SYSTEM', version: 1, parameters: {}, source_code: null, weight: '1' },
           key: 'NEWS_SENTIMENT',

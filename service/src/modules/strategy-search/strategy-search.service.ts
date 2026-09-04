@@ -16,20 +16,12 @@ import {
   DomainEventNames,
 } from '../../domain-events';
 import { BacktestingService } from '../backtesting/backtesting.service';
-import {
-  BacktestCosts,
-  DEFAULT_BACKTEST_COSTS,
-} from '../backtesting/backtesting.types';
 import { MarketDataService } from '../market-data/market-data.service';
-import {
-  intervalMs,
-  MIN_CANDLES_PER_TIMEFRAME,
-} from '../market-data/config';
+import { MIN_CANDLES_PER_TIMEFRAME } from '../market-data/config';
 import { BacktestRunRepository } from '../backtesting/repositories/backtest-run.repository';
 import { StrategyWeightMap } from '../composite-strategy/composite-strategy.service';
 import {
   aiStrategyIdFromType,
-  DEFAULT_SEARCH_CONFIG,
   SEARCH_ALGORITHM,
   isAiStrategyType,
   SearchConfig,
@@ -37,17 +29,9 @@ import {
   StartSearchRequest,
   strategyRowDomain,
   strategyTypeKey,
-  StrategyDomain,
   StrategyWeight,
-  BuiltInStrategyType,
-  BUILTIN_DOMAIN_BY_NAME,
   defaultEqualWeights,
 } from './domain/search.types';
-import {
-  aiCatalogEntry,
-  STRATEGY_CATALOG,
-  versionCatalogEntry,
-} from './catalog/strategy-catalog';
 import { RunCatalog } from './generators/domain-guided-random.generator';
 // Type-only: named in a decorated constructor signature (isolatedModules +
 // emitDecoratorMetadata), and an interface has no runtime value to emit.
@@ -58,16 +42,15 @@ import {
   RankedCandidateSummary,
   TopCandidateMemberRow,
 } from './repositories/candidate.repository';
-import {
-  ExperimentConfigRepository,
-  WeightRow,
-} from './repositories/experiment-config.repository';
+import { ExperimentConfigRepository } from './repositories/experiment-config.repository';
 import { ExperimentIterationRepository } from './repositories/experiment-iteration.repository';
 import { ExperimentRepository } from './repositories/experiment.repository';
 import { StrategyRepository } from './repositories/strategy.repository';
 import { CandidateFingerprintService } from './services/candidate-fingerprint.service';
 import { createSeededRandom } from './services/seeded-random';
 import { SearchQueueService } from './services/search-queue.service';
+import { SearchConfigService } from './services/search-config.service';
+import { SearchRunCatalogService } from './services/search-run-catalog.service';
 import { DatabaseService } from '../../database/database.service';
 import { CacheService } from '../../cache/cache.service';
 import {
@@ -78,15 +61,9 @@ import {
 } from '../leaderboard/leaderboard-cache-keys';
 import type { SearchTopRow } from './repositories/experiment.repository';
 
-// Upper bound for the caller-supplied Top-K. The leaderboard is a
-// shortlist meant to be read at a glance; letting a client ask for 100
-// rows only produced a table nobody scrolls.
-const MAX_TOP_K = 20;
 import { MetricsService } from '../../observability/metrics/metrics.service';
 import { AiStrategyRepository } from '../ai-strategy/repositories/ai-strategy.repository';
 import { AiStrategySignalPrecomputeService } from '../ai-strategy/ai-strategy-signal-precompute.service';
-import { CandleInput } from '../ai-strategy/ai-strategy.types';
-import { CandleEntity, StrategyEntity } from '../../database/types';
 import { StrategySignal } from '../strategy-engine/strategy.types';
 import { StrategyPluginService } from '../strategy-plugin/strategy-plugin.service';
 import { NewsSentimentPrecomputeService } from '../news/news-sentiment-precompute.service';
@@ -100,7 +77,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
 
   private readonly logger = new Logger(StrategySearchService.name);
   private readonly activeRuns = new Set<string>();
-  private readonly configCache = new Map<string, SearchConfig>();
 
   constructor(
     private readonly database: DatabaseService,
@@ -130,6 +106,11 @@ export class StrategySearchService implements OnApplicationBootstrap {
     // LeaderboardEventsHandler decides what that means. See
     // artifacts/event-catalog.md.
     private readonly events: EventEmitter2,
+    private readonly searchConfig: SearchConfigService = new SearchConfigService(
+      experiments,
+      experimentConfigs,
+    ),
+    private readonly runCatalog: SearchRunCatalogService = new SearchRunCatalogService(),
   ) {}
 
   // One market for the whole deployment, shared with MarketDataGateway and
@@ -159,9 +140,9 @@ export class StrategySearchService implements OnApplicationBootstrap {
   }
 
   async start(userId: string, request: StartSearchRequest) {
-    const { startTime, endTime, config } = this.validateRequest(request);
-    const warmupBars = this.minimumCandles(config.enabledDomains);
-    const dataStartTime = this.candleDataStart(
+    const { startTime, endTime, config } = this.searchConfig.validateRequest(request);
+    const warmupBars = this.searchConfig.minimumCandles(config.enabledDomains);
+    const dataStartTime = this.searchConfig.candleDataStart(
       request.timeframe,
       startTime,
       warmupBars,
@@ -217,9 +198,9 @@ export class StrategySearchService implements OnApplicationBootstrap {
     const weights: StrategyWeight[] =
       request.strategyWeights ??
       defaultEqualWeights(
-        config.enabledDomains.map((domain) => this.builtinTypeForDomain(domain)),
+        config.enabledDomains.map((domain) => this.searchConfig.builtinTypeForDomain(domain)),
       );
-    this.assertWeightsValid(weights);
+    this.searchConfig.assertWeightsValid(weights);
 
     // Resolve every requested type to its `strategies` row and domain —
     // built-in by name (shared, no ownership check), AI by id scoped to
@@ -247,7 +228,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
         return { weight: w.weight, strategyId: strategy.id, domain: strategyRowDomain(strategy) };
       }),
     );
-    this.assertWeightsCoverEnabledDomains(resolved, config.enabledDomains);
+    this.searchConfig.assertWeightsCoverEnabledDomains(resolved, config.enabledDomains);
     const strategyWeights = resolved.map((r) => ({ strategyId: r.strategyId, weight: r.weight }));
 
     const experiment = await this.database.withTransaction(async (client) => {
@@ -255,7 +236,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
         userId,
         null,
         client,
-        this.persistableSearchConfig(config),
+        this.searchConfig.persistable(config),
       );
       await this.experimentConfigs.createWithWeights(
         client,
@@ -268,7 +249,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
       );
       return created;
     });
-    this.configCache.set(experiment.id, config);
+    this.searchConfig.remember(experiment.id, config);
     await this.schedule(experiment.id);
     return experiment;
   }
@@ -294,7 +275,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
   //   timeframe/window/weights/domains are read back by the existing
   //   loadConfig()/findByExperimentId() path inside run(), never rebuilt.
   async extend(experimentId: string, userId: string, iterations?: number) {
-    const boundedIterations = this.integerInRange(
+    const boundedIterations = this.searchConfig.integerInRange(
       iterations,
       1,
       50,
@@ -317,7 +298,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
     );
     // Force loadConfig() to re-read maxCandidates from the DB on the next
     // run() invocation instead of serving a stale cached value.
-    this.configCache.delete(experimentId);
+    this.searchConfig.invalidate(experimentId);
 
     await this.schedule(experimentId);
     return { id: experimentId, status: 'PENDING' as const };
@@ -380,7 +361,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
       throw new BadRequestException(`Unknown strategy "${strategyName}".`);
     }
 
-    const config = await this.loadConfig(experimentId);
+    const config = await this.searchConfig.load(experimentId);
     const memberRows = await this.candidates.listTopCandidateMembers(
       experimentId,
       userId,
@@ -435,8 +416,8 @@ export class StrategySearchService implements OnApplicationBootstrap {
       return { regenerated: 0, skipped: 0, candidateIds: [], summaries: [] };
     }
 
-    const warmupBars = this.minimumCandles(config.enabledDomains);
-    const dataStartTime = this.candleDataStart(
+    const warmupBars = this.searchConfig.minimumCandles(config.enabledDomains);
+    const dataStartTime = this.searchConfig.candleDataStart(
       experimentConfig.timeframe,
       experimentConfig.start_time,
       warmupBars,
@@ -517,7 +498,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
         const sourceByKey = await this.aiSourceCodeByKey(aiMembers, userId);
         const precomputed = await this.aiPrecompute.precompute(
           sourceByKey,
-          this.toAiCandleInput(candles),
+          this.runCatalog.toAiCandleInput(candles),
         );
         aiSignals = precomputed as unknown as Map<SearchStrategyType, StrategySignal[]>;
         // An AI member whose signals could not be precomputed cannot be
@@ -605,7 +586,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
           candles,
           weightMap,
           aiSignals,
-          this.sentimentSeriesForCandidate(
+          this.runCatalog.sentimentSeries(
             candidateDefinition,
             sentimentByLookback,
           ),
@@ -659,17 +640,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
       summaries,
     };
   }
-  private sentimentSeriesForCandidate(
-    candidate: CandidateDefinition,
-    byLookback: Map<number, Array<number | null>>,
-  ): Array<number | null> | undefined {
-    const sentiment = candidate.members.find(
-      (member) => member.type === 'NEWS_SENTIMENT',
-    );
-    if (!sentiment) return undefined;
-    return byLookback.get(Number(sentiment.parameters.lookbackHours));
-  }
-
   // Loads the Python source for each AI member being regenerated, keyed the
   // same way AiStrategySignalPrecomputeService expects.
   private async aiSourceCodeByKey(
@@ -719,7 +689,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
   async getTop(experimentId: string, userId: string, limit?: number) {
     const experiment = await this.experiments.findOwned(experimentId, userId);
     if (!experiment) throw new NotFoundException('Experiment not found.');
-    const config = await this.loadConfig(experimentId);
+    const config = await this.searchConfig.load(experimentId);
     const effectiveLimit = limit ?? config.topK;
     const clampedLimit = Math.min(100, Math.max(1, effectiveLimit));
 
@@ -785,162 +755,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
     return detail;
   }
 
-  // Reconstructs the SearchConfig from the database rather than trusting
-  // `configCache` alone, because `configCache` is only ever populated by
-  // `start()`/`extend()`, both of which run in the API process — while
-  // `run()` (the actual search loop) and job retries execute in the
-  // separate worker process, whose `configCache` is always empty. Every
-  // caller (API's getTop(), the worker's run()) therefore reads the same
-  // source of truth regardless of process or restart, closing the
-  // API/worker divergence described in artifacts/decisions.md.
-  //
-  // maxCandidates comes from experiment_configs.iteration_limit (unchanged
-  // — extend() persists there); enabledDomains is derived from the
-  // persisted experiment_config_strategies weight rows (see
-  // domainsFromWeightRows); maxDurationSeconds/maxNoImprovement/topK
-  // come from experiments.search_config (JSONB, populated by
-  // start() via persistableSearchConfig — see ExperimentEntity.search_config).
-  // A pre-fix row (or any malformed JSON) falls back to
-  // DEFAULT_SEARCH_CONFIG field-by-field via sanitizeSearchConfig, so this
-  // never throws.
-  private async loadConfig(experimentId: string): Promise<SearchConfig> {
-    const cached = this.configCache.get(experimentId);
-    if (cached) return cached;
-    const experiment = await this.experiments.findByIdOrThrow(experimentId);
-    const config = await this.experimentConfigs.findByExperimentId(experimentId);
-    const weightRows =
-      await this.experimentConfigs.weightsByExperimentId(experimentId);
-    const enabledDomains =
-      weightRows.length > 0
-        ? this.domainsFromWeightRows(weightRows)
-        : DEFAULT_SEARCH_CONFIG.enabledDomains;
-    const resolved: SearchConfig = {
-      ...DEFAULT_SEARCH_CONFIG,
-      enabledDomains,
-      maxCandidates:
-        config?.iteration_limit ?? DEFAULT_SEARCH_CONFIG.maxCandidates,
-      ...this.sanitizeSearchConfig(experiment.search_config),
-    };
-    this.configCache.set(experimentId, resolved);
-    return resolved;
-  }
-
-  // The subset of SearchConfig that is not already persisted elsewhere
-  // (maxCandidates -> experiment_configs.iteration_limit, enabledDomains ->
-  // experiment_config_strategies) — written into experiments.search_config
-  // at creation time so loadConfig() can reconstruct it truthfully from
-  // any process.
-  private persistableSearchConfig(
-    config: SearchConfig,
-  ): Record<string, unknown> {
-    return {
-      maxDurationSeconds: config.maxDurationSeconds,
-      maxNoImprovement: config.maxNoImprovement,
-      topK: config.topK,
-      costs: config.costs,
-    };
-  }
-
-  // Defensive parse of the JSONB round-trip: each field is validated with
-  // the same bounds `validateRequest()` enforces on the way in, and any
-  // missing/malformed field (pre-fix row, hand-edited data, driver
-  // returning a raw string instead of a parsed object) falls back to
-  // DEFAULT_SEARCH_CONFIG for that field alone rather than throwing.
-  private sanitizeSearchConfig(
-    raw: unknown,
-  ): Pick<
-    SearchConfig,
-    'maxDurationSeconds' | 'maxNoImprovement' | 'topK' | 'costs'
-  > {
-    const obj =
-      raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-    const boundedOrDefault = (
-      value: unknown,
-      minimum: number,
-      maximum: number,
-      fallback: number,
-    ): number =>
-      typeof value === 'number' &&
-      Number.isInteger(value) &&
-      value >= minimum &&
-      value <= maximum
-        ? value
-        : fallback;
-    return {
-      maxDurationSeconds: boundedOrDefault(
-        obj.maxDurationSeconds,
-        1,
-        86_400,
-        DEFAULT_SEARCH_CONFIG.maxDurationSeconds,
-      ),
-      maxNoImprovement: boundedOrDefault(
-        obj.maxNoImprovement,
-        1,
-        10_000,
-        DEFAULT_SEARCH_CONFIG.maxNoImprovement,
-      ),
-      topK: boundedOrDefault(obj.topK, 1, MAX_TOP_K, DEFAULT_SEARCH_CONFIG.topK),
-      costs: this.sanitizeCosts(obj.costs),
-    };
-  }
-
-  /**
-   * Same defensive parse for the cost model. A row written before costs
-   * were configurable has no `costs` key at all and falls back to
-   * DEFAULT_BACKTEST_COSTS, which is exactly the behaviour that run
-   * originally had - so re-running an old experiment reproduces it.
-   */
-  private sanitizeCosts(raw: unknown): BacktestCosts {
-    const obj =
-      raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-    const num = (value: unknown, fallback: number): number =>
-      typeof value === 'number' && Number.isFinite(value) && value >= 0
-        ? value
-        : fallback;
-    const optional = (value: unknown): number | null =>
-      typeof value === 'number' && Number.isFinite(value) && value > 0
-        ? value
-        : null;
-    return {
-      initialCapital:
-        typeof obj.initialCapital === 'number' &&
-        Number.isFinite(obj.initialCapital) &&
-        obj.initialCapital > 0
-          ? obj.initialCapital
-          : DEFAULT_BACKTEST_COSTS.initialCapital,
-      transactionCostPct: num(
-        obj.transactionCostPct,
-        DEFAULT_BACKTEST_COSTS.transactionCostPct,
-      ),
-      slippageBps: num(obj.slippageBps, DEFAULT_BACKTEST_COSTS.slippageBps),
-      stopLossPct: optional(obj.stopLossPct),
-      takeProfitPct: optional(obj.takeProfitPct),
-    };
-  }
-
-  // Recovers which StrategyDomains are represented by the persisted
-  // experiment_config_strategies rows, resolving each row's domain
-  // directly (built-in by name, AI by its recorded `parameters.domain` —
-  // see strategyRowDomain) rather than a fixed domain->type table, since a
-  // domain can now be covered by a built-in, an AI strategy, or both. This
-  // keeps a resumed-after-restart config's enabledDomains in sync with the
-  // weights actually persisted for the experiment. A row whose domain
-  // cannot be resolved (e.g. a legacy AI row with no domain recorded) is
-  // skipped rather than failing the whole reconstruction.
-  private domainsFromWeightRows(
-    rows: Array<{ name: string; type: string; parameters: Record<string, unknown> }>,
-  ): StrategyDomain[] {
-    const domains = new Set<StrategyDomain>();
-    for (const row of rows) {
-      try {
-        domains.add(strategyRowDomain(row));
-      } catch {
-        // Skip — see doc comment above.
-      }
-    }
-    return domains.size > 0 ? [...domains] : DEFAULT_SEARCH_CONFIG.enabledDomains;
-  }
-
   // Enqueues the search onto the "search" BullMQ queue instead of running
   // it inline (task-16: the API/bootstrap process only ever enqueues; only
   // SearchProcessor, running inside the separate worker process, calls
@@ -989,8 +803,8 @@ export class StrategySearchService implements OnApplicationBootstrap {
       // experiment_iterations count stayed frozen at 100 and the run
       // immediately re-completed. Deleting the cache entry first makes
       // every run() invocation read the true, currently-persisted config.
-      this.configCache.delete(experimentId);
-      const config = await this.loadConfig(experimentId);
+      this.searchConfig.invalidate(experimentId);
+      const config = await this.searchConfig.load(experimentId);
       const experimentConfig =
         await this.experimentConfigs.findByExperimentId(experimentId);
       if (!experimentConfig) throw new Error('Experiment config not found.');
@@ -1012,8 +826,8 @@ export class StrategySearchService implements OnApplicationBootstrap {
 
       const seed = Date.now() >>> 0;
       const random = createSeededRandom(seed);
-      const warmupBars = this.minimumCandles(config.enabledDomains);
-      const dataStartTime = this.candleDataStart(
+      const warmupBars = this.searchConfig.minimumCandles(config.enabledDomains);
+      const dataStartTime = this.searchConfig.candleDataStart(
         experimentConfig.timeframe,
         experimentConfig.start_time,
         warmupBars,
@@ -1045,7 +859,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
               key,
               sourceCode: row.source_code ?? '',
             })),
-            this.toAiCandleInput(candles),
+            this.runCatalog.toAiCandleInput(candles),
           )
         : new Map<string, StrategySignal[]>();
       const aiSignals = aiSignalsByType as unknown as Map<
@@ -1068,7 +882,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
       );
       const configuredLookbacks = versionRows
         .filter((row) => row.name === 'NEWS_SENTIMENT')
-        .map((row) => Number((row.parameters as Record<string, unknown>).lookbackHours))
+        .map((row) => Number(row.parameters.lookbackHours))
         .filter((hours) => Number.isFinite(hours) && hours > 0);
       // An unseeded database uses the in-code NEWS_SENTIMENT sampler, which
       // can emit any of these four values.
@@ -1081,7 +895,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
         candles,
         sentimentLookbacks,
       );
-      const runCatalog = this.buildRunCatalog(
+      const runCatalog = this.runCatalog.build(
         keyedRows,
         aiSignalsByType,
         versionRows,
@@ -1089,7 +903,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
       const usableDomains = config.enabledDomains.filter(
         (domain) => runCatalog[domain].length > 0,
       );
-      this.assertUsableDomains(usableDomains, config.enabledDomains);
+      this.runCatalog.assertUsableDomains(usableDomains, config.enabledDomains);
       const runConfig: SearchConfig = { ...config, enabledDomains: usableDomains };
 
       let generated = await this.iterations.countByExperimentId(experimentId);
@@ -1195,7 +1009,7 @@ export class StrategySearchService implements OnApplicationBootstrap {
             candles,
             weightMap,
             aiSignals,
-            this.sentimentSeriesForCandidate(
+            this.runCatalog.sentimentSeries(
               candidateDefinition,
               sentimentByLookback,
             ),
@@ -1292,437 +1106,6 @@ export class StrategySearchService implements OnApplicationBootstrap {
     } finally {
       this.activeRuns.delete(experimentId);
     }
-  }
-
-  // The one built-in plugin type for a domain — used only for the
-  // default-equal-weight fallback in start() when the caller omits
-  // strategyWeights entirely (a caller that wants an AI strategy included
-  // must say so explicitly via strategyWeights; the default never reaches
-  // into "the user's AI strategies" on its own).
-  private builtinTypeForDomain(domain: StrategyDomain): BuiltInStrategyType {
-    const map: Record<StrategyDomain, BuiltInStrategyType> = {
-      TREND: 'MA',
-      MOMENTUM: 'RSI',
-      VOLATILITY: 'BOLLINGER',
-      STRUCTURE: 'SUPPORT_RESISTANCE',
-      INFORMATION: 'NEWS_SENTIMENT',
-    };
-    return map[domain];
-  }
-
-  // Maps candle rows to the ai-strategy module's CandleInput contract —
-  // same shape AiStrategyService.run() builds for the standalone "chạy
-  // thử" endpoint, duplicated here (not imported) because it is a trivial,
-  // one-way field mapping and importing it would pull a controller-facing
-  // service into the search module for no benefit.
-  private toAiCandleInput(candles: CandleEntity[]): CandleInput[] {
-    return candles.map((c) => ({
-      timestamp: new Date(c.timestamp).getTime(),
-      open: Number(c.open),
-      high: Number(c.high),
-      low: Number(c.low),
-      close: Number(c.close),
-      volume: Number(c.volume),
-    }));
-  }
-
-  // Builds this run's per-domain sampler catalog from the experiment's
-  // actual weight rows: a built-in row contributes the fixed
-  // STRATEGY_CATALOG entry for its domain, an AI row contributes a fixed
-  // (non-randomized) member pinned to its exact strategyId/version — but
-  // ONLY if its signals were successfully precomputed (aiSignalsByType has
-  // its key). This is where a failed/excluded AI strategy actually stops
-  // participating in candidate generation for this run — see run()'s
-  // "Precompute" comment.
-  //
-  /**
-   * Builds this run's per-domain sampler catalog. ONE ENTRY PER SELECTABLE
-   * VERSION — this is the fix for the "the label lies" bug
-   * (artifacts/decisions.md §11).
-   *
-   * Previously a built-in contributed a single entry whose `sample()` drew
-   * parameters at random from a table in code, while the candidate was
-   * separately pinned to whatever `strategies` row `start()` had chosen.
-   * The two were unrelated, so a candidate could read "MA v7" and run
-   * parameters v7 never contained — reproduced on live data (v7 stores
-   * {11,30}; a candidate pinned to it ran {50,200}).
-   *
-   * Now every parameter set the generator can pick IS a version's stored
-   * parameters, and the member carries that version's row id. Randomness is
-   * unchanged in kind — the generator still picks uniformly, just over
-   * versions rather than over an in-code tuple list — so Random Search
-   * still explores the parameter space the brief describes
-   * (04-examples-in-the-brief.md #16/#87), and every point it explores is
-   * now nameable and reproducible.
-   *
-   * `versionRows` covers the SYSTEM parameter variants plus the user's own
-   * saved versions (StrategyRepository.listSelectableVersions). A built-in
-   * with no selectable version at all falls back to the in-code sampler, so
-   * a database that has not been seeded still searches rather than failing.
-   */
-  private buildRunCatalog(
-    keyedRows: Array<{ row: WeightRow; key: SearchStrategyType }>,
-    aiSignalsByType: Map<string, StrategySignal[]>,
-    versionRows: StrategyEntity[] = [],
-  ): RunCatalog {
-    const catalog: RunCatalog = {
-      TREND: [],
-      MOMENTUM: [],
-      VOLATILITY: [],
-      STRUCTURE: [],
-      INFORMATION: [],
-    };
-    const versionsByName = new Map<string, StrategyEntity[]>();
-    for (const row of versionRows) {
-      const list = versionsByName.get(row.name);
-      if (list) list.push(row);
-      else versionsByName.set(row.name, [row]);
-    }
-
-    for (const { row, key } of keyedRows) {
-      let domain: StrategyDomain;
-      try {
-        domain = strategyRowDomain(row);
-      } catch (error) {
-        this.logger.warn(
-          `Weight row for "${row.name}" has no resolvable domain and is excluded from this run: ${this.errorMessage(error)}`,
-        );
-        continue;
-      }
-      if (row.type === 'AI_GENERATED') {
-        if (!aiSignalsByType.has(key)) continue; // excluded — precompute failed
-        catalog[domain].push(
-          aiCatalogEntry({ id: row.strategy_id, domain, version: row.version }),
-        );
-        continue;
-      }
-
-      const versions = versionsByName.get(row.name) ?? [];
-      if (versions.length > 0) {
-        for (const version of versions) {
-          catalog[domain].push(
-            versionCatalogEntry({
-              id: version.id,
-              type: row.name as SearchStrategyType,
-              domain,
-              version: version.version,
-              parameters: version.parameters as Record<string, number>,
-            }),
-          );
-        }
-        continue;
-      }
-
-      // Un-seeded database: keep searching using the in-code variant list
-      // rather than refusing to run. Logged, because in this state the
-      // version label is the base row's and the parameters are sampled —
-      // the exact inconsistency this design removes.
-      const entry = STRATEGY_CATALOG[domain];
-      if (entry.type === row.name) {
-        this.logger.warn(
-          `No selectable parameter version found for "${row.name}"; falling back to the in-code sampler. ` +
-            'Run database/seeds/003_system_parameter_versions.sql to materialise the parameter variants.',
-        );
-        catalog[domain].push(entry);
-      }
-    }
-    return catalog;
-  }
-
-  // Fails the run explicitly (rather than letting the generator crash
-  // mid-loop on an empty domain array, or silently searching a narrower
-  // space than the experiment was started with) when precompute
-  // failures/domain-resolution gaps leave no directional or no
-  // confirmation domain usable. A partial reduction that still leaves both
-  // roles covered is allowed to proceed — logged, not fatal.
-  private assertUsableDomains(
-    usableDomains: StrategyDomain[],
-    requestedDomains: StrategyDomain[],
-  ): void {
-    const dropped = requestedDomains.filter((d) => !usableDomains.includes(d));
-    if (dropped.length === 0) {
-      // Nothing was excluded by precompute failures/domain-resolution gaps
-      // — trust the directional/confirmation invariant start()'s
-      // validateRequest() already established before this experiment's
-      // weights were persisted; re-deriving domains from persisted rows
-      // (loadConfig()'s reconstruction path) can legitimately yield a
-      // single domain in isolation (e.g. a resumed test/tooling fixture),
-      // which is not this method's concern to re-validate.
-      return;
-    }
-    this.logger.warn(
-      `Domains unusable for this run (no available strategy): ${dropped.join(', ')}`,
-    );
-    const hasDirectional = usableDomains.some((d) => d === 'TREND' || d === 'STRUCTURE');
-    const hasConfirmation = usableDomains.some((d) => d === 'MOMENTUM' || d === 'VOLATILITY');
-    if (!hasDirectional || !hasConfirmation) {
-      throw new Error(
-        'No directional and confirmation domain pair is usable for this run — ' +
-          'every candidate strategy for the missing role failed to precompute or resolve.',
-      );
-    }
-  }
-
-  // CompositeStrategyService.analyze() divides the weighted sum by the sum
-  // of the weights (Điểm tổng hợp = Σ (trọng số × tín hiệu) / Σ trọng số),
-  // so the weights do NOT need to sum to 1 — the formula normalizes them
-  // itself. What must still hold, so the normalization stays well-defined:
-  // every weight is a finite number >= 0 (negative would invert a
-  // strategy's vote, which isn't a supported concept), and the weights
-  // aren't all zero (that makes the denominator 0 — reject it here with a
-  // clear message rather than let the composite service silently score 0).
-  private assertWeightsValid(weights: StrategyWeight[]): void {
-    const invalid = weights.filter(
-      (item) => !Number.isFinite(item.weight) || item.weight < 0,
-    );
-    if (invalid.length > 0) {
-      throw new BadRequestException(
-        `strategyWeights must be finite numbers >= 0 (invalid: ${invalid
-          .map((item) => `${item.type}=${item.weight}`)
-          .join(', ')}).`,
-      );
-    }
-
-    const sum = weights.reduce((total, item) => total + item.weight, 0);
-    if (sum === 0) {
-      throw new BadRequestException(
-        'strategyWeights must not all be zero (the composite score would have no denominator).',
-      );
-    }
-  }
-
-  // Guards against a weight set that does not exactly cover the enabled
-  // domains: a domain with no matching weight would leave a generated
-  // candidate member with no strategyId, and a weight for a type whose
-  // domain isn't enabled is silently useless. Either case previously
-  // produced an experiment that runs to COMPLETED with zero candidates.
-  // Domain is read from each RESOLVED weight entry (built-in or AI) rather
-  // than a fixed domain->type table — a domain can now be covered by a
-  // built-in, one or more AI strategies, or both.
-  private assertWeightsCoverEnabledDomains(
-    resolved: Array<{ domain: StrategyDomain }>,
-    enabledDomains: StrategyDomain[],
-  ): void {
-    const givenDomains = new Set(resolved.map((r) => r.domain));
-
-    const missing = enabledDomains.filter((domain) => !givenDomains.has(domain));
-    const unexpected = [...givenDomains].filter(
-      (domain) => !enabledDomains.includes(domain),
-    );
-
-    if (missing.length > 0 || unexpected.length > 0) {
-      const parts: string[] = [];
-      if (missing.length > 0) {
-        parts.push(
-          `enabled domains have no matching weight: ${missing.join(', ')}`,
-        );
-      }
-      if (unexpected.length > 0) {
-        parts.push(
-          `weights given for a domain that is not enabled: ${unexpected.join(', ')}`,
-        );
-      }
-      throw new BadRequestException(
-        `strategyWeights must exactly cover enabledDomains (${parts.join('; ')}).`,
-      );
-    }
-  }
-
-  private validateRequest(request: StartSearchRequest) {
-    const startTime = new Date(request.startTime);
-    const endTime = new Date(request.endTime);
-    if (
-      !request.timeframe ||
-      !['1m', '5m', '15m', '1h', '4h'].includes(request.timeframe)
-    ) {
-      throw new BadRequestException('Unsupported timeframe.');
-    }
-    if (
-      !Number.isFinite(startTime.getTime()) ||
-      !Number.isFinite(endTime.getTime()) ||
-      startTime >= endTime
-    ) {
-      throw new BadRequestException(
-        'startTime and endTime must define a valid range.',
-      );
-    }
-    const enabledDomains =
-      request.enabledDomains ?? DEFAULT_SEARCH_CONFIG.enabledDomains;
-    // Derived from BUILTIN_DOMAIN_BY_NAME rather than re-listed here: a
-    // second hard-coded copy is exactly what made INFORMATION (News
-    // Sentiment) get rejected as "unsupported" after it had already been
-    // added everywhere else. Adding a domain must not require remembering
-    // to update a literal in request validation.
-    const allowedDomains = new Set<StrategyDomain>(
-      Object.values(BUILTIN_DOMAIN_BY_NAME),
-    );
-    if (enabledDomains.some((domain) => !allowedDomains.has(domain))) {
-      throw new BadRequestException(
-        'enabledDomains contains an unsupported domain.',
-      );
-    }
-    const config: SearchConfig = {
-      ...DEFAULT_SEARCH_CONFIG,
-      enabledDomains: [...new Set(enabledDomains)],
-      maxCandidates: this.integerInRange(
-        request.maxCandidates,
-        1,
-        10_000,
-        100,
-        'maxCandidates',
-      ),
-      maxDurationSeconds: this.integerInRange(
-        request.maxDurationSeconds,
-        1,
-        86_400,
-        3600,
-        'maxDurationSeconds',
-      ),
-      maxNoImprovement: this.integerInRange(
-        request.maxNoImprovement,
-        1,
-        10_000,
-        50,
-        'maxNoImprovement',
-      ),
-      // Capped at MAX_TOP_K so the leaderboard a run produces stays a
-      // readable shortlist rather than an unbounded dump the UI has to
-      // render (the field is a free-text input in the Backtest tab).
-      topK: this.integerInRange(request.topK, 1, MAX_TOP_K, 10, 'topK'),
-      costs: this.validateCosts(request),
-    };
-    const hasDirectional = config.enabledDomains.some(
-      (item) => item === 'TREND' || item === 'STRUCTURE',
-    );
-    const hasConfirmation = config.enabledDomains.some(
-      (item) => item === 'MOMENTUM' || item === 'VOLATILITY',
-    );
-    if (!hasDirectional || !hasConfirmation) {
-      throw new BadRequestException(
-        'Enable at least one directional and one confirmation domain.',
-      );
-    }
-    config.maxMembers = Math.min(
-      config.maxMembers,
-      config.enabledDomains.length,
-    );
-    return { startTime, endTime, config };
-  }
-
-  /**
-   * Validates the caller-supplied cost model. Every field is optional and
-   * falls back to DEFAULT_BACKTEST_COSTS, so a client that does not know
-   * about costs yet behaves exactly as before. Bounds are deliberately
-   * generous but finite - the point is to reject nonsense (negative
-   * capital, a 500% fee) rather than to prescribe a trading style.
-   */
-  private validateCosts(request: StartSearchRequest): BacktestCosts {
-    return {
-      initialCapital: this.numberInRange(
-        request.initialCapital,
-        1,
-        1_000_000_000,
-        DEFAULT_BACKTEST_COSTS.initialCapital,
-        'initialCapital',
-      ),
-      transactionCostPct: this.numberInRange(
-        request.transactionCostPct,
-        0,
-        10,
-        DEFAULT_BACKTEST_COSTS.transactionCostPct,
-        'transactionCostPct',
-      ),
-      slippageBps: this.numberInRange(
-        request.slippageBps,
-        0,
-        1_000,
-        DEFAULT_BACKTEST_COSTS.slippageBps,
-        'slippageBps',
-      ),
-      stopLossPct: this.optionalNumberInRange(
-        request.stopLossPct,
-        0.01,
-        100,
-        'stopLossPct',
-      ),
-      takeProfitPct: this.optionalNumberInRange(
-        request.takeProfitPct,
-        0.01,
-        1_000,
-        'takeProfitPct',
-      ),
-    };
-  }
-
-  private numberInRange(
-    value: number | undefined,
-    minimum: number,
-    maximum: number,
-    fallback: number,
-    field: string,
-  ): number {
-    const resolved = value ?? fallback;
-    if (!Number.isFinite(resolved) || resolved < minimum || resolved > maximum) {
-      throw new BadRequestException(
-        `${field} must be a number from ${minimum} to ${maximum}.`,
-      );
-    }
-    return resolved;
-  }
-
-  /** Same as numberInRange, but `undefined`/`null` means "disabled". */
-  private optionalNumberInRange(
-    value: number | null | undefined,
-    minimum: number,
-    maximum: number,
-    field: string,
-  ): number | null {
-    if (value === undefined || value === null) return null;
-    if (!Number.isFinite(value) || value < minimum || value > maximum) {
-      throw new BadRequestException(
-        `${field} must be a number from ${minimum} to ${maximum}, or omitted to disable it.`,
-      );
-    }
-    return value;
-  }
-
-  private integerInRange(
-    value: number | undefined,
-    minimum: number,
-    maximum: number,
-    fallback: number,
-    field: string,
-  ): number {
-    const resolved = value ?? fallback;
-    if (!Number.isInteger(resolved) || resolved < minimum || resolved > maximum) {
-      throw new BadRequestException(
-        `${field} must be an integer from ${minimum} to ${maximum}.`,
-      );
-    }
-    return resolved;
-  }
-
-  private minimumCandles(domains: StrategyDomain[]): number {
-    const requirements: Record<StrategyDomain, number> = {
-      TREND: 202,
-      MOMENTUM: 23,
-      VOLATILITY: 31,
-      STRUCTURE: 102,
-      // A sentiment member needs no candle history of its own — it reads a
-      // precomputed per-candle series, so it imposes no extra minimum.
-      INFORMATION: 2,
-    };
-    return Math.max(...domains.map((domain) => requirements[domain]));
-  }
-
-  /** Earliest timestamp to load so indicators have warmup history before the user's window. */
-  private candleDataStart(
-    timeframe: string,
-    userStart: Date,
-    warmupBars: number,
-  ): Date {
-    const step = intervalMs(timeframe) ?? 60_000;
-    return new Date(userStart.getTime() - warmupBars * step);
   }
 
   private errorMessage(error: unknown): string {
